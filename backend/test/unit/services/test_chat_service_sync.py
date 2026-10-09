@@ -1101,7 +1101,6 @@ async def test_get_agent_state_view_rejects_missing_session(
             thread_id=child_thread_id,
             current_user=SimpleNamespace(uid="user-1"),
             db=object(),
-            include_messages=True,
         )
 
     assert exc.value.status_code == 404

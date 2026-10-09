@@ -9,7 +9,9 @@ import pytest_asyncio
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from yuxi.modules.agents.services.messages import get_thread_history
+from yuxi.modules.agents.repositories.public_items import PublicItemRepository
+from yuxi.modules.agents.services.public_items import serialize_public_items
+from yuxi.modules.agents.services.threads import get_queue_snapshot, require_thread
 from yuxi.modules.agents.services.scope import ActorScope
 from yuxi.modules.agents.models.inputs import AgentInput
 from yuxi.modules.agents.models.runs import AgentRun
@@ -137,10 +139,10 @@ async def test_history_shows_pending_input_and_later_binds_its_own_reply(session
     await _register_visible(session)
     await session.commit()
 
-    pending = await get_thread_history(db=session, scope=SCOPE, thread_id="thread-1")
-    assert [item["content"][0]["text"] for item in pending["items"]] == ["A", "A reply", "B"]
-    assert pending["items"][-1]["yuxi"]["run_id"] is None
-    assert pending["thread"]["queued_input_count"] == 1
+    pending = await _read_items(session)
+    assert [item["content"][0]["text"] for item in pending] == ["A", "A reply", "B"]
+    assert pending[-1]["yuxi"]["run_id"] is None
+    assert len((await get_queue_snapshot(db=session, scope=SCOPE, thread_id="thread-1"))["inputs"]) == 1
 
     turn_b, run_b = _turn_run(turn_id="turn-b", run_id="run-b", created_at=STARTED_AT + timedelta(seconds=3))
     run_b.input_id = "input-b"
@@ -170,19 +172,15 @@ async def test_history_shows_pending_input_and_later_binds_its_own_reply(session
     await _register_visible(session)
     await session.commit()
 
-    completed = await get_thread_history(db=session, scope=SCOPE, thread_id="thread-1")
-    assert [item["content"][0]["text"] for item in completed["items"]] == ["A", "A reply", "B", "B reply"]
-    assert [(item["turn_id"], item["yuxi"]["run_id"]) for item in completed["items"]] == [
+    completed = await _read_items(session)
+    assert [item["content"][0]["text"] for item in completed] == ["A", "A reply", "B", "B reply"]
+    assert [(item["turn_id"], item["yuxi"]["run_id"]) for item in completed] == [
         ("turn-a", "run-a"),
         ("turn-a", "run-a"),
         ("turn-b", "run-b"),
         ("turn-b", "run-b"),
     ]
-    assert completed["thread"]["queued_input_count"] == 0
-    assert [(item["turn_id"], item["run_id"]) for item in completed["runs"]] == [
-        ("turn-a", "run-a"),
-        ("turn-b", "run-b"),
-    ]
+    assert len((await get_queue_snapshot(db=session, scope=SCOPE, thread_id="thread-1"))["inputs"]) == 0
 
 
 async def test_history_exposes_tool_result_without_internal_model_metadata(session):
@@ -220,10 +218,10 @@ async def test_history_exposes_tool_result_without_internal_model_metadata(sessi
     await _register_visible(session)
     await session.commit()
 
-    history = await get_thread_history(db=session, scope=SCOPE, thread_id="thread-1")
-    assert [item["type"] for item in history["items"]] == ["message", "function_call", "function_call_output"]
-    assert history["items"][1]["call_id"] == history["items"][2]["call_id"] == "call-a"
-    assert history["items"][2]["output"] == "safe result"
+    history = await _read_items(session)
+    assert [item["type"] for item in history] == ["message", "function_call", "function_call_output"]
+    assert history[1]["call_id"] == history[2]["call_id"] == "call-a"
+    assert history[2]["output"] == "safe result"
     assert "private-model-run" not in str(history)
 
 
@@ -233,7 +231,7 @@ async def test_history_rejects_other_app_scope(session):
     agent_session.app_id = "other-app"
     await session.commit()
     with pytest.raises(HTTPException) as failure:
-        await get_thread_history(db=session, scope=SCOPE, thread_id="thread-1")
+        await _read_items(session)
     assert failure.value.status_code == 404
 
 
@@ -277,3 +275,10 @@ async def _register_visible(db):
                 "yuxi": {"run_id": message.run_id, "output_index": 2},
             }
         message.extra_metadata = {**(message.extra_metadata or {}), "public_items": public}
+
+
+async def _read_items(db):
+    """直接验证公开 serializer 对持久消息的投影，分页由真实 PG 测试覆盖。"""
+    await require_thread(db=db, scope=SCOPE, thread_id="thread-1")
+    rows = await PublicItemRepository(db).list_items(thread_id="thread-1", uid=SCOPE.uid, app_id=SCOPE.app_id)
+    return [item for message, run, result_id in rows for item in serialize_public_items(message, run, result_id)]

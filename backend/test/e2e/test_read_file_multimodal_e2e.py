@@ -72,8 +72,8 @@ async def _create_thread(client: httpx.AsyncClient, headers: dict[str, str], age
         },
         headers={**headers, "Idempotency-Key": f"read-file-create-{uuid.uuid4().hex}"},
     )
-    assert response.status_code == 200, response.text
-    return str(response.json()["thread_id"])
+    assert response.status_code == 201, response.text
+    return str(response.json()["id"])
 
 
 async def _upload(
@@ -85,29 +85,14 @@ async def _upload(
 ) -> str:
     with file_path.open("rb") as handle:
         upload_response = await client.post(
-            "/api/v1/agents/attachments/tmp",
+            "/api/v1/agents/files",
             files={"file": (file_path.name, handle)},
             headers=headers,
         )
-    assert upload_response.status_code == 200, upload_response.text
+    assert upload_response.status_code == 201, upload_response.text
     uploaded = upload_response.json()
-
-    confirm_response = await client.post(
-        f"/api/v1/agents/sessions/{thread_id}/attachments/confirm",
-        json={
-            "attachments": [
-                {
-                    "file_type": uploaded.get("file_type"),
-                    "object_name": uploaded["object_name"],
-                }
-            ]
-        },
-        headers=headers,
-    )
-    assert confirm_response.status_code == 200, confirm_response.text
-    attachment = confirm_response.json()["attachments"][0]
-    assert attachment["original_path"].endswith(file_path.name), attachment
-    return str(attachment["file_id"])
+    assert uploaded["filename"] == file_path.name
+    return str(uploaded["id"])
 
 
 async def _run(
@@ -147,9 +132,9 @@ async def _run(
             if turn["status"] in {"completed", "failed", "cancelled"}:
                 completed = True
                 assert turn["status"] == "completed", turn
-                assert turn["result_run_id"] == run_id, turn
-                assert turn["output"] is not None, turn
-                return str(output_text(turn["output"]))
+                assert turn["yuxi"]["result_run_id"] == run_id, turn
+                assert turn["yuxi"]["output"] is not None, turn
+                return str(output_text(turn["yuxi"]["output"]))
             await asyncio.sleep(2)
         pytest.fail(f"read_file E2E Turn timed out: {turn_id}")
     finally:

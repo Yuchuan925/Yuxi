@@ -9,6 +9,7 @@ MODEL_MODULES = (
     "yuxi.modules.agents.models.sessions",
     "yuxi.modules.agents.models.cooperation",
     "yuxi.modules.agents.models.inputs",
+    "yuxi.modules.agents.models.attachments",
     "yuxi.modules.agents.models.turns",
     "yuxi.modules.agents.models.runs",
     "yuxi.modules.agents.models.messages",

@@ -105,9 +105,8 @@ export function itemsToMessages(items) {
       message.content = item.content.filter((part) => part.type === 'output_text' || part.type === 'input_text')
         .map((part) => part.text).join('')
       message.reasoning_content = Object.values(item.yuxi?.reasoning || {}).join('')
-      message.image_contents = item.content.filter((part) => part.type === 'input_image')
-        .map((part) => part.image_url.startsWith('data:') ? part.image_url.split(';base64,')[1] : part.image_url)
-      message.image_content = message.image_contents[0]
+      message.image_urls = item.content.filter((part) => part.type === 'input_image')
+        .map((part) => part.image_url)
       message.phase = item.phase
     } else if (item.type === 'function_call') {
       const output = linkedOutputs.get(item.id) || outputs.get(`${runId}:${item.call_id}`)

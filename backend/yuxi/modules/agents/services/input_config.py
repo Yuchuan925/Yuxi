@@ -1,6 +1,9 @@
-"""在接收输入时冻结模型与工具审批配置。"""
+"""冻结可配置 Context，运行身份与资源授权由执行入口解析。"""
 
 from __future__ import annotations
+
+from copy import deepcopy
+from dataclasses import fields
 
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,35 +13,31 @@ from yuxi.modules.models.providers.cache import model_cache
 from yuxi.modules.system.options import system_options
 
 
-async def resolve_agent_run_config(
+async def resolve_agent_context_snapshot(
     model_spec: str | None,
     tool_approval_mode: str | None,
     agent_item,
     agent_backend,
     db: AsyncSession | None = None,
-) -> tuple[str, str]:
-    """一次冻结本次输入的模型与审批模式。"""
-    context = load_agent_run_context(agent_item, agent_backend)
-    return (
-        await resolve_agent_run_model_spec(model_spec, getattr(context, "model", None), db),
-        resolve_agent_run_tool_approval_mode(tool_approval_mode, getattr(context, "tool_approval_mode", None)),
-    )
-
-
-def load_agent_run_context(agent_item, agent_backend):
-    """只读取 Agent 配置，不准备 worker 的运行时 Context。"""
+) -> dict:
+    """保存配置值与 Schema 默认值，保留资源选择而不固化授权结果。"""
     context = agent_backend.context_schema()
-    config_json = getattr(agent_item, "config_json", None) or {}
-    config_context = config_json.get("context") if isinstance(config_json, dict) else {}
-    if isinstance(config_context, dict):
-        context.update_config(config_context)
-    return context
+    context.update_config((agent_item.config_json or {}).get("context") or {})
+    context.model = await resolve_agent_run_model_spec(model_spec, context.model, db)
+    context.tool_approval_mode = resolve_agent_run_tool_approval_mode(tool_approval_mode, context.tool_approval_mode)
+    return {
+        item.name: deepcopy(getattr(context, item.name))
+        for item in fields(context)
+        if item.metadata.get("configurable", True)
+    }
 
 
 async def resolve_agent_run_model_spec(
     requested_model: str | None, configured_model: str | None, db: AsyncSession | None = None
 ) -> str:
     """按显式值、Agent 配置和系统默认值选择聊天模型。"""
+    if requested_model is not None and not requested_model.strip():
+        raise HTTPException(status_code=422, detail="显式模型标识不能为空")
     model_spec = next(
         (
             candidate.strip()

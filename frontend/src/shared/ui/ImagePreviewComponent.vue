@@ -2,7 +2,7 @@
   <div class="image-preview" v-if="imageData">
     <div class="image-container">
       <img
-        :src="`data:${imageData.mimeType};base64,${imageData.imageContent}`"
+        :src="imageData.imageUrl"
         :alt="imageData.originalName"
         class="preview-image"
       />

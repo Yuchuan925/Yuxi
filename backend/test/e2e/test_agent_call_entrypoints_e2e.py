@@ -140,19 +140,19 @@ async def test_public_thread_evaluation_sample_uses_one_input_turn_run_flow(
             },
             headers={**e2e_headers, "Idempotency-Key": f"eval-{uuid.uuid4().hex}"},
         )
-        assert create_response.status_code == 200, create_response.text
-        accepted = create_response.json()
-        thread_id = accepted["thread_id"]
+        assert create_response.status_code == 201, create_response.text
+        accepted = create_response.json()["yuxi"]["receipt"]
+        thread_id = accepted["session_id"]
         assert accepted["input_id"] and accepted["turn_id"] and accepted["run_id"], accepted
 
         turn = await _wait_turn(e2e_client, e2e_headers, thread_id, accepted["turn_id"])
         if turn["status"] != "completed":
             skip_if_external_quota(turn.get("error"))
         assert turn["status"] == "completed", turn
-        assert turn["result_run_id"] == accepted["run_id"]
-        assert EVAL_EXPECTED_OUTPUT in output_text(turn["output"])
-        assert all(item["yuxi"]["run_id"] == accepted["run_id"] for item in turn["output"])
-        assert all(item["turn_id"] == accepted["turn_id"] for item in turn["output"])
+        assert turn["yuxi"]["result_run_id"] == accepted["run_id"]
+        assert EVAL_EXPECTED_OUTPUT in output_text(turn["yuxi"]["output"])
+        assert all(item["yuxi"]["run_id"] == accepted["run_id"] for item in turn["yuxi"]["output"])
+        assert all(item["turn_id"] == accepted["turn_id"] for item in turn["yuxi"]["output"])
         completed = True
 
         run_response = await e2e_client.get(

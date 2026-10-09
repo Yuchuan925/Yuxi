@@ -53,14 +53,14 @@
                       }}</span>
                     </button>
                     <span
-                      v-if="SESSION_ACTIVITY_LABELS[group.activityStatus] && !isProjectExpanded(group.project.id)"
+                      v-if="SESSION_ACTIVITY_LABELS[group.status] && !isProjectExpanded(group.project.id)"
                       class="project-activity-badge"
-                      :class="{ 'needs-action': ['waiting_approval', 'waiting_answer'].includes(group.activityStatus) }"
+                      :class="{ 'needs-action': group.status === 'requires_action' }"
                       role="status"
-                    >{{ SESSION_ACTIVITY_LABELS[group.activityStatus] }}</span>
+                    >{{ SESSION_ACTIVITY_LABELS[group.status] }}</span>
                     <span
                       v-else-if="
-                        (['running', 'queued'].includes(group.activityStatus) || group.threadStatus === 'loading') && !isProjectExpanded(group.project.id)
+                        group.status === 'in_progress' && !isProjectExpanded(group.project.id)
                       "
                       class="project-status project-status-loading"
                       role="status"
@@ -69,7 +69,7 @@
                       <span class="status-spinner" aria-hidden="true"></span>
                     </span>
                     <span
-                      v-else-if="group.threadStatus === 'ready'"
+                      v-else-if="group.unread"
                       class="project-status project-status-ready"
                       role="status"
                       title="项目中有新回复"

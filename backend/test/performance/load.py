@@ -461,7 +461,7 @@ def evaluate_result(
         (payload.get("id") == run_id, "Run 结果与 SSE Run 不一致"),
         (payload.get("input_id") == input_id, "Run 未绑定提交的 Input"),
         (payload.get("turn_id") == turn_id, "Run 未绑定目标 Turn"),
-        (turn_payload.get("result_run_id") == run_id, "Turn 结果与 Run 不一致"),
+        (turn_payload["yuxi"]["result_run_id"] == run_id, "Turn 结果与 Run 不一致"),
         (turn_payload.get("status") == "completed", "Turn 尚未完成"),
         (
             isinstance(output, list)

@@ -38,7 +38,8 @@ export function createApi(
     validateUserId(credentials.userId);
     const headers = { Authorization: `Bearer ${credentials.key}` };
     if (credentials.userId) headers["X-End-User-Id"] = credentials.userId;
-    if (body !== undefined) headers["Content-Type"] = "application/json";
+    const multipart = body instanceof FormData;
+    if (body !== undefined && !multipart) headers["Content-Type"] = "application/json";
     if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
     if (cursor) headers["Last-Event-ID"] = cursor;
     const started = performance.now();
@@ -48,7 +49,7 @@ export function createApi(
         method,
         headers,
         signal,
-        body: body === undefined ? undefined : JSON.stringify(body),
+        body: body === undefined ? undefined : multipart ? body : JSON.stringify(body),
         credentials: "omit",
         redirect: "error",
       });
@@ -99,15 +100,29 @@ export function createApi(
 
   return {
     request,
+    uploadFile: (file) => {
+      const body = new FormData();
+      body.append("file", file);
+      return request("/files", { method: "POST", body });
+    },
+    deleteFile: (id) => request(`/files/${encodeURIComponent(id)}`, { method: "DELETE" }),
     listAgents: () => request("/"),
-    listThreads: (agentId, offset = 0) =>
+    listThreads: (agentId, after) =>
       request(
-        `/sessions?agent_id=${encodeURIComponent(agentId)}&limit=50&offset=${offset}`,
+        `/sessions?agent_id=${encodeURIComponent(agentId)}&limit=50${after ? `&after=${encodeURIComponent(after)}` : ""}`,
       ),
-    history: (id) => request(`/sessions/${encodeURIComponent(id)}/history`),
+    session: (id) => request(`/sessions/${encodeURIComponent(id)}`),
+    items: (id, after, turnId) => {
+      const path = turnId ? `/turns/${encodeURIComponent(turnId)}/items` : "/items";
+      const params = new URLSearchParams({ limit: "100", order: "desc" });
+      if (after) params.set("after", after);
+      return request(`/sessions/${encodeURIComponent(id)}${path}?${params}`);
+    },
+    turn: (id, turnId) => request(`/sessions/${encodeURIComponent(id)}/turns/${encodeURIComponent(turnId)}`),
+    receipt: (id, key) => request(`/sessions/${encodeURIComponent(id)}/receipt?${new URLSearchParams({ idempotency_key: key })}`),
     state: (id) =>
       request(
-        `/sessions/${encodeURIComponent(id)}/state?include_messages=false&include_relations=false`,
+        `/sessions/${encodeURIComponent(id)}/state?include_relations=false`,
       ),
     events: (id, cursor) =>
       request(`/sessions/${encodeURIComponent(id)}/events`, {

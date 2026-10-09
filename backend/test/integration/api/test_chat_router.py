@@ -337,9 +337,11 @@ async def test_thread_message_audits_return_persisted_facts_without_leaking_into
     )
     assert retired_response.status_code == 404, retired_response.text
 
-    history = await test_client.get(f"/api/v1/agents/sessions/{thread_id}/history", headers=admin_headers)
+    history = await test_client.get(
+        f"/api/v1/agents/sessions/{thread_id}/items?order=asc&limit=100", headers=admin_headers
+    )
     assert history.status_code == 200, history.text
-    history_items = history.json()["items"]
+    history_items = history.json()["data"]
     # 未进入公开输出链路的原始审计不会因 state_reconciled 或 ToolCall 存在而暴露。
     assert len(history_items) == 1
     failed_input = history_items[0]
@@ -360,17 +362,16 @@ async def test_image_upload_composites_transparent_png_pixels_on_white(test_clie
         image_bytes = buffer.getvalue()
 
     response = await test_client.post(
-        "/api/v1/agents/images",
+        "/api/agent/images",
         headers=admin_headers,
         files={"file": ("transparent.png", image_bytes, "image/png")},
     )
 
     assert response.status_code == 200, response.text
     payload = response.json()
-    assert payload["success"] is True
     assert payload["mime_type"] == "image/png"
 
-    processed_data = base64.b64decode(payload["image_content"])
+    processed_data = base64.b64decode(payload["image_url"].split(";base64,", 1)[1])
     with Image.open(io.BytesIO(processed_data)) as processed_image:
         rgb_image = processed_image.convert("RGB")
 
@@ -416,27 +417,35 @@ async def test_thread_artifact_uses_image_signature_for_content_type(test_client
         image_bytes = buffer.getvalue()
 
     upload_response = await test_client.post(
-        "/api/v1/agents/attachments/tmp",
+        "/api/v1/agents/files",
         headers=admin_headers,
         files={"file": ("mislabeled.jpg", image_bytes, "image/jpeg")},
     )
 
-    assert upload_response.status_code == 200, upload_response.text
+    assert upload_response.status_code == 201, upload_response.text
     uploaded = upload_response.json()
-    confirm_response = await test_client.post(
-        f"/api/v1/agents/sessions/{thread_id}/attachments/confirm",
-        headers=admin_headers,
+    conn = await asyncpg.connect(_postgres_dsn())
+    try:
+        await conn.execute("UPDATE sessions SET queue_paused=true WHERE thread_id=$1", thread_id)
+    finally:
+        await conn.close()
+    accepted = await test_client.post(
+        f"/api/v1/agents/sessions/{thread_id}/events",
+        headers={**admin_headers, "Idempotency-Key": str(uuid.uuid4())},
         json={
-            "attachments": [
+            "events": [
                 {
-                    "file_type": uploaded.get("file_type"),
-                    "object_name": uploaded["object_name"],
+                    "type": "agent.session.input.message",
+                    "input": [{"role": "user", "content": [{"type": "input_text", "text": "保存附件"}]}],
+                    "yuxi": {"mode": "follow_up", "attachment_file_ids": [uploaded["id"]]},
                 }
             ]
         },
     )
-    assert confirm_response.status_code == 200, confirm_response.text
-    attachment = confirm_response.json()["attachments"][0]
+    assert accepted.status_code == 202, accepted.text
+    attachment = (
+        await test_client.get(f"/api/v1/agents/sessions/{thread_id}/attachments", headers=admin_headers)
+    ).json()["attachments"][0]
     listed = await test_client.get(f"/api/v1/agents/sessions/{thread_id}/attachments", headers=admin_headers)
     assert listed.status_code == 200, listed.text
     assert any(item["file_id"] == attachment["file_id"] for item in listed.json()["attachments"])
@@ -501,28 +510,23 @@ async def _create_thread_for_user(test_client, headers: dict[str, str]) -> str:
         },
         headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
     )
-    assert create_resp.status_code == 200, create_resp.text
-    payload = create_resp.json()
-    thread_id = payload.get("thread_id") or payload.get("id")
-    assert thread_id, f"Create thread response missing thread identifier: {payload}"
+    assert create_resp.status_code == 201, create_resp.text
+    thread_id = create_resp.json()["id"]
+    assert thread_id
     return thread_id
 
 
-async def test_thread_history_envelope_has_all_runs_and_keeps_viewed_explicit(
-    test_client, admin_headers, standard_user
-):
-    """History 独立返回完整运行列表，读取不标记已读且不跨用户泄露。"""
+async def test_turn_pages_include_empty_turns_and_keep_viewed_explicit(test_client, admin_headers, standard_user):
+    """分页发现零消息的轮次，读取不标记已读且不跨用户泄露。"""
     thread_id = await _create_thread_for_user(test_client, admin_headers)
     conn = await asyncpg.connect(_postgres_dsn())
     prefix = uuid.uuid4().hex
     started_at = datetime(2026, 9, 5, 0, 0, 0, tzinfo=UTC)
     try:
-        empty = await test_client.get(f"/api/v1/agents/sessions/{thread_id}/history", headers=admin_headers)
+        empty = await test_client.get(f"/api/v1/agents/sessions/{thread_id}", headers=admin_headers)
         assert empty.status_code == 200, empty.text
-        assert empty.json()["items"] == []
-        assert empty.json()["runs"] == []
-        assert empty.json()["thread"]["id"] == thread_id
-        assert empty.json()["thread"]["thread_status"] == "done"
+        assert empty.json()["id"] == thread_id
+        assert empty.json()["status"] == "idle"
 
         agent_session = await conn.fetchrow("SELECT * FROM sessions WHERE thread_id = $1", thread_id)
         marker = agent_session["last_viewed_run_id"]
@@ -568,6 +572,10 @@ async def test_thread_history_envelope_has_all_runs_and_keeps_viewed_explicit(
             ],
         )
         await conn.execute(
+            "UPDATE agent_turns t SET current_run_id=r.id FROM agent_runs r WHERE t.id=r.turn_id AND t.thread_id=$1",
+            thread_id,
+        )
+        await conn.execute(
             """
             INSERT INTO messages
                 (session_record_id, role, content, delivery_status, extra_metadata, run_id, turn_id, created_at)
@@ -579,90 +587,100 @@ async def test_thread_history_envelope_has_all_runs_and_keeps_viewed_explicit(
             started_at,
             f"turn-{prefix}-0",
         )
-        response = await test_client.get(f"/api/v1/agents/sessions/{thread_id}/history", headers=admin_headers)
-        assert response.status_code == 200, response.text
-        payload = response.json()
-        assert set(payload) == {"thread", "runs", "items"}
-        assert payload["thread"]["project_id"] == empty.json()["thread"]["project_id"]
-        assert payload["thread"]["thread_status"] == "ready"
-        assert [run["run_id"] for run in payload["runs"]] == [f"{prefix}-{index:03}" for index in range(501)]
-        assert all(run["status"] == "cancelled" for run in payload["runs"])
-        assert payload["runs"][-1]["turn_id"] == f"turn-{prefix}-500"
-        assert all(run["run_type"] == "chat" for run in payload["runs"])
-        assert payload["items"] == [], "没有公开身份的内部输出不应进入历史"
-        assert "must-not-leak" not in response.text
+        page_url = f"/api/v1/agents/sessions/{thread_id}/turns"
+        turns, after = [], None
+        while True:
+            response = await test_client.get(
+                page_url,
+                headers=admin_headers,
+                params={"order": "asc", "limit": 100, **({"after": after} if after else {})},
+            )
+            assert response.status_code == 200, response.text
+            page = response.json()
+            assert len(page["data"]) <= 100
+            assert "must-not-leak" not in response.text
+            turns.extend(page["data"])
+            if not page["has_more"]:
+                break
+            after = page["last_id"]
+        assert [turn["id"] for turn in turns] == [f"turn-{prefix}-{index}" for index in range(501)]
+        assert all(turn["status"] == "cancelled" for turn in turns)
+        items = await test_client.get(f"/api/v1/agents/sessions/{thread_id}/items", headers=admin_headers)
+        assert items.json()["data"] == [], "没有公开身份的内部输出不应进入历史"
         assert await conn.fetchval("SELECT last_viewed_run_id FROM sessions WHERE thread_id = $1", thread_id) == marker
 
-        denied = await test_client.get(f"/api/v1/agents/sessions/{thread_id}/history", headers=standard_user["headers"])
+        denied = await test_client.get(f"/api/v1/agents/sessions/{thread_id}/turns", headers=standard_user["headers"])
         assert denied.status_code == 404
         assert prefix not in denied.text
         viewed = await test_client.post(f"/api/v1/agents/sessions/{thread_id}/viewed", headers=admin_headers)
         assert viewed.status_code == 200, viewed.text
-        assert viewed.json()["thread_status"] == "done"
+        assert viewed.json()["yuxi"]["unread"] is False
         assert (
             await conn.fetchval("SELECT last_viewed_run_id FROM sessions WHERE thread_id = $1", thread_id)
             == f"{prefix}-500"
         )
-        reread = await test_client.get(f"/api/v1/agents/sessions/{thread_id}/history", headers=admin_headers)
-        assert reread.json()["thread"]["thread_status"] == "done"
+        reread = await test_client.get(f"/api/v1/agents/sessions/{thread_id}", headers=admin_headers)
+        assert reread.json()["yuxi"]["unread"] is False
         deleted = await test_client.delete(f"/api/v1/agents/sessions/{thread_id}", headers=admin_headers)
         assert deleted.status_code == 405
         archived = await test_client.post(f"/api/v1/agents/sessions/{thread_id}/archive", headers=admin_headers)
         assert archived.status_code == 200, archived.text
-        assert archived.json()["status"] == "archived"
-        archived_history = await test_client.get(f"/api/v1/agents/sessions/{thread_id}/history", headers=admin_headers)
+        assert archived.json()["yuxi"]["archived"] is True
+        archived_history = await test_client.get(
+            f"/api/v1/agents/sessions/{thread_id}/turns?limit=100", headers=admin_headers
+        )
         assert archived_history.status_code == 200, archived_history.text
-        assert len(archived_history.json()["runs"]) == 501
+        assert len(archived_history.json()["data"]) == 100 and archived_history.json()["has_more"]
     finally:
         await conn.close()
 
 
-async def test_thread_tool_approval_mode_is_saved_in_session_metadata(test_client, admin_headers):
+async def test_thread_tool_approval_mode_is_saved_in_session_snapshot(test_client, admin_headers):
     thread_id = await _create_thread_for_user(test_client, admin_headers)
 
-    update_response = await test_client.patch(
+    update_response = await test_client.post(
         f"/api/v1/agents/sessions/{thread_id}",
         headers=admin_headers,
-        json={"tool_approval_mode": "always_trust"},
+        json={"yuxi": {"tool_approval_mode": "always_trust"}},
     )
 
     assert update_response.status_code == 200, update_response.text
-    assert update_response.json()["metadata"]["tool_approval_mode"] == "always_trust"
+    assert update_response.json()["yuxi"]["tool_approval_mode"] == "always_trust"
 
     list_response = await test_client.get("/api/v1/agents/sessions", headers=admin_headers)
     assert list_response.status_code == 200, list_response.text
-    thread = next(item for item in list_response.json() if item["id"] == thread_id)
-    assert thread["metadata"]["tool_approval_mode"] == "always_trust"
+    thread = next(item for item in list_response.json()["data"] if item["id"] == thread_id)
+    assert thread["yuxi"]["tool_approval_mode"] == "always_trust"
 
 
 async def test_thread_tool_approval_mode_rejects_unknown_value(test_client, admin_headers):
     thread_id = await _create_thread_for_user(test_client, admin_headers)
 
-    response = await test_client.patch(
+    response = await test_client.post(
         f"/api/v1/agents/sessions/{thread_id}",
         headers=admin_headers,
-        json={"tool_approval_mode": "unknown"},
+        json={"yuxi": {"tool_approval_mode": "unknown"}},
     )
 
     assert response.status_code == 422, response.text
 
 
-async def test_thread_list_exposes_thread_status(test_client, admin_headers):
+async def test_thread_list_exposes_work_status_and_unread(test_client, admin_headers):
     thread_id = await _create_thread_for_user(test_client, admin_headers)
 
     list_response = await test_client.get("/api/v1/agents/sessions", headers=admin_headers)
     assert list_response.status_code == 200, list_response.text
-    thread = next(item for item in list_response.json() if item["id"] == thread_id)
-    assert thread["thread_status"] in {"done", "ready", "loading"}
+    thread = next(item for item in list_response.json()["data"] if item["id"] == thread_id)
+    assert thread["status"] == "idle" and thread["yuxi"]["unread"] is False
 
 
-async def test_mark_thread_viewed_returns_thread_status(test_client, admin_headers):
+async def test_mark_thread_viewed_returns_work_status_and_unread(test_client, admin_headers):
     thread_id = await _create_thread_for_user(test_client, admin_headers)
 
     response = await test_client.post(f"/api/v1/agents/sessions/{thread_id}/viewed", headers=admin_headers)
     assert response.status_code == 200, response.text
     payload = response.json()
-    assert payload["thread_status"] in {"done", "ready", "loading"}
+    assert payload["status"] == "idle" and payload["yuxi"]["unread"] is False
 
 
 async def test_mark_thread_viewed_requires_ownership(test_client, standard_user, admin_headers):
@@ -918,24 +936,27 @@ async def test_standard_user_restores_visible_function_items_without_internal_au
             headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
             json={
                 "agent_id": slug,
-                "model_spec": MODEL,
+                "agent": {"model": MODEL},
                 "tool_approval_mode": "always_trust",
                 "title": make_test_session_title("standard-visible-items"),
                 "input": [{"role": "user", "content": [{"type": "input_text", "text": OUTPUT}]}],
             },
         )
-        assert created.status_code == 200, created.text
-        thread_id, turn_id = created.json()["thread_id"], created.json()["turn_id"]
+        assert created.status_code == 201, created.text
+        thread_id, turn_id = created.json()["id"], created.json()["yuxi"]["receipt"]["turn_id"]
         assert (await _terminal_turn(test_client, headers, thread_id, turn_id))["status"] == "completed"
-        history = await test_client.get(f"/api/v1/agents/sessions/{thread_id}/history", headers=headers)
+        history = await test_client.get(
+            f"/api/v1/agents/sessions/{thread_id}/items?order=asc&limit=100", headers=headers
+        )
         assert history.status_code == 200, history.text
-        items = history.json()["items"]
+        items = history.json()["data"]
         call = next(item for item in items if item["type"] == "function_call")
         output = next(item for item in items if item["type"] == "function_call_output")
         assert call["name"] == "present_artifacts" and call["arguments"] == {"filepaths": []}
         assert call["status"] == output["status"] == "completed" and call["call_id"] == output["call_id"]
         assert TOOL_RESULT in output["output"]
-        assert (await test_client.get(f"/api/v1/agents/sessions/{thread_id}/audits", headers=headers)).status_code == 403
+        audits = await test_client.get(f"/api/v1/agents/sessions/{thread_id}/audits", headers=headers)
+        assert audits.status_code == 403
         assert all(
             field not in history.text
             for field in ("system_prompt", "checkpoint", "manifest_fingerprint", "source_model_operation_id")

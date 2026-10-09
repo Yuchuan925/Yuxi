@@ -113,16 +113,15 @@ async def test_state_view_reads_persisted_fields_without_agent_runtime(checkpoin
         thread_id="thread",
         current_user=SimpleNamespace(uid="user"),
         db=None,
-        include_messages=True,
         include_relations=False,
     )
     assert response["agent_state"] == {
         key: payload[key] for key in ("todos", "artifacts", "cooperation", "token_usage")
     }
-    assert response["items"] == []
+    assert "items" not in response
     assert "saved message" not in str(response)
     assert "interrupt" not in response
-    assert set(response) == {"agent_state", "items"}
+    assert set(response) == {"agent_state"}
 
 
 @pytest.mark.parametrize("owner,status", [("other-user", "active"), ("user", "deleted")])

@@ -155,7 +155,12 @@ class AgentLoadTestScriptTest(unittest.IsolatedAsyncioTestCase):
             input_id="input-1",
             turn_id="turn-1",
             run_id="run-1",
-            turn_payload={"status": "completed", "result_run_id": "run-1"},
+            turn_payload={
+                "id": "turn-1",
+                "object": "agent.session.turn",
+                "status": "completed",
+                "yuxi": {"result_run_id": "run-1"},
+            },
             evidence=ToolEvidence(execute_started=True, execute_finished=True, output_marker_seen=False),
         )
 
@@ -164,14 +169,28 @@ class AgentLoadTestScriptTest(unittest.IsolatedAsyncioTestCase):
 
     def test_function_output_proves_execute_completion(self):
         evidence = ToolEvidence(execute_started=True, call_ids={"execute-call"})
-        observe_tool_evidence({"type":"agent.session.turn.item.done","item":{
-            "type":"function_call_output","call_id":"execute-call","status":"completed","output":"LOAD_TEST_TOOL_OK"}},evidence)
+        observe_tool_evidence(
+            {
+                "type": "agent.session.turn.item.done",
+                "item": {
+                    "type": "function_call_output",
+                    "call_id": "execute-call",
+                    "status": "completed",
+                    "output": "LOAD_TEST_TOOL_OK",
+                },
+            },
+            evidence,
+        )
         self.assertTrue(evidence.execute_finished)
         self.assertTrue(evidence.output_marker_seen)
 
     def test_first_model_output_accepts_text_and_full_function_call(self):
-        self.assertTrue(contains_model_output({"type":"agent.session.turn.output_text.delta","delta":"你"}))
-        self.assertTrue(contains_model_output({"type":"agent.session.turn.item.added","item":{"type":"function_call","arguments":{}}}))
+        self.assertTrue(contains_model_output({"type": "agent.session.turn.output_text.delta", "delta": "你"}))
+        self.assertTrue(
+            contains_model_output(
+                {"type": "agent.session.turn.item.added", "item": {"type": "function_call", "arguments": {}}}
+            )
+        )
 
     def test_metadata_does_not_count_as_first_model_output(self) -> None:
         self.assertFalse(
@@ -238,7 +257,12 @@ class AgentLoadTestScriptTest(unittest.IsolatedAsyncioTestCase):
             input_id="input-1",
             turn_id="turn-1",
             run_id="run-1",
-            turn_payload={"status": "completed", "result_run_id": "run-1"},
+            turn_payload={
+                "id": "turn-1",
+                "object": "agent.session.turn",
+                "status": "completed",
+                "yuxi": {"result_run_id": "run-1"},
+            },
             evidence=ToolEvidence(execute_started=True, execute_finished=True, output_marker_seen=True),
         )
 
@@ -267,7 +291,12 @@ class AgentLoadTestScriptTest(unittest.IsolatedAsyncioTestCase):
             input_id="input-1",
             turn_id="turn-1",
             run_id="run-1",
-            turn_payload={"status": "completed", "result_run_id": "run-1"},
+            turn_payload={
+                "id": "turn-1",
+                "object": "agent.session.turn",
+                "status": "completed",
+                "yuxi": {"result_run_id": "run-1"},
+            },
             evidence=ToolEvidence(execute_started=True, execute_finished=True, output_marker_seen=True),
         )
 

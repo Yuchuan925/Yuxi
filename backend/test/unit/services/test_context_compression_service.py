@@ -38,7 +38,14 @@ class _Graph:
 @pytest.mark.unit
 @pytest.mark.asyncio
 @pytest.mark.parametrize("thread_id", ["thread-1", "child-thread"])
-@pytest.mark.parametrize("config_snapshot", [None, {}, {"summary_prompt": "FROZEN_SUMMARY"}])
+@pytest.mark.parametrize(
+    "config_snapshot",
+    [
+        None,
+        {"model": "provider:model", "tool_approval_mode": "default"},
+        {"model": "provider:model", "tool_approval_mode": "default", "summary_prompt": "FROZEN_SUMMARY"},
+    ],
+)
 async def test_compress_thread_context_uses_locked_idle_thread(
     monkeypatch: pytest.MonkeyPatch, thread_id: str, config_snapshot: dict | None
 ) -> None:
@@ -50,7 +57,7 @@ async def test_compress_thread_context_uses_locked_idle_thread(
         agent_id="assistant",
         config_snapshot=config_snapshot,
         tree_root_thread_id="thread-1",
-        extra_metadata={"model_spec": "provider:model"},
+        extra_metadata={},
     )
     agent = SimpleNamespace(context_schema=_Context)
 
@@ -78,9 +85,6 @@ async def test_compress_thread_context_uses_locked_idle_thread(
     async def idle(**_kwargs):
         events.append("idle")
 
-    async def resolve_model(*_args, **_kwargs):
-        return "provider:model"
-
     async def workdir(**_kwargs):
         return "projects/project-1"
 
@@ -107,12 +111,19 @@ async def test_compress_thread_context_uses_locked_idle_thread(
     monkeypatch.setattr(service, "SessionRepository", SessionRepo)
     monkeypatch.setattr(service, "AgentRepository", AgentRepo)
     monkeypatch.setattr(service, "_ensure_thread_idle", idle)
-    monkeypatch.setattr(service, "resolve_agent_run_model_spec", resolve_model)
     monkeypatch.setattr(service, "ensure_session_workdir_available", workdir)
     monkeypatch.setattr(service, "_ensure_runtime_available", runtime)
     monkeypatch.setattr(service, "_release_runtime", release)
     monkeypatch.setattr(service, "_compress_agent_checkpoint", compress)
     monkeypatch.setattr(service, "get_agent_backend", lambda _backend_id: agent)
+
+    if config_snapshot is None:
+        with pytest.raises(ValueError, match="Session 缺少配置快照"):
+            await service.compress_thread_context(
+                thread_id=thread_id, current_user=SimpleNamespace(uid="user-1", role="user"), db=Db()
+            )
+        assert events == [("lock", thread_id), "idle"]
+        return
 
     result = await service.compress_thread_context(
         thread_id=thread_id,

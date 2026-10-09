@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import JSON, String, and_, case, cast, column, func, literal, or_, select, true, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import defer, selectinload
 
 from yuxi.modules.agents.models.messages import Message
 from yuxi.modules.agents.models.runs import AgentRun
@@ -166,4 +166,82 @@ class PublicItemRepository:
         )
         if turn_id is not None:
             statement = statement.where(Message.turn_id == turn_id)
+        return list((await self.db.execute(statement)).all())
+
+    async def list_page(
+        self,
+        *,
+        thread_id: str,
+        uid: str,
+        app_id: str | None,
+        turn_id: str | None,
+        after: str | None,
+        limit: int,
+        order: str,
+    ) -> list:
+        """在数据库内按公开身份分页，同一消息的多个 item 可以跨页。"""
+        from yuxi.modules.agents.models.sessions import Session
+        from yuxi.modules.agents.models.turns import AgentTurn
+
+        public = (
+            func.json_each(func.coalesce(Message.extra_metadata["public_items"], literal({}, type_=JSON)))
+            .table_valued(column("key", String), column("value", JSON))
+            .lateral()
+        )
+        index = func.coalesce(public.c.value["yuxi"]["output_index"].as_integer(), -1)
+        identity = case(
+            (Message.role == "user", literal("input_") + cast(Message.id, String)),
+            else_=public.c.value["id"].as_string(),
+        )
+        source = (
+            select(
+                Message.id,
+                Message.role,
+                Message.turn_id,
+                Message.run_id,
+                case((Message.role == "user", Message.content), else_="").label("content"),
+                case((Message.role == "user", Message.extra_metadata), else_=None).label("extra_metadata"),
+                Message.created_at,
+                Message.message_type,
+                Message.delivery_status,
+                AgentRun,
+                AgentTurn.result_run_id,
+                public.c.value.label("public_item"),
+                index.label("item_index"),
+            )
+            .select_from(Message)
+            .join(Session, Message.session_record_id == Session.id)
+            .outerjoin(AgentRun, Message.run_id == AgentRun.id)
+            .outerjoin(AgentTurn, Message.turn_id == AgentTurn.id)
+            .outerjoin(public, true())
+            .where(
+                Session.thread_id == thread_id,
+                Session.uid == uid,
+                Session.app_id == app_id,
+                or_(
+                    and_(Message.role == "user", public.c.key.is_(None)),
+                    and_(Message.role != "user", public.c.key.is_not(None)),
+                ),
+            )
+        )
+        if turn_id is not None:
+            source = source.where(Message.turn_id == turn_id)
+        if after is not None:
+            cursor = (
+                await self.db.execute(source.with_only_columns(Message.id, index).where(identity == after))
+            ).one_or_none()
+            if cursor is None:
+                raise ValueError("after 不是当前 Turn 的公开 item" if turn_id else "after 不是当前 Session 的公开 item")
+            position = tuple_(Message.id, index)
+            source = source.where(position > tuple_(*cursor) if order == "asc" else position < tuple_(*cursor))
+        sorting = (Message.id.asc(), index.asc()) if order == "asc" else (Message.id.desc(), index.desc())
+        statement = (
+            source.order_by(*sorting)
+            .limit(limit + 1)
+            .options(
+                defer(AgentRun.input_payload, raiseload=True),
+                defer(AgentRun.manifest, raiseload=True),
+                defer(AgentRun.origin_metadata, raiseload=True),
+            )
+        )
         return list((await self.db.execute(statement)).all())

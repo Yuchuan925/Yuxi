@@ -1,6 +1,8 @@
 <script setup>
 import { computed, nextTick, onUnmounted, ref, watch } from "vue";
 import {
+  Paperclip,
+  Image,
   Bot,
   Smartphone,
   Tablet,
@@ -37,6 +39,8 @@ const workbenchOpen = ref(window.innerWidth >= 1200);
 const sidebarOpen = ref(false);
 const list = ref(null);
 const composer = ref(null);
+const attachmentPicker = ref(null);
+const imagePicker = ref(null);
 const narrow = ref(window.innerWidth < 1200);
 const drawer = ref(null);
 let drawerTrigger;
@@ -61,8 +65,7 @@ const blocked = computed(
     state.sending ||
     !!state.pending ||
     waitingForUser.value ||
-    turn.value?.status === "cancelling" ||
-    state.snapshot?.queue_paused,
+    state.snapshot?.yuxi.queue_paused,
 );
 const statusText = computed(() => {
   if (state.connecting) return "连接中";
@@ -70,10 +73,9 @@ const statusText = computed(() => {
   if (state.stream === "reconnecting") return "正在重连";
   if (state.stream === "error") return "订阅已停止";
   const labels = {
-    pending: "等待执行",
-    running: "正在回复",
-    waiting: "等待中",
-    cancelling: "正在停止",
+    queued: "等待执行",
+    in_progress: "正在回复",
+    requires_action: "等待中",
     failed: "执行失败",
     cancelled: "已停止",
   };
@@ -257,23 +259,23 @@ function onKeydown(event) {
             <div class="conversation-list">
               <button
                 v-for="thread in state.threads"
-                :key="thread.thread_id"
+                :key="thread.id"
                 class="conversation-option"
-                :class="{ selected: thread.thread_id === state.threadId }"
-                @click="chooseThread(thread.thread_id)"
+                :class="{ selected: thread.id === state.threadId }"
+                @click="chooseThread(thread.id)"
               >
                 <MessageSquare :size="15" /><span
-                  ><strong>{{ thread.title || "新对话" }}</strong
+                  ><strong>{{ thread.yuxi.title || "新对话" }}</strong
                   ><small>{{
-                    thread.updated_at
-                      ? new Date(thread.updated_at).toLocaleDateString(
+                    thread.last_active_at
+                      ? new Date(thread.last_active_at * 1000).toLocaleDateString(
                           "zh-CN",
                           { month: "short", day: "numeric" },
                         )
                       : ""
                   }}</small></span
                 ><span
-                  v-if="thread.activity_status === 'running'"
+                  v-if="thread.status === 'in_progress'"
                   class="status-dot online"
                 ></span>
               </button>
@@ -375,9 +377,7 @@ function onKeydown(event) {
             <div v-if="state.pending && !state.sending" class="retry-notice">
               <span>接收结果未知，重试会沿用原请求。</span
               ><button class="text-button" @click="demo.retry()">重试</button
-              ><button class="text-button" @click="state.pending = null">
-                放弃
-              </button>
+              >
             </div>
             <div
               ref="list"
@@ -389,6 +389,9 @@ function onKeydown(event) {
                   list.scrollHeight - list.scrollTop - list.clientHeight < 90
               "
             >
+              <button v-if="state.itemPage.hasMore" class="text-button" :disabled="state.itemPage.loading" @click="demo.loadEarlier()">
+                加载更早消息
+              </button>
               <div v-if="!visibleItems.length" class="chat-welcome">
                 <div class="welcome-icon">
                   <Bot :size="29" :stroke-width="1.6" />
@@ -434,7 +437,7 @@ function onKeydown(event) {
                 </div>
               </div>
               <div v-else class="message-date">
-                {{ state.snapshot?.title || "对话" }}
+                {{ state.snapshot?.yuxi.title || "对话" }}
               </div>
               <ChatMessage
                 v-for="item in visibleItems"
@@ -446,7 +449,7 @@ function onKeydown(event) {
               <div v-if="running && !waitingForUser" class="working-notice">
                 <span class="typing-dots"><i></i><i></i><i></i></span
                 >{{
-                  turn?.status === "waiting"
+                  turn?.waitpoint?.kind === "cooperation"
                     ? "Agent 正在等待协作结果"
                     : "Agent 正在处理"
                 }}
@@ -530,7 +533,7 @@ function onKeydown(event) {
                 </button>
               </form>
             </div>
-            <div v-if="state.snapshot?.queue_paused" class="queue-paused">
+            <div v-if="state.snapshot?.yuxi.queue_paused" class="queue-paused">
               <span>后续消息已暂停</span
               ><button
                 class="text-button"
@@ -574,7 +577,15 @@ function onKeydown(event) {
                   ><span v-else class="enter-hint">Enter 发送</span>
                 </div>
               </div>
+              <div v-if="state.draftFiles.length || state.draftImages.length" class="composer-status">
+                <span v-for="file in state.draftFiles" :key="file.id">{{ file.filename }} <button type="button" :disabled="state.sending || !!state.pending" :aria-label="`移除附件 ${file.filename}`" @click="demo.removeFile(file)"><X :size="12" /></button></span>
+                <span v-for="(image, index) in state.draftImages" :key="index">{{ image.name }} <button type="button" :disabled="state.sending || !!state.pending" :aria-label="`移除图片 ${image.name}`" @click="state.draftImages.splice(index, 1)"><X :size="12" /></button></span>
+              </div>
+              <input ref="attachmentPicker" type="file" multiple hidden @change="demo.addFiles($event.target.files); $event.target.value = ''" />
+              <input ref="imagePicker" type="file" multiple accept="image/*" hidden @change="demo.addFiles($event.target.files, true); $event.target.value = ''" />
               <form class="composer" @submit.prevent="demo.send()">
+                <button type="button" class="stop-button" aria-label="添加附件" :disabled="blocked || state.uploading" @click="attachmentPicker.click()"><Paperclip :size="16" /></button>
+                <button type="button" class="stop-button" aria-label="添加图片" :disabled="blocked || state.uploading" @click="imagePicker.click()"><Image :size="16" /></button>
                 <textarea
                   ref="composer"
                   v-model="state.draft"
@@ -590,7 +601,7 @@ function onKeydown(event) {
                   class="send-button"
                   type="submit"
                   aria-label="发送消息"
-                  :disabled="blocked || !state.draft.trim()"
+                  :disabled="blocked || state.uploading || (!state.draft.trim() && !state.draftImages.length)"
                 >
                   <RefreshCw
                     v-if="state.sending"

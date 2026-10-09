@@ -25,13 +25,13 @@ CREATE_KEY=$(python3 -c 'import uuid; print(uuid.uuid4())')
 CREATED=$(curl --fail-with-body "$BASE_URL/api/v1/agents/sessions" \
   -H "Authorization: Bearer $API_KEY" -H "X-End-User-Id: $END_USER_ID" \
   -H "Idempotency-Key: $CREATE_KEY" -H 'Content-Type: application/json' \
-  -d '{"agent_id":"default-chatbot","input":[{"role":"user","content":[{"type":"input_text","text":"用一句话介绍你的能力"}]}]}')
+  -d '{"agent_id":"default-chatbot","input":"用一句话介绍你的能力"}')
 SESSION_ID=$(printf '%s' "$CREATED" | jq -r '.id')
-INPUT_ID=$(printf '%s' "$CREATED" | jq -r '.input_id')
+INPUT_ID=$(printf '%s' "$CREATED" | jq -r '.yuxi.receipt.input_id')
 printf '%s\n' "$CREATED" | jq .
 ```
 
-观察 HTTP `200`、`object=agent.session` 和非空的 Input ID。接收成功后工作异步执行；排队时创建回执的 `turn_id/run_id` 可为空。
+观察 HTTP `201`、`object=agent.session` 和非空的 Input ID。接收成功后工作异步执行；排队时创建回执的 `yuxi.receipt.turn_id/run_id` 可为空。
 
 ## 定位本轮并读取结果
 
@@ -49,11 +49,11 @@ printf '%s\n' "$INPUT" | jq .
 ```bash
 curl --fail-with-body "$BASE_URL/api/v1/agents/sessions/$SESSION_ID/turns/$TURN_ID" \
   -H "Authorization: Bearer $API_KEY" -H "X-End-User-Id: $END_USER_ID" | jq .
-curl --fail-with-body "$BASE_URL/api/v1/agents/sessions/$SESSION_ID/history" \
+curl --fail-with-body "$BASE_URL/api/v1/agents/sessions/$SESSION_ID/items?order=asc&limit=100" \
   -H "Authorization: Bearer $API_KEY" -H "X-End-User-Id: $END_USER_ID" | jq .
 ```
 
-`completed` 时检查 Turn 的 `result_run_id` 和结果。Turn 的 `output` 提供本次结果；历史的 `items` 展示持久消息和工具过程，`phase=final_answer` 标识对应 Turn 明确结果的助手正文。
+`in_progress` 继续等待，协作等待同样如此；`requires_action` 按 `yuxi.waitpoint` 回答或审批。`completed` 时检查 Turn 的 `yuxi.result_run_id` 和 `yuxi.output`。Items 的 `data` 展示持久消息及工具过程，`phase=final_answer` 标识该 Turn 明确结果对应的助手正文。若 `has_more=true`，将 `last_id` 作为下一页 `after`。
 
 ## 继续对话与观察增量
 
@@ -74,4 +74,30 @@ curl --no-buffer --fail-with-body "$BASE_URL/api/v1/agents/sessions/$SESSION_ID/
   -H "Authorization: Bearer $API_KEY" -H "X-End-User-Id: $END_USER_ID"
 ```
 
-SSE 的 `data` 是事件 JSON，`id` 是恢复 cursor。连接覆盖多轮工作；观察目标 Turn 终态、回读结果后主动关闭。断线重连携带 `Last-Event-ID`；收到 `yuxi.session.resync` 时回读历史和 Session，再按稳定 item ID 合并。完整限制与差异见[公开 API 参考](../advanced/agents-public-api.md)。
+SSE 的 `data` 是事件 JSON，`id` 是恢复 cursor。连接覆盖多轮工作；观察目标 Turn 终态、回读结果后主动关闭。断线重连携带 `Last-Event-ID`；收到 `yuxi.session.resync` 时分页回读目标 Turn 的 Items 与详情，合并成功后再推进游标。完整限制与差异见[公开 API 参考](../advanced/agents-public-api.md)。
+
+## 恢复丢失的提交响应
+
+已有 Session 的消息响应丢失时，用保存的 MESSAGE_KEY 读取原回执，取出 INPUT_ID 后继续前面的定位步骤。
+
+```bash
+RECEIPT=$(curl --fail-with-body --get "$BASE_URL/api/v1/agents/sessions/$SESSION_ID/receipt" \
+  -H "Authorization: Bearer $API_KEY" -H "X-End-User-Id: $END_USER_ID" \
+  --data-urlencode "idempotency_key=$MESSAGE_KEY")
+INPUT_ID=$(printf '%s' "$RECEIPT" | jq -r '.input_id')
+printf '%s\n' "$RECEIPT" | jq .
+```
+
+创建响应丢失时重放相同创建请求和 CREATE_KEY；回执查询返回 404 时重放相同消息和 MESSAGE_KEY。每次观察都沿 Input 的消费归属读取目标 Turn。列表提供更早轮次和内容的发现入口，最终结果始终读取对应 Turn 的 `yuxi.output`。
+
+## 随消息提交附件或图片
+
+发送前上传文件草稿，得到 FILE_ID；上传不会建立会话或写入 Workdir。
+
+```bash
+FILE_ID=$(curl --fail-with-body "$BASE_URL/api/v1/agents/files" \
+  -H "Authorization: Bearer $API_KEY" -H "X-End-User-Id: $END_USER_ID" \
+  -F 'file=@report.pdf' | jq -r '.id')
+```
+
+创建时将 FILE_ID 放入顶层 `attachment_file_ids`，后续消息放入事件 `yuxi.attachment_file_ids`。例如后续请求的 yuxi 为 `{"mode":"follow_up","attachment_file_ids":["<file-id>"]}`。接收后通过 Input 的 `attachment_status` 确认文件 ready；准备失败会保留接收事实并恢复同一提交。直接视觉输入在消息 content 中加入 `{"type":"input_image","image_url":"data:image/png;base64,..."}`，保留实际 MIME 与完整 URL。完整规则见[图片与文件附件](../advanced/agents-public-api.md#图片与文件附件)。

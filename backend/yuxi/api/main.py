@@ -92,7 +92,7 @@ app = FastAPI(
             "name": "agents-public-v1",
             "description": (
                 "对外智能体 Session API。JWT 或 Bearer API Key 鉴权；APP Key 用 X-End-User-Id 区分终端用户。"
-                "创建和事件提交必须携带 Idempotency-Key。公开路径使用 sessions；扩展动作和生命周期规则见接入说明。"
+                "创建和事件提交必须携带 Idempotency-Key。支持 OpenAI Agents 核心会话协议子集，Yuxi 扩展有明确说明。"
                 "SSE 为长期订阅，调用方按 Turn 终态回读结果并主动关闭。"
             ),
             "externalDocs": {

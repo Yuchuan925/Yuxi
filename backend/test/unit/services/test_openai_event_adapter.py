@@ -235,7 +235,9 @@ def test_turn_lifecycle_events_keep_required_protocol_fields(name, status):
         created_by_run_id=None,
         error_type=None,
     )
-    turn = SimpleNamespace(id="turn", created_at=now, finished_at=now, result_run_id="run", current_run_id="run")
-    event = events._turn_event(None, run, turn, name, status)
+    turn = SimpleNamespace(
+        id="turn", thread_id="thread", created_at=now, finished_at=now, result_run_id="run", current_run_id="run"
+    )
+    event = events._turn_event(None, run, turn, name, status, now)
     jsonschema.validate(event, SCHEMA)
     assert event["turn"]["subagent_id"] is None

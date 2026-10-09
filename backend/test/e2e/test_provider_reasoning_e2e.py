@@ -67,8 +67,8 @@ async def test_reasoning_stream_matches_persisted_history(e2e_client, e2e_header
                 "title": make_test_session_title("reasoning-e2e"),
             },
         )
-        assert response.status_code == 200, response.text
-        thread_id = response.json()["thread_id"]
+        assert response.status_code == 201, response.text
+        thread_id = response.json()["id"]
         response = await client.post(
             f"/api/v1/agents/sessions/{thread_id}/events",
             headers={**headers, "Idempotency-Key": f"reasoning-input-{uuid4().hex}"},
@@ -122,13 +122,13 @@ async def test_reasoning_stream_matches_persisted_history(e2e_client, e2e_header
         assert turn_response.status_code == 200, turn_response.text
         turn = turn_response.json()
         assert turn["status"] == "completed", turn
-        assert turn["result_run_id"] == run_id, turn
+        assert turn["yuxi"]["result_run_id"] == run_id, turn
         reasoning = "".join(reasoning_parts)
-        history = await client.get(f"/api/v1/agents/sessions/{thread_id}/history", headers=headers)
+        history = await client.get(f"/api/v1/agents/sessions/{thread_id}/items?order=asc&limit=100", headers=headers)
         assert history.status_code == 200
         messages = [
             m
-            for m in history.json()["items"]
+            for m in history.json()["data"]
             if m["type"] == "message" and m["role"] == "assistant" and m["yuxi"]["run_id"] == run_id
         ]
         assert len(messages) == 1

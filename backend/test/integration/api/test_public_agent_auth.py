@@ -1,12 +1,12 @@
 """Public Agent 对话入口的认证与缺失资源边界。"""
 
-import json
 import os
 import uuid
 
 import asyncpg
 import pytest
 from test.live_api_cleanup import make_test_session_title
+from yuxi.infrastructure.minio import get_minio_client
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
@@ -77,39 +77,45 @@ async def test_public_input_rejects_unbound_attachment_without_persisting_receip
         json={"agent_id": slug, "title": make_test_session_title("attachment-input")},
         headers={**admin_headers, "Idempotency-Key": str(uuid.uuid4())},
     )
-    assert created.status_code == 200, created.text
-    thread_id = created.json()["thread_id"]
-    file_id = f"file-{uuid.uuid4().hex}"
+    assert created.status_code == 201, created.text
+    thread_id = created.json()["id"]
+    file_id = uuid.uuid4().hex
+    accepted = None
+    uploaded = None
     event_key = str(uuid.uuid4())
     conn = await asyncpg.connect(os.environ["POSTGRES_URL"].replace("+asyncpg", ""))
     response = None
     try:
+        await conn.execute("UPDATE sessions SET queue_paused = TRUE WHERE thread_id = $1", thread_id)
+        body = {
+            "events": [
+                {
+                    "type": "agent.session.input.message",
+                    "input": [{"role": "user", "content": [{"type": "input_text", "text": "read attachment"}]}],
+                    "yuxi": {"mode": "follow_up", "attachment_file_ids": [file_id]},
+                }
+            ]
+        }
         if attachment_kind == "bound_elsewhere":
-            await conn.execute(
-                "UPDATE sessions SET queue_paused = TRUE, "
-                "extra_metadata = jsonb_set(coalesce(extra_metadata::jsonb, '{}'::jsonb), "
-                "'{attachments}', $2::jsonb)::json "
-                "WHERE thread_id = $1",
-                thread_id,
-                json.dumps([{"file_id": file_id, "input_id": "other-input", "status": "ready"}]),
+            uploaded = await test_client.post(
+                "/api/v1/agents/files", files={"file": ("source.txt", b"original", "text/plain")}, headers=admin_headers
             )
-        else:
-            await conn.execute("UPDATE sessions SET queue_paused = TRUE WHERE thread_id = $1", thread_id)
+            assert uploaded.status_code == 201, uploaded.text
+            file_id = uploaded.json()["id"]
+            body["events"][0]["yuxi"]["attachment_file_ids"] = [file_id]
+            accepted = await test_client.post(
+                f"/api/v1/agents/sessions/{thread_id}/events",
+                json=body,
+                headers={**admin_headers, "Idempotency-Key": str(uuid.uuid4())},
+            )
+            assert accepted.status_code == 202, accepted.text
 
         response = await test_client.post(
             f"/api/v1/agents/sessions/{thread_id}/events",
-            json={
-                "events": [
-                    {
-                        "type": "agent.session.input.message",
-                        "input": [{"role": "user", "content": [{"type": "input_text", "text": "read attachment"}]}],
-                        "yuxi": {"mode": "follow_up", "attachment_file_ids": [file_id]},
-                    }
-                ]
-            },
+            json=body,
             headers={**admin_headers, "Idempotency-Key": event_key},
         )
-        assert response.status_code == 422, response.text
+        assert response.status_code == (409 if accepted else 404), response.text
         facts = await conn.fetchrow(
             "SELECT "
             "(SELECT COUNT(*) FROM agent_input_receipts WHERE thread_id = $1 "
@@ -121,10 +127,15 @@ async def test_public_input_rejects_unbound_attachment_without_persisting_receip
             thread_id,
             event_key,
         )
-        assert dict(facts) == {"receipts": 0, "inputs": 0, "runs": 0, "messages": 0}
+        assert dict(facts) == {
+            "receipts": 0,
+            "inputs": int(accepted is not None),
+            "runs": 0,
+            "messages": int(accepted is not None),
+        }
     finally:
-        if response is not None and response.status_code == 202:
-            input_id = response.json().get("input_id")
+        if accepted is not None:
+            input_id = accepted.json().get("input_id")
             if input_id:
                 cancelled = await test_client.post(
                     f"/api/v1/agents/sessions/{thread_id}/events",
@@ -135,3 +146,9 @@ async def test_public_input_rejects_unbound_attachment_without_persisting_receip
         archived = await test_client.post(f"/api/v1/agents/sessions/{thread_id}/archive", headers=admin_headers)
         assert archived.status_code == 200, archived.text
         await conn.close()
+        if uploaded is not None and uploaded.status_code == 201:
+            uid = str((await test_client.get("/api/auth/me", headers=admin_headers)).json()["uid"])
+            minio = get_minio_client()
+            await minio.adelete_objects_by_prefix(
+                minio.KB_BUCKETS["documents"], f"tmp/chat_attachments/{uid}/{file_id}/"
+            )

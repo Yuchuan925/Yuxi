@@ -123,8 +123,8 @@ async def test_edited_shared_skill_is_loaded_by_next_run(e2e_client: httpx.Async
             headers={**e2e_headers, "Idempotency-Key": f"skill-edit-thread-{uuid.uuid4()}"},
             json={"agent_id": agent_slug, "title": make_test_session_title("shared-skill-edit")},
         )
-        assert thread.status_code == 200, thread.text
-        thread_id = str(thread.json()["thread_id"])
+        assert thread.status_code == 201, thread.text
+        thread_id = str(thread.json()["id"])
         run = await e2e_client.post(
             f"/api/v1/agents/sessions/{thread_id}/events",
             headers={**e2e_headers, "Idempotency-Key": f"skill-edit-input-{uuid.uuid4()}"},
@@ -167,7 +167,7 @@ async def test_edited_shared_skill_is_loaded_by_next_run(e2e_client: httpx.Async
         )
         assert turn.status_code == 200, turn.text
         assert turn.json()["status"] == "completed", turn.text
-        assert turn.json()["result_run_id"] == run_id, turn.text
+        assert turn.json()["yuxi"]["result_run_id"] == run_id, turn.text
         assert get_user_skills_root_dir(uid).joinpath(slug, "SKILL.md").read_text(encoding="utf-8") == updated
 
         conn = await asyncpg.connect(postgres_dsn())

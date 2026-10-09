@@ -59,6 +59,9 @@ async def test_identity_prompt_uses_persisted_member_and_refreshes_for_new_run(m
     first = "\n".join(block["text"] for block in handler.call_args.args[0].system_message.content)
     assert '"role": "根会话"' in first and '"session_id": "root-id"' in first
     assert "原始 Agent 指令" in first
+    assert "@agent:<id>" in first
+    assert "create_session 的 agent_id" in first
+    assert "不要求无条件创建子会话" in first
     context.run_id = "run-2"
     await middleware.awrap_model_call(request, handler)
     second = "\n".join(block["text"] for block in handler.call_args.args[0].system_message.content)

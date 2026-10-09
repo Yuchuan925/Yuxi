@@ -270,7 +270,11 @@ async def get_turn_snapshot(*, db: AsyncSession, scope: ActorScope, thread_id: s
 
         output = serialize_public_items(output_message, result_run, turn.result_run_id)
     audits = await turn_repo.list_model_usage_audits(turn.id)
+    from yuxi.modules.agents.services.public_resources import turn_core
+
+    started_at = min((run.started_at for run in runs if run.started_at), default=None)
     return {
+        "core": turn_core(turn, current_run, started_at=started_at),
         "turn_id": turn.id,
         "thread_id": thread_id,
         "status": turn.status,
@@ -318,29 +322,47 @@ def _summarize_turn_usage(audits: list[Message]) -> dict:
     }
 
 
-async def list_turn_messages(
-    *, db: AsyncSession, scope: ActorScope, thread_id: str, turn_id: str, after_id: str | None = None, limit: int = 50
-) -> list[dict]:
-    """读取本轮原始输入与明确绑定的用户可见输出。"""
+async def list_turn_page(
+    *,
+    db: AsyncSession,
+    scope: ActorScope,
+    thread_id: str,
+    after: str | None,
+    limit: int,
+    order: str,
+) -> dict:
+    """批量投影轮次列表，完整输出由单轮资源查询。"""
     await require_thread(db=db, scope=scope, thread_id=thread_id)
-    turn = await AgentTurnRepository(db).get_for_scope(
-        turn_id=turn_id, thread_id=thread_id, uid=scope.uid, app_id=scope.app_id
+    repo = AgentTurnRepository(db)
+    try:
+        rows = await repo.list_page(
+            thread_id=thread_id, uid=scope.uid, app_id=scope.app_id, after=after, limit=limit, order=order
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    starts = await repo.get_start_times(
+        turn_ids=[turn.id for turn, _run in rows[:limit]], uid=scope.uid, app_id=scope.app_id
     )
-    if turn is None:
-        raise HTTPException(status_code=404, detail="Turn 不存在")
-    from yuxi.modules.agents.repositories.public_items import PublicItemRepository
-    from yuxi.modules.agents.services.public_items import serialize_public_items
+    from yuxi.modules.agents.services.public_resources import turn_core
 
-    rows = await PublicItemRepository(db).list_items(
-        thread_id=thread_id, uid=scope.uid, app_id=scope.app_id, turn_id=turn_id
-    )
-    items = [item for message, run, result_id in rows for item in serialize_public_items(message, run, result_id)]
-    if after_id is not None:
-        position = next((index for index, item in enumerate(items) if item["id"] == after_id), None)
-        if position is None:
-            raise HTTPException(status_code=400, detail="after_id 不是当前 Turn 的公开 item")
-        items = items[position + 1 :]
-    return items[:limit]
+    data = [
+        {
+            **turn_core(turn, run, started_at=starts.get(turn.id)),
+            "yuxi": {
+                "current_run_id": turn.current_run_id,
+                "result_run_id": turn.result_run_id,
+                "waitpoint": turn.waitpoint,
+            },
+        }
+        for turn, run in rows[:limit]
+    ]
+    return {
+        "object": "list",
+        "data": data,
+        "first_id": data[0]["id"] if data else None,
+        "last_id": data[-1]["id"] if data else None,
+        "has_more": len(rows) > limit,
+    }
 
 
 async def settle_waiting_cancel(*, thread_id: str, turn_id: str, uid: str, app_id: str | None) -> bool:
@@ -422,9 +444,10 @@ async def reconcile_cancelling_turns() -> list[str]:
 
 
 async def _clear_waitpoint_checkpoint(run: AgentRun) -> None:
-    """移除未执行的工具调用，再推进等待节点而不执行工具。"""
+    """为取消中的 Run 装配原图并清理等待 checkpoint。"""
     from yuxi.modules.agents.repositories.definitions import AgentRepository
     from yuxi.modules.agents.runtime.agent_backends import get_agent_backend
+    from yuxi.modules.agents.runtime.checkpoint_cleanup import cancel_waitpoint_checkpoint
     from yuxi.modules.agents.runtime.sandbox.paths import runtime_workdir_path
     from yuxi.modules.workspace.services.bindings import resolve_session_workdir_binding
 
@@ -441,7 +464,7 @@ async def _clear_waitpoint_checkpoint(run: AgentRun) -> None:
         binding = await resolve_session_workdir_binding(agent_session=agent_session, uid=run.uid, db=db)
 
     context = backend.context_schema()
-    context.update_config((agent_item.config_json or {}).get("context") or {})
+    context.update_config(run.input_payload["context_snapshot"])
     context.update(
         {
             "thread_id": run.thread_id,
@@ -453,40 +476,10 @@ async def _clear_waitpoint_checkpoint(run: AgentRun) -> None:
             "workdir_path": runtime_workdir_path(binding.workdir_path),
         }
     )
-    context.model = run.input_payload["model_spec"]
-    context.tool_approval_mode = run.input_payload["tool_approval_mode"]
     # 持久 Run 与 Thread 的完整归属已验证；清理不取得资源使用授权。
     graph = await backend.get_graph(context=context, checkpoint_only=True)
     config = {"configurable": {"uid": run.uid, "thread_id": run.thread_id}}
-    await _drain_waitpoint_checkpoint(graph, config)
-
-
-async def _drain_waitpoint_checkpoint(graph, config: dict) -> None:
-    """幂等跳过等待工具调用及其余待执行节点。"""
-    from langchain_core.messages import AIMessage
-
-    saved = await graph.aget_state(config)
-    if saved.next:
-        messages = saved.values.get("messages") or []
-        if not messages or not isinstance(messages[-1], AIMessage):
-            raise ValueError("等待 checkpoint 缺少未执行的工具调用")
-        if len(saved.next) != 1:
-            raise ValueError("等待 checkpoint 存在多个待清理节点")
-        pending = messages[-1]
-        if pending.tool_calls:
-            await graph.aupdate_state(
-                config,
-                {"messages": [AIMessage(id=pending.id, content="[已取消]", tool_calls=[])]},
-                as_node=saved.next[0],
-            )
-        elif pending.content != "[已取消]":
-            raise ValueError("等待 checkpoint 缺少未执行的工具调用")
-    from langgraph.graph import END
-
-    await graph.aupdate_state(config, None, as_node=END)
-    saved = await graph.aget_state(config)
-    if saved.next or saved.interrupts:
-        raise ValueError("等待 checkpoint 清理未收敛")
+    await cancel_waitpoint_checkpoint(graph, config)
 
 
 def _validate_resume_response(waitpoint: dict, response: dict) -> dict:

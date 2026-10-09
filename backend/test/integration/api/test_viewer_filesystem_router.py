@@ -25,9 +25,8 @@ async def _create_thread(test_client, headers) -> str:
         },
         headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
     )
-    assert response.status_code == 200, response.text
-    payload = response.json()
-    return str(payload.get("thread_id") or payload["id"])
+    assert response.status_code == 201, response.text
+    return response.json()["id"]
 
 
 async def test_viewer_tree_requires_authentication(test_client):

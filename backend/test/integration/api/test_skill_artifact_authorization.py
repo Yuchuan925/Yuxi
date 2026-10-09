@@ -33,8 +33,8 @@ async def _create_thread(test_client, headers: dict[str, str], title: str) -> st
         },
         headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
     )
-    assert response.status_code == 200, response.text
-    return response.json().get("thread_id") or response.json()["id"]
+    assert response.status_code == 201, response.text
+    return response.json()["id"]
 
 
 async def test_skill_artifact_rechecks_authorization_after_share_revoke(

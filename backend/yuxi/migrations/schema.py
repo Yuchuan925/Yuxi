@@ -114,6 +114,24 @@ async def create_business_tables(manager):
     logger.info("PostgreSQL business tables created")
 
 
+async def add_attachment_table(manager) -> None:
+    """为版本 5 原子补充附件表；不导入历史 JSON 附件。"""
+    from yuxi.bootstrap.models import load_models
+    from yuxi.infrastructure.postgres.schema import BUSINESS_SCHEMA_VERSION
+    from yuxi.modules.agents.models.attachments import AgentAttachment
+
+    load_models()
+    async with manager.async_engine.begin() as conn:
+        await conn.run_sync(lambda connection: AgentAttachment.__table__.create(connection, checkfirst=True))
+        await conn.execute(
+            text(
+                f"UPDATE {SCHEMA_VERSION_TABLE} SET version=:version, applied_at=CURRENT_TIMESTAMP "
+                "WHERE domain='business'"
+            ),
+            {"version": BUSINESS_SCHEMA_VERSION},
+        )
+
+
 async def ensure_knowledge_schema(manager):
     """建立不适合由 ORM 表达的知识域访问路径索引。"""
     manager._check_initialized()

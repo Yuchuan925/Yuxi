@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import defer
 
-from yuxi.modules.agents.models.messages import MODEL_AUDIT_MESSAGE_TYPE, Message
 from yuxi.modules.agents.models.inputs import AgentInput
+from yuxi.modules.agents.models.messages import MODEL_AUDIT_MESSAGE_TYPE, Message
 from yuxi.modules.agents.models.runs import AgentRun
 from yuxi.modules.agents.models.sessions import Session
 from yuxi.modules.agents.models.turns import AgentTurn
@@ -31,40 +32,49 @@ class AgentTurnRepository:
         """按 ID 读取 Turn。"""
         return await self.db.get(AgentTurn, turn_id)
 
-    async def list_thread_activity(self, *, thread_ids: list[str], uid: str, app_id: str | None) -> list:
-        """批量读取会话当前轮次、执行段与待派发输入，供侧边栏投影。"""
+    async def list_current_views(self, *, thread_ids: list[str], uid: str, app_id: str | None) -> dict:
+        """批量读取最新 Turn、当前 Run 与队列数量，供完整资源投影。"""
         latest = (
-            select(
-                AgentTurn.thread_id,
-                AgentTurn.status,
-                AgentTurn.waitpoint,
-                AgentTurn.current_run_id,
-                func.row_number()
-                .over(partition_by=AgentTurn.thread_id, order_by=(AgentTurn.created_at.desc(), AgentTurn.id.desc()))
-                .label("rank"),
-            )
+            select(AgentTurn)
             .where(AgentTurn.thread_id.in_(thread_ids), AgentTurn.uid == uid, AgentTurn.app_id == app_id)
+            .distinct(AgentTurn.thread_id)
+            .order_by(AgentTurn.thread_id, AgentTurn.created_at.desc(), AgentTurn.id.desc())
             .subquery()
         )
+        from sqlalchemy.orm import aliased
+
+        turn = aliased(AgentTurn, latest)
         pending = (
-            select(AgentInput.id)
+            select(AgentInput.thread_id, func.count().label("count"))
             .where(
-                AgentInput.thread_id == Session.thread_id,
+                AgentInput.thread_id.in_(thread_ids),
                 AgentInput.uid == uid,
                 AgentInput.app_id == app_id,
                 AgentInput.status == "pending",
             )
-            .exists()
+            .group_by(AgentInput.thread_id)
+            .subquery()
         )
-        result = await self.db.execute(
-            select(
-                Session.thread_id, latest.c.status, latest.c.waitpoint, AgentRun.status, pending, Session.queue_paused
+        rows = (
+            await self.db.execute(
+                select(Session.thread_id, turn, AgentRun, func.coalesce(pending.c.count, 0))
+                .options(defer(AgentRun.input_payload), defer(AgentRun.manifest), defer(AgentRun.origin_metadata))
+                .outerjoin(turn, turn.thread_id == Session.thread_id)
+                .outerjoin(AgentRun, AgentRun.id == turn.current_run_id)
+                .outerjoin(pending, pending.c.thread_id == Session.thread_id)
+                .where(Session.thread_id.in_(thread_ids), Session.uid == uid, Session.app_id == app_id)
             )
-            .outerjoin(latest, and_(latest.c.thread_id == Session.thread_id, latest.c.rank == 1))
-            .outerjoin(AgentRun, AgentRun.id == latest.c.current_run_id)
-            .where(Session.thread_id.in_(thread_ids), Session.uid == uid, Session.app_id == app_id)
+        ).all()
+        return {thread_id: (item, run, count) for thread_id, item, run, count in rows}
+
+    async def get_start_times(self, *, turn_ids: list[str], uid: str, app_id: str | None) -> dict:
+        """批量读取每轮第一次执行时间，恢复 Run 不改变轮次起点。"""
+        rows = await self.db.execute(
+            select(AgentRun.turn_id, func.min(AgentRun.started_at))
+            .where(AgentRun.turn_id.in_(turn_ids), AgentRun.uid == uid, AgentRun.app_id == app_id)
+            .group_by(AgentRun.turn_id)
         )
-        return list(result.all())
+        return dict(rows.all())
 
     async def get_for_scope(
         self, *, turn_id: str, thread_id: str, uid: str, app_id: str | None, for_update: bool = False
@@ -80,6 +90,20 @@ class AgentTurnRepository:
             statement = statement.with_for_update(key_share=True)
         result = await self.db.execute(statement.execution_options(populate_existing=for_update))
         return result.scalar_one_or_none()
+
+    async def list_for_scope(self, *, turn_ids: list[str], thread_id: str, uid: str, app_id: str | None) -> dict:
+        """批量读取订阅执行段所属轮次，避免逐执行段往返查询。"""
+        turns = (
+            await self.db.scalars(
+                select(AgentTurn).where(
+                    AgentTurn.id.in_(turn_ids),
+                    AgentTurn.thread_id == thread_id,
+                    AgentTurn.uid == uid,
+                    AgentTurn.app_id == app_id,
+                )
+            )
+        ).all()
+        return {turn.id: turn for turn in turns}
 
     async def lock_active_for_thread(self, *, thread_id: str, uid: str, app_id: str | None) -> AgentTurn | None:
         """按 Thread→Turn 锁顺序锁定唯一活跃轮次。"""
@@ -121,6 +145,43 @@ class AgentTurnRepository:
             .limit(1)
         )
         return result.scalar_one_or_none()
+
+    async def list_page(
+        self,
+        *,
+        thread_id: str,
+        uid: str,
+        app_id: str | None,
+        after: str | None,
+        limit: int,
+        order: str,
+    ) -> list:
+        """按创建时间与 ID 分页轮次，同时读取当前执行段。"""
+        from sqlalchemy import tuple_
+
+        statement = (
+            select(AgentTurn, AgentRun)
+            .options(defer(AgentRun.input_payload), defer(AgentRun.manifest), defer(AgentRun.origin_metadata))
+            .outerjoin(AgentRun, AgentRun.id == AgentTurn.current_run_id)
+            .where(
+                AgentTurn.thread_id == thread_id,
+                AgentTurn.uid == uid,
+                AgentTurn.app_id == app_id,
+            )
+        )
+        if after is not None:
+            cursor = await self.get_for_scope(turn_id=after, thread_id=thread_id, uid=uid, app_id=app_id)
+            if cursor is None:
+                raise ValueError("after 不是当前 Session 的 Turn")
+            position = tuple_(AgentTurn.created_at, AgentTurn.id)
+            boundary = tuple_(cursor.created_at, cursor.id)
+            statement = statement.where(position > boundary if order == "asc" else position < boundary)
+        sorting = (
+            (AgentTurn.created_at.asc(), AgentTurn.id.asc())
+            if order == "asc"
+            else (AgentTurn.created_at.desc(), AgentTurn.id.desc())
+        )
+        return list((await self.db.execute(statement.order_by(*sorting).limit(limit + 1))).all())
 
     async def set_current(self, turn: AgentTurn, *, run_id: str) -> AgentTurn:
         """将同一 Turn 的新顶层 Run 设为当前执行。"""

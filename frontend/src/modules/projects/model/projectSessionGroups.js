@@ -1,23 +1,18 @@
 const sessionTimestamp = (session) => {
-  const timestamp = Date.parse(session.created_at || '')
+  const timestamp = session.created_at * 1000
   return Number.isNaN(timestamp) ? 0 : timestamp
 }
 
 const sortSidebarSessions = (sessions) =>
   [...sessions].sort((left, right) => {
-    if (left.is_pinned !== right.is_pinned) return left.is_pinned ? -1 : 1
+    if (left.yuxi.is_pinned !== right.yuxi.is_pinned) return left.yuxi.is_pinned ? -1 : 1
     return sessionTimestamp(right) - sessionTimestamp(left)
   })
 
-export const deriveProjectThreadStatus = (sessions) => {
-  if (sessions.some((session) => session.thread_status === 'loading')) {
-    return 'loading'
-  }
-  if (sessions.some((session) => session.thread_status === 'ready')) {
-    return 'ready'
-  }
-  return 'done'
-}
+export const deriveProjectWorkStatus = (sessions) =>
+  ['requires_action', 'in_progress', 'failed', 'cancelled', 'completed'].find(
+    (status) => sessions.some((session) => session.status === status)
+  ) || 'idle'
 
 export const buildProjectSessionGroups = (projects, sessions) => {
   const sortedSessions = sortSidebarSessions(sessions)
@@ -28,7 +23,7 @@ export const buildProjectSessionGroups = (projects, sessions) => {
   const otherSessions = []
 
   sortedSessions.forEach((session) => {
-    const projectSessions = sessionsByProject.get(session.project_id)
+    const projectSessions = sessionsByProject.get(session.yuxi.project_id)
     if (projectSessions) {
       projectSessions.push(session)
     } else {
@@ -42,9 +37,8 @@ export const buildProjectSessionGroups = (projects, sessions) => {
       return {
         project,
         sessions: projectSessions,
-        threadStatus: deriveProjectThreadStatus(projectSessions),
-        activityStatus: ['waiting_approval', 'waiting_answer', 'running', 'waiting_cooperation', 'queued', 'waiting']
-          .find((status) => projectSessions.some((session) => session.activity_status === status)) || 'idle'
+        status: deriveProjectWorkStatus(projectSessions),
+        unread: projectSessions.some((session) => session.yuxi.unread)
       }
     }),
     otherSessions

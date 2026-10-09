@@ -1,125 +1,94 @@
 import { randomUUID } from "node:crypto";
 import type { Client } from "./client.js";
-import { isTurnTerminal } from "./chat-output.js";
-import type { Json, SseEvent } from "./types.js";
+import type { Json } from "./types.js";
 import { YuxiError } from "./types.js";
 
-export type ChatTurnStatus = "completed" | "failed" | "cancelled" | "waiting";
-
-export interface ChatTurnResult {
-  turnId: string;
-  status: ChatTurnStatus;
-}
-
+export type ChatTurnStatus = "completed" | "failed" | "cancelled" | "requires_action";
+export interface ChatTurnResult { turnId: string; status: ChatTurnStatus; output: string; }
 export type ChatDeltaHandler = (text: string) => void;
-
-type ChatClient = Pick<Client, "send" | "events">;
+type ChatClient = Pick<Client, "send" | "events" | "input" | "turn">;
 
 export class ChatSessionError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "ChatSessionError";
-  }
+  constructor(message: string) { super(message); this.name = "ChatSessionError"; }
 }
 
-/** 管理单个 Public v1 Thread 的顺序输入、cursor 与 Turn 事件。 */
+/** 订阅只提供进度；接收归属和最终输出从目标 Input/Turn 回读。 */
 export class ChatSession {
   private cursor: string | undefined;
-  private readonly seenEventIds = new Set<string>();
-
   constructor(private readonly client: ChatClient, private readonly threadId: string) {}
 
   async send(message: string, onDelta: ChatDeltaHandler): Promise<ChatTurnResult> {
-    const accepted = await this.client.send(this.threadId, message, randomUUID());
-    const turnId = String(accepted.turn_id ?? "");
-    if (!turnId) throw new ChatSessionError("服务端输入回执缺少 turn_id");
-
-    let terminalStatus: ChatTurnStatus | undefined;
-    let deltaCount = 0;
+    const key = randomUUID();
+    let accepted: Json;
+    try { accepted = await this.client.send(this.threadId, message, key); }
+    catch (error) { throw new ChatSessionError(`接收结果待确认；Session ${this.threadId}，Idempotency-Key ${key}：${error instanceof Error ? error.message : error}`); }
+    let turnId = String(accepted.turn_id ?? "");
+    while (!turnId) {
+      if (!accepted.input_id) throw new ChatSessionError("服务端回执缺少 input_id");
+      const input = await this.client.input(this.threadId, String(accepted.input_id));
+      if (input.status === "cancelled") throw new ChatSessionError(`Input ${accepted.input_id} 已取消`);
+      turnId = String(input.turn_id ?? "");
+      if (!turnId) await sleep(1000);
+    }
+    const printed = new Map<string, string>();
+    const seenEventIds = new Set<string>();
     let reconnects = 0;
-    while (!terminalStatus) {
+    while (true) {
+      let snapshot: Json | undefined;
       try {
         for await (const event of this.client.events(this.threadId, this.cursor)) {
-          this.advanceCursor(event);
-          const data = parseEventData(event.data);
-          if (!isCurrentTurn(data, turnId)) continue;
-          if (this.isDuplicate(data)) continue;
-
-          const type = eventType(event, data);
-          if (type === "agent.session.turn.output_text.delta") {
-            const delta = textDelta(data);
-            if (delta) { deltaCount += 1; onDelta(delta); }
+          let data: Json;
+          try { data = JSON.parse(event.data || "{}"); }
+          catch { throw new ChatSessionError("Session SSE data 不是 JSON"); }
+          if (data.session_id && data.session_id !== this.threadId) throw new ChatSessionError("SSE Session 归属不一致");
+          const type = String(data.type ?? event.event ?? "");
+          if (data.turn_id === turnId && type === "agent.session.turn.output_text.delta") {
+            const eventId = String(data.event_id ?? "");
+            if (!seenEventIds.has(eventId)) {
+              seenEventIds.add(eventId);
+              const itemId = String(data.item_id);
+              const delta = String(data.delta ?? "");
+              printed.set(itemId, (printed.get(itemId) || "") + delta);
+              onDelta(delta);
+            }
           }
-          if (isTurnTerminal(type)) {
-            terminalStatus = terminalStatusFrom(type);
-            break;
+          const reconcile = type === "yuxi.session.resync" || (data.turn_id === turnId &&
+            ["agent.session.turn.completed", "agent.session.turn.failed", "agent.session.turn.cancelled", "yuxi.session.turn.waiting"].includes(type));
+          if (reconcile) {
+            snapshot = await this.client.turn(this.threadId, turnId);
+            if (isSettled(snapshot)) {
+              if (event.id) this.cursor = event.id;
+              break;
+            }
           }
+          // 快照应用失败不能推进恢复位置。
+          if (event.id) this.cursor = event.id;
         }
       } catch (error) {
-        if (!isRetryableStreamError(error) || reconnects >= 3) throw error;
-        await sleep(250 * 2 ** reconnects);
-        reconnects += 1;
-        continue;
+        if (error instanceof ChatSessionError || (error instanceof YuxiError && error.status && error.status < 500 && error.status !== 429)) throw error;
       }
-      if (!terminalStatus) {
-        if (reconnects >= 3) throw new ChatSessionError(`Thread 事件流在 Turn ${turnId} 终态前结束`);
-        await sleep(250 * 2 ** reconnects);
-        reconnects += 1;
+      snapshot = snapshot && isSettled(snapshot) ? snapshot : await this.client.turn(this.threadId, turnId);
+      if (isSettled(snapshot)) {
+        const details = snapshot.yuxi as Json;
+        const output = (details.output || []) as Json[];
+        for (const item of output) {
+          if (item.type !== "message" || item.role !== "assistant") continue;
+          const text = ((item.content || []) as Json[]).filter(part => part.type === "output_text").map(part => String(part.text)).join("");
+          const previous = printed.get(String(item.id)) || "";
+          if (text !== previous) onDelta(text.startsWith(previous) ? text.slice(previous.length) : `\n${text}`);
+        }
+        return { turnId, status: snapshot.status as ChatTurnStatus,
+          output: output.filter(item => item.type === "message" && item.role === "assistant")
+            .flatMap(item => (item.content || []) as Json[]).filter(part => part.type === "output_text").map(part => String(part.text)).join("") };
       }
+      if (reconnects >= 3) throw new ChatSessionError(`Session ${this.threadId} 的 Turn ${turnId} 尚未结束，可继续查询此 Turn`);
+      await sleep(250 * 2 ** reconnects++);
     }
-    if (terminalStatus === "completed" && deltaCount === 0) {
-      throw new ChatSessionError(`Turn ${turnId} 已完成，但事件流没有 output_text.delta`);
-    }
-    return { turnId, status: terminalStatus };
-  }
-
-  private advanceCursor(event: SseEvent): void {
-    if (event.id) this.cursor = event.id;
-  }
-
-  private isDuplicate(data: unknown): boolean {
-    if (!data || typeof data !== "object" || Array.isArray(data)) return false;
-    const eventId = (data as Json).event_id;
-    if (typeof eventId !== "string" || !eventId) return false;
-    if (this.seenEventIds.has(eventId)) return true;
-    this.seenEventIds.add(eventId);
-    if (this.seenEventIds.size > 4096) this.seenEventIds.delete(this.seenEventIds.values().next().value as string);
-    return false;
   }
 }
 
-function parseEventData(value?: string): unknown {
-  if (!value) return undefined;
-  try { return JSON.parse(value); } catch { throw new ChatSessionError("Thread SSE data 不是 JSON"); }
+/** 公开状态直接决定何时交还控制。 */
+function isSettled(snapshot: Json): boolean {
+  return ["completed", "failed", "cancelled", "requires_action"].includes(String(snapshot.status));
 }
-
-function isCurrentTurn(value: unknown, turnId: string): boolean {
-  return Boolean(value && typeof value === "object" && !Array.isArray(value) && (value as Json).turn_id === turnId);
-}
-
-function eventType(event: SseEvent, data: unknown): string {
-  if (event.event) return event.event;
-  if (data && typeof data === "object" && !Array.isArray(data)) return String((data as Json).type ?? "");
-  return "";
-}
-
-function textDelta(value: unknown): string {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return "";
-  const delta = (value as Json).delta;
-  return typeof delta === "string" ? delta : "";
-}
-
-function terminalStatusFrom(type: string): ChatTurnStatus {
-  const status = type.slice("agent.session.turn.".length);
-  if (status === "completed" || status === "failed" || status === "cancelled" || status === "waiting") return status;
-  throw new ChatSessionError(`未知的 Turn 终态事件: ${type}`);
-}
-
-function isRetryableStreamError(error: unknown): boolean {
-  if (!(error instanceof YuxiError)) return false;
-  return error.status === undefined || error.status === 429 || error.status >= 500;
-}
-
-function sleep(milliseconds: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, milliseconds));
-}
+function sleep(milliseconds: number): Promise<void> { return new Promise(resolve => setTimeout(resolve, milliseconds)); }

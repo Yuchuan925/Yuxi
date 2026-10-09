@@ -11,7 +11,12 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from yuxi.modules.agents.repositories.sessions import SessionRepository, UNVIEWED_RUN_MARKER
 from yuxi.modules.agents.services.scope import ActorScope
-from yuxi.modules.agents.services.threads import archive_thread, get_thread_snapshot, list_threads, mark_thread_viewed
+from yuxi.modules.agents.services.threads import (
+    archive_thread,
+    get_session_resource,
+    list_session_page,
+    mark_thread_viewed,
+)
 from yuxi.modules.agents.models.runs import AgentRun
 from yuxi.modules.agents.models.turns import AgentTurn
 from yuxi.infrastructure.postgres.base import Base
@@ -57,6 +62,7 @@ async def _seed_thread(
         title=thread_id,
         status="active",
         extra_metadata={},
+        config_snapshot={"model": "test:chat", "tool_approval_mode": "default"},
         last_viewed_run_id=last_viewed_run_id,
     )
     db.add(agent_session)
@@ -109,13 +115,13 @@ async def test_public_list_maps_run_states_and_enforces_scope(session):
     await _seed_thread(session, "thread-other-user", uid="user-2")
     await session.commit()
 
-    items = await list_threads(db=session, scope=SCOPE)
-    status_by_id = {item["id"]: item["thread_status"] for item in items}
+    items = (await list_session_page(db=session, scope=SCOPE, agent_slug=None, after=None, limit=50, order="desc"))[0]
+    status_by_id = {item["id"]: (item["status"], item["yuxi"]["unread"]) for item in items}
     assert status_by_id == {
-        "thread-running": "loading",
-        "thread-ready": "ready",
-        "thread-done": "done",
-        "thread-empty": "done",
+        "thread-running": ("in_progress", False),
+        "thread-ready": ("completed", True),
+        "thread-done": ("completed", False),
+        "thread-empty": ("idle", False),
     }
 
 
@@ -128,10 +134,12 @@ async def test_sidebar_waiting_activity_survives_viewed_interrupted_run(session,
     turn.status = "waiting"
     turn.waitpoint = {"kind": kind, "run_id": run.id}
     await session.commit()
-    listed = await list_threads(db=session, scope=SCOPE)
-    assert listed[0]["activity_status"] == f"waiting_{kind}"
-    viewed = await mark_thread_viewed(db=session, scope=SCOPE, thread_id=thread.thread_id)
-    assert viewed["activity_status"] == f"waiting_{kind}"
+    listed = (await list_session_page(db=session, scope=SCOPE, agent_slug=None, after=None, limit=50, order="desc"))[0]
+    expected = "in_progress" if kind == "cooperation" else "requires_action"
+    assert listed[0]["status"] == expected
+    await mark_thread_viewed(db=session, scope=SCOPE, thread_id=thread.thread_id)
+    viewed = await get_session_resource(db=session, scope=SCOPE, thread_id=thread.thread_id)
+    assert viewed["status"] == expected and viewed["yuxi"]["unread"] is False
 
 
 async def test_latest_run_wins_and_viewed_mark_tracks_exact_run(session):
@@ -142,12 +150,11 @@ async def test_latest_run_wins_and_viewed_mark_tracks_exact_run(session):
     await _seed_run(session, thread, "run-new", "completed", created_at=created_at + timedelta(seconds=1))
     await session.commit()
 
-    before = await list_threads(db=session, scope=SCOPE)
-    assert before[0]["thread_status"] == "ready"
-    viewed = await mark_thread_viewed(db=session, thread_id=thread.thread_id, scope=SCOPE)
-    assert viewed["thread_status"] == "done"
-    after = await list_threads(db=session, scope=SCOPE)
-    assert after[0]["thread_status"] == "done"
+    before = (await list_session_page(db=session, scope=SCOPE, agent_slug=None, after=None, limit=50, order="desc"))[0]
+    assert before[0]["yuxi"]["unread"] is True
+    await mark_thread_viewed(db=session, thread_id=thread.thread_id, scope=SCOPE)
+    after = (await list_session_page(db=session, scope=SCOPE, agent_slug=None, after=None, limit=50, order="desc"))[0]
+    assert after[0]["yuxi"]["unread"] is False
     assert thread.last_viewed_run_id == "run-new"
 
 
@@ -157,14 +164,13 @@ async def test_viewed_mark_does_not_complete_active_run(session):
     await _seed_run(session, thread, "run-active", "running")
     await session.commit()
 
-    viewed = await mark_thread_viewed(db=session, thread_id=thread.thread_id, scope=SCOPE)
-    snapshot = await get_thread_snapshot(db=session, scope=SCOPE, thread_id=thread.thread_id)
-    assert viewed["thread_status"] == "loading"
-    assert snapshot["current_turn"] == {
-        "turn_id": "turn-run-active",
-        "status": "running",
-        "run_id": "run-active",
-        "run_status": "running",
+    await mark_thread_viewed(db=session, thread_id=thread.thread_id, scope=SCOPE)
+    snapshot = await get_session_resource(db=session, scope=SCOPE, thread_id=thread.thread_id)
+    assert snapshot["status"] == "in_progress" and snapshot["yuxi"]["unread"] is False
+    assert snapshot["yuxi"]["current_turn"] == {
+        "id": "turn-run-active",
+        "status": "in_progress",
+        "current_run_id": "run-active",
         "waitpoint": None,
         "result_run_id": None,
     }
@@ -216,4 +222,4 @@ async def test_new_thread_cannot_seed_attachment_records(session):
         metadata={"attachments": [{"bucket_name": "private", "object_name": "secret"}]},
         project_id="22222222-2222-4222-8222-222222222222",
     )
-    assert agent_session.extra_metadata["attachments"] == []
+    assert "attachments" not in agent_session.extra_metadata

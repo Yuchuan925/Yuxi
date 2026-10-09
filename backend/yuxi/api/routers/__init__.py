@@ -1,5 +1,6 @@
 from fastapi import APIRouter
 
+from yuxi.api.routers.agents.files import router as agent_files_router
 from yuxi.api.routers.agents.management import agent_router
 from yuxi.api.routers.agents.mentions import mention_router
 from yuxi.api.routers.background_jobs import background_jobs
@@ -30,6 +31,7 @@ router.include_router(public_knowledge_router)
 # 基础系统接口：健康检查、配置、认证与聊天主链路。
 router.include_router(system_routes)  # /api/system/* 系统状态与全局配置
 router.include_router(auth)  # /api/auth/* 登录、用户信息与 CLI 浏览器登录授权
+router.include_router(agent_files_router)  # /api/agent/files* 与 /api/agent/images 产品预处理
 router.include_router(agent_router)  # /api/agent/* 智能体管理与运行态
 router.include_router(projects)  # /api/projects* 项目创建与选择
 router.include_router(scheduled_agents)  # /api/scheduled-tasks* 用户自建 Agent 定时任务

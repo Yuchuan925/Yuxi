@@ -4,27 +4,21 @@ import test from 'node:test'
 
 import {
   buildProjectSessionGroups,
-  deriveProjectThreadStatus
+  deriveProjectWorkStatus
 } from '../../src/modules/projects/model/projectSessionGroups.js'
 
-test('折叠项目优先提示需要用户审批的会话，协作等待保持独立状态', () => {
+test('项目工作状态与未读独立，人工等待优先于执行中', () => {
   const projects = [{ id: 'project', status: 'active', selection_status: 'selectable' }]
   const sessions = [
-    { id: 'research', project_id: 'project', activity_status: 'waiting_cooperation' },
-    { id: 'approval', project_id: 'project', activity_status: 'waiting_approval' }
+    { id: 'research', status: 'in_progress', yuxi: { project_id: 'project', unread: true } },
+    { id: 'approval', status: 'requires_action', yuxi: { project_id: 'project', unread: false } }
   ]
-  assert.equal(buildProjectSessionGroups(projects, sessions).groups[0].activityStatus, 'waiting_approval')
-  assert.equal(buildProjectSessionGroups(projects, sessions.slice(0, 1)).groups[0].activityStatus, 'waiting_cooperation')
-})
-
-test('项目状态优先展示运行中，其次展示未读完成', () => {
-  assert.equal(deriveProjectThreadStatus([{ thread_status: 'ready' }]), 'ready')
-  assert.equal(
-    deriveProjectThreadStatus([{ thread_status: 'ready' }, { thread_status: 'loading' }]),
-    'loading'
-  )
-  assert.equal(deriveProjectThreadStatus([{ thread_status: 'done' }]), 'done')
-  assert.equal(deriveProjectThreadStatus([]), 'done')
+  const group = buildProjectSessionGroups(projects, sessions).groups[0]
+  assert.equal(group.status, 'requires_action')
+  assert.equal(group.unread, true)
+  assert.equal(deriveProjectWorkStatus(sessions.slice(0, 1)), 'in_progress')
+  assert.equal(deriveProjectWorkStatus([{ status: 'completed' }]), 'completed')
+  assert.equal(deriveProjectWorkStatus([]), 'idle')
 })
 
 test('项目视图按项目顺序分组并把 implicit 对话放在最后', () => {
@@ -34,16 +28,15 @@ test('项目视图按项目顺序分组并把 implicit 对话放在最后', () =
     { id: 'deleted', name: '已删除', selection_status: 'selectable', status: 'deleted' }
   ]
   const sessions = [
-    { id: 'implicit', project_id: 'implicit-project', updated_at: '2026-08-30T12:00:00Z' },
-    { id: 'project-b-chat', project_id: 'project-b', updated_at: '2026-08-30T11:00:00Z' },
-    { id: 'project-a-old', project_id: 'project-a', updated_at: '2026-08-30T10:00:00Z' },
+    { id: 'implicit', yuxi: { project_id: 'implicit-project' }, updated_at: '2026-08-30T12:00:00Z' },
+    { id: 'project-b-chat', yuxi: { project_id: 'project-b' }, updated_at: '2026-08-30T11:00:00Z' },
+    { id: 'project-a-old', yuxi: { project_id: 'project-a' }, updated_at: '2026-08-30T10:00:00Z' },
     {
       id: 'project-a-pinned',
-      project_id: 'project-a',
-      is_pinned: true,
+      yuxi: { project_id: 'project-a', is_pinned: true },
       updated_at: '2026-08-29T10:00:00Z'
     },
-    { id: 'deleted-chat', project_id: 'deleted', updated_at: '2026-08-30T09:00:00Z' }
+    { id: 'deleted-chat', yuxi: { project_id: 'deleted' }, updated_at: '2026-08-30T09:00:00Z' }
   ]
 
   const result = buildProjectSessionGroups(projects, sessions)
@@ -63,7 +56,7 @@ test('项目视图按项目顺序分组并把 implicit 对话放在最后', () =
 })
 
 test('无项目时全部对话仍可在最近分组读取', () => {
-  const sessions = [{ id: 'thread-1', project_id: 'implicit', created_at: '2026-08-30' }]
+  const sessions = [{ id: 'thread-1', yuxi: { project_id: 'implicit' }, created_at: 1788019200 }]
 
   const result = buildProjectSessionGroups([], sessions)
 
@@ -74,13 +67,13 @@ test('无项目时全部对话仍可在最近分组读取', () => {
 test('最近分组保持按创建时间排序且不受更新时间影响', () => {
   const sessions = [
     {
-      id: 'older-renamed',
-      created_at: '2026-08-29T10:00:00Z',
+      id: 'older-renamed', yuxi: {},
+      created_at: 1787997600,
       updated_at: '2026-09-01T10:00:00Z'
     },
     {
-      id: 'newer-created',
-      created_at: '2026-08-30T10:00:00Z',
+      id: 'newer-created', yuxi: {},
+      created_at: 1788084000,
       updated_at: '2026-08-30T10:00:00Z'
     }
   ]
@@ -139,7 +132,7 @@ test('项目运行状态仅在折叠时展示', () => {
   )
   assert.match(
     source,
-    /\(\['running', 'queued'\]\.includes\(group\.activityStatus\) \|\| group\.threadStatus === 'loading'\) && !isProjectExpanded\(group\.project\.id\)/
+    /group\.status === 'in_progress' && !isProjectExpanded\(group\.project\.id\)/
   )
 })
 

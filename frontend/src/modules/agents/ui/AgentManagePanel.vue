@@ -41,10 +41,9 @@ const filteredAgents = computed(() => {
             .includes(keyword)
       )
     : list
-  return [...filtered].sort((a, b) => {
-    if (isBuiltinAgent(a) !== isBuiltinAgent(b)) return isBuiltinAgent(a) ? -1 : 1
-    return String(a.name || a.id).localeCompare(String(b.name || b.id), 'zh-CN')
-  })
+  return [...filtered].sort(
+    (a, b) => Date.parse(a.created_at) - Date.parse(b.created_at) || a.id - b.id
+  )
 })
 
 const groupedAgents = computed(() => [

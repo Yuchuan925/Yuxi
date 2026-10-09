@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.modules.agents.models.runs import AgentRun
 from yuxi.modules.agents.models.sessions import Session
 from yuxi.modules.agents.models.turns import AgentTurn
+from yuxi.modules.agents.repositories.attachments import AttachmentRepository
 from yuxi.modules.agents.repositories.input import AgentInputRepository
 from yuxi.modules.agents.repositories.runs import AgentRunRepository
 from yuxi.modules.agents.repositories.sessions import SessionRepository
@@ -44,7 +45,7 @@ async def should_yield_for_steer(run_id: str) -> bool:
             app_id=run.app_id,
             for_update=False,
         )
-        return pending is not None
+        return pending is not None and not await AttachmentRepository(db).has_unready(pending.id)
 
 
 async def settle_checkpoint(
@@ -81,7 +82,7 @@ async def settle_checkpoint(
             uid=run.uid,
             app_id=run.app_id,
         )
-        if pending is not None:
+        if pending is not None and not await AttachmentRepository(db).has_unready(pending.id):
             terminal, changed = await run_repo.set_terminal_status(
                 run.id, status="yielded", token_usage=token_usage, worker_id=worker_id
             )

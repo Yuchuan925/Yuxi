@@ -13,9 +13,18 @@ const toResourceItem = (type, { value, label, extra = {} } = {}) => {
 }
 
 export const buildMentionResourceItems = (mention = {}) => {
-  const { knowledgeBases = [], mcps = [], skills = [] } = mention
+  const { knowledgeBases = [], mcps = [], skills = [], agents = [] } = mention
 
   return {
+    agents: agents
+      .map((agent) =>
+        toResourceItem('agent', {
+          value: agent.agent_id,
+          label: agent.name || agent.agent_id,
+          extra: { description: agent.description || '' }
+        })
+      )
+      .filter(Boolean),
     knowledgeBases: knowledgeBases
       .map((kb) =>
         toResourceItem('knowledge', {

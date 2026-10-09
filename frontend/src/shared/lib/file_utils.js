@@ -66,24 +66,15 @@ export const getMimeSubtypeLabel = (mimeType) => {
   return subtype ? subtype.toUpperCase() : ''
 }
 
-export const inferImageMimeTypeFromBase64 = (base64Content) => {
-  const head = String(base64Content || '').slice(0, 48)
-  if (head.startsWith('iVBORw0KGgo')) return 'image/png'
-  if (head.startsWith('/9j/')) return 'image/jpeg'
-  if (head.startsWith('R0lGODdh') || head.startsWith('R0lGODlh')) return 'image/gif'
-  if (head.startsWith('UklGR')) return 'image/webp'
-  if (head.startsWith('Qk')) return 'image/bmp'
-  return null
-}
-
 export const normalizeAttachmentPreview = (attachment) => {
+  const draft = attachment?.object === 'file'
   const name = getDisplayFileName(
-    attachment?.file_name || attachment?.name || attachment?.path,
+    (draft ? attachment.filename : attachment?.file_name) || attachment?.name || attachment?.path,
     '附件'
   )
-  const fileId = attachment?.file_id || attachment?.path || name
-  const fileType = String(attachment?.file_type || '')
-  const sizeLabel = formatFileSize(attachment?.file_size)
+  const fileId = draft ? attachment.id : attachment?.file_id || attachment?.path || name
+  const fileType = String((draft ? attachment.mime_type : attachment?.file_type) || '')
+  const sizeLabel = formatFileSize(draft ? attachment.bytes : attachment?.file_size)
   const typeLabel = getFileExtensionLabel(name) || getMimeSubtypeLabel(fileType) || '文件'
 
   return {

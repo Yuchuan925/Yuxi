@@ -9,21 +9,26 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
+from copy import deepcopy
 
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.modules.agents.models.runs import AGENT_RUN_TERMINAL_STATUSES
 from yuxi.modules.agents.models.sessions import Session
+from yuxi.modules.agents.repositories.attachments import AttachmentRepository
 from yuxi.modules.agents.repositories.input import AgentInputRepository
 from yuxi.modules.agents.repositories.input_receipt import AgentInputReceiptRepository
 from yuxi.modules.agents.repositories.runs import AgentRunRepository
 from yuxi.modules.agents.repositories.sessions import SessionRepository
 from yuxi.modules.agents.repositories.turn import AgentTurnRepository
-from yuxi.modules.agents.services.input_config import resolve_agent_run_model_spec, resolve_agent_run_tool_approval_mode
+from yuxi.modules.agents.services.input_config import (
+    resolve_agent_run_model_spec,
+    resolve_agent_run_tool_approval_mode,
+)
+from yuxi.modules.agents.services.public_resources import session_resource
 from yuxi.modules.agents.services.scheduler import claim_next_input, deliver
 from yuxi.modules.agents.services.scope import ActorScope
-from yuxi.modules.workspace.services.bindings import resolve_session_workdir_path
 from yuxi.shared.datetime import format_utc_datetime, utc_now
 
 
@@ -43,40 +48,34 @@ async def require_thread(*, db: AsyncSession, scope: ActorScope, thread_id: str,
     return agent_session
 
 
-async def list_threads(
+async def list_session_page(
     *,
     db: AsyncSession,
     scope: ActorScope,
-    agent_slug: str | None = None,
-    status: str = "active",
-    limit: int = 50,
-    offset: int = 0,
-) -> list[dict]:
-    """按完整 APP 作用域列出会话，不混入其他空间。"""
-    if status not in {"active", "archived"}:
-        raise HTTPException(status_code=422, detail="不支持的 Thread 状态")
-    items = await SessionRepository(db).list_sessions(
-        uid=scope.uid,
-        app_id=scope.app_id,
-        agent_id=agent_slug,
-        status=status,
-        limit=limit,
-        offset=offset,
-    )
-    latest = await AgentRunRepository(db).get_latest_top_level_runs_for_threads(
-        scope.uid, [item.thread_id for item in items]
-    )
-    activity = await AgentTurnRepository(db).list_thread_activity(
-        thread_ids=[item.thread_id for item in items], uid=scope.uid, app_id=scope.app_id
-    )
-    activity_by_id = {
-        thread_id: _thread_activity(status, waitpoint, run_status, pending and not paused)
-        for thread_id, status, waitpoint, run_status, pending, paused in activity
-    }
-    return [
-        {**_thread_public(item, latest.get(item.thread_id)), "activity_status": activity_by_id[item.thread_id]}
-        for item in items
-    ]
+    agent_slug: str | None,
+    after: str | None,
+    limit: int,
+    order: str,
+    archived: bool = False,
+    is_pinned: bool | None = None,
+) -> tuple[list[dict], bool]:
+    """批量读取公开会话页的活动事实，不逐项加载完整历史。"""
+    repo = SessionRepository(db)
+    try:
+        sessions, has_more = await repo.list_public_sessions(
+            uid=scope.uid,
+            app_id=scope.app_id,
+            agent_id=agent_slug,
+            after=after,
+            limit=limit,
+            order=order,
+            archived=archived,
+            is_pinned=is_pinned,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    facts = await repo.public_facts(sessions, uid=scope.uid, app_id=scope.app_id)
+    return [session_resource(*row) for row in facts], has_more
 
 
 async def search_threads(
@@ -101,63 +100,36 @@ async def search_threads(
         limit=limit,
         offset=offset,
     )
-    items = []
-    for item in search_items:
-        agent_session = item["agent_session"]
-        items.append(
-            {
-                "id": agent_session.thread_id,
-                "thread_id": agent_session.thread_id,
-                "uid": agent_session.uid,
-                "agent_id": agent_session.agent_id,
-                "title": agent_session.title,
-                "is_pinned": bool(agent_session.is_pinned),
-                "created_at": format_utc_datetime(agent_session.created_at),
-                "updated_at": format_utc_datetime(agent_session.updated_at),
-                "metadata": agent_session.extra_metadata or {},
-                "matched_count": item.get("matched_count", 0),
-                "message_id": item.get("message_id"),
-                "latest_match_at": format_utc_datetime(item.get("latest_match_at")),
-                "snippets": [
-                    {
-                        "message_id": snippet.get("message_id"),
-                        "content": snippet.get("content") or "",
-                        "created_at": format_utc_datetime(snippet.get("created_at")),
-                    }
-                    for snippet in item.get("snippets", [])
-                ],
-            }
-        )
+    facts = await SessionRepository(db).public_facts(
+        [item["agent_session"] for item in search_items], uid=scope.uid, app_id=scope.app_id
+    )
+    items = [
+        {
+            "session": session_resource(*row),
+            "matched_count": item.get("matched_count", 0),
+            "message_id": item.get("message_id"),
+            "latest_match_at": format_utc_datetime(item.get("latest_match_at")),
+            "snippets": [
+                {
+                    "message_id": snippet.get("message_id"),
+                    "content": snippet.get("content") or "",
+                    "created_at": format_utc_datetime(snippet.get("created_at")),
+                }
+                for snippet in item.get("snippets", [])
+            ],
+        }
+        for item, row in zip(search_items, facts, strict=True)
+    ]
     return {"items": items, "has_more": has_more, "limit": limit, "offset": offset}
 
 
-async def mark_thread_viewed(*, db: AsyncSession, scope: ActorScope, thread_id: str) -> dict:
+async def mark_thread_viewed(*, db: AsyncSession, scope: ActorScope, thread_id: str) -> None:
     """仅将当前作用域最新的终态顶层 Run 标为已查看。"""
-    agent_session = await require_thread(db=db, scope=scope, thread_id=thread_id, lock=True)
+    await require_thread(db=db, scope=scope, thread_id=thread_id, lock=True)
     run_map = await AgentRunRepository(db).get_latest_top_level_runs_for_threads(scope.uid, [thread_id])
     run_id, run_status = run_map.get(thread_id, (None, None))
     if run_id and run_status in AGENT_RUN_TERMINAL_STATUSES:
-        agent_session = await SessionRepository(db).mark_thread_viewed(thread_id, run_id)
-    thread_status = _thread_public(agent_session, (run_id, run_status))["thread_status"]
-    activity = await AgentTurnRepository(db).list_thread_activity(
-        thread_ids=[thread_id], uid=scope.uid, app_id=scope.app_id
-    )
-    _, status, waitpoint, current_run_status, pending, paused = activity[0]
-    workdir_path = await resolve_session_workdir_path(agent_session=agent_session, uid=scope.uid, db=db)
-    return {
-        "id": agent_session.thread_id,
-        "uid": agent_session.uid,
-        "agent_id": agent_session.agent_id,
-        "title": agent_session.title,
-        "is_pinned": bool(agent_session.is_pinned),
-        "project_id": agent_session.project_id,
-        "workdir_path": workdir_path,
-        "created_at": agent_session.created_at.isoformat(),
-        "updated_at": agent_session.updated_at.isoformat(),
-        "metadata": agent_session.extra_metadata or {},
-        "thread_status": thread_status,
-        "activity_status": _thread_activity(status, waitpoint, current_run_status, pending and not paused),
-    }
+        await SessionRepository(db).mark_thread_viewed(thread_id, run_id)
 
 
 async def update_thread(
@@ -169,8 +141,8 @@ async def update_thread(
     is_pinned: bool | None = None,
     tool_approval_mode: str | None = None,
     model_spec: str | None = None,
-) -> dict:
-    """在已授权 Thread 上更新标题或置顶标记。"""
+) -> None:
+    """在会话锁内更新展示或后续输入的执行配置。"""
     agent_session = await require_thread(db=db, scope=scope, thread_id=thread_id, lock=True)
     if title is not None:
         normalized = title.strip()
@@ -182,22 +154,23 @@ async def update_thread(
     if tool_approval_mode is not None or model_spec is not None:
         if agent_session.status != "active":
             raise HTTPException(status_code=409, detail="非活跃 Thread 不能修改执行配置")
-        metadata = dict(agent_session.extra_metadata or {})
+        if agent_session.config_snapshot is None:
+            raise ValueError("Session 缺少配置快照")
+        snapshot = deepcopy(agent_session.config_snapshot)
         if tool_approval_mode is not None:
-            metadata["tool_approval_mode"] = resolve_agent_run_tool_approval_mode(tool_approval_mode, None)
+            snapshot["tool_approval_mode"] = resolve_agent_run_tool_approval_mode(tool_approval_mode, None)
         if model_spec is not None:
-            metadata["model_spec"] = await resolve_agent_run_model_spec(model_spec, None, db)
-        agent_session.extra_metadata = metadata
+            snapshot["model"] = await resolve_agent_run_model_spec(model_spec, None, db)
+        agent_session.config_snapshot = snapshot
     agent_session.updated_at = utc_now()
     await db.commit()
-    return _thread_public(agent_session)
 
 
-async def archive_thread(*, db: AsyncSession, scope: ActorScope, thread_id: str) -> dict:
+async def archive_thread(*, db: AsyncSession, scope: ActorScope, thread_id: str) -> None:
     """当前会话的运行与待处理输入全部结束后才归档 Thread。"""
     agent_session = await require_thread(db=db, scope=scope, thread_id=thread_id, lock=True)
     if agent_session.status == "archived":
-        return _thread_public(agent_session)
+        return
     active_turn = await AgentTurnRepository(db).lock_active_for_thread(
         thread_id=thread_id, uid=scope.uid, app_id=scope.app_id
     )
@@ -210,31 +183,13 @@ async def archive_thread(*, db: AsyncSession, scope: ActorScope, thread_id: str)
     agent_session.status = "archived"
     agent_session.updated_at = utc_now()
     await db.commit()
-    return _thread_public(agent_session)
 
 
-async def get_thread_snapshot(*, db: AsyncSession, scope: ActorScope, thread_id: str) -> dict:
-    """从持久 Thread、Turn 与队列事实生成可刷新快照。"""
+async def get_session_resource(*, db: AsyncSession, scope: ActorScope, thread_id: str, receipt=None) -> dict:
+    """详情复用列表的批量事实与唯一 Session 投影。"""
     agent_session = await require_thread(db=db, scope=scope, thread_id=thread_id)
-    turn_repo = AgentTurnRepository(db)
-    turn = await turn_repo.get_active_for_thread(thread_id=thread_id, uid=scope.uid, app_id=scope.app_id)
-    if turn is None:
-        turn = await turn_repo.get_latest_for_thread(thread_id=thread_id, uid=scope.uid, app_id=scope.app_id)
-    current_run = await AgentRunRepository(db).get_run(turn.current_run_id) if turn and turn.current_run_id else None
-    queue = await AgentInputRepository(db).list_pending_inputs(thread_id=thread_id, uid=scope.uid, app_id=scope.app_id)
-    latest = await AgentRunRepository(db).get_latest_top_level_runs_for_threads(scope.uid, [thread_id])
-    return {
-        **_thread_public(agent_session, latest.get(thread_id)),
-        "current_turn": _turn_summary(turn, current_run),
-        "queue_paused": bool(agent_session.queue_paused),
-        "queued_input_count": len(queue),
-        "activity_status": _thread_activity(
-            turn.status if turn else None,
-            turn.waitpoint if turn else None,
-            current_run.status if current_run else None,
-            bool(queue) and not agent_session.queue_paused,
-        ),
-    }
+    [facts] = await SessionRepository(db).public_facts([agent_session], uid=scope.uid, app_id=scope.app_id)
+    return session_resource(*facts, receipt=receipt)
 
 
 async def get_queue_snapshot(*, db: AsyncSession, scope: ActorScope, thread_id: str) -> dict:
@@ -243,6 +198,7 @@ async def get_queue_snapshot(*, db: AsyncSession, scope: ActorScope, thread_id: 
     input_repo = AgentInputRepository(db)
     items = await input_repo.list_pending_inputs(thread_id=thread_id, uid=scope.uid, app_id=scope.app_id)
     messages_by_input = await input_repo.list_messages_for_inputs([item.id for item in items])
+    preparation = await AttachmentRepository(db).statuses_for_inputs([item.id for item in items])
     active = await AgentTurnRepository(db).get_active_for_thread(
         thread_id=thread_id, uid=scope.uid, app_id=scope.app_id
     )
@@ -258,6 +214,7 @@ async def get_queue_snapshot(*, db: AsyncSession, scope: ActorScope, thread_id: 
                 "turn_id": item.turn_id,
                 "run_id": item.consumed_run_id,
                 "received_seq": item.received_seq,
+                **preparation[item.id],
                 "content": "\n".join(message.content for message in messages_by_input[item.id]),
             }
             for item in items
@@ -354,58 +311,6 @@ async def cancel_input(
     )
     await db.commit()
     return control_accepted(receipt)
-
-
-def _turn_summary(turn, run) -> dict | None:
-    """只投影明确关联的 Turn 与当前 Run。"""
-    if turn is None:
-        return None
-    return {
-        "turn_id": turn.id,
-        "status": turn.status,
-        "run_id": turn.current_run_id,
-        "run_status": run.status if run else None,
-        "waitpoint": turn.waitpoint,
-        "result_run_id": turn.result_run_id,
-    }
-
-
-def _thread_activity(turn_status, waitpoint, run_status, has_pending_input) -> str:
-    """当前 Turn 拥有运行状态，待派发输入在无活跃轮次时表达排队。"""
-    if turn_status == "waiting":
-        return {"cooperation": "waiting_cooperation", "approval": "waiting_approval", "answer": "waiting_answer"}.get(
-            (waitpoint or {}).get("kind"), "waiting"
-        )
-    if turn_status in {"running", "cancelling"}:
-        return "queued" if run_status == "pending" else "running"
-    if has_pending_input:
-        return "queued"
-    return "failed" if turn_status == "failed" else "idle"
-
-
-def _thread_public(agent_session: Session, latest_run: tuple[str, str] | None = None) -> dict:
-    """仅投影 Public Thread 字段，并以最新顶层 Run 计算侧边栏状态。"""
-    run_id, run_status = latest_run if latest_run else (None, None)
-    if run_id is None or run_id == agent_session.last_viewed_run_id:
-        thread_status = "done"
-    elif run_status in {"completed", "failed", "cancelled", "yielded", "interrupted"}:
-        thread_status = "ready"
-    else:
-        thread_status = "loading"
-    return {
-        "id": agent_session.thread_id,
-        "thread_id": agent_session.thread_id,
-        "parent_session_id": agent_session.parent_thread_id,
-        "agent_id": agent_session.agent_id,
-        "status": agent_session.status,
-        "title": agent_session.title,
-        "is_pinned": bool(agent_session.is_pinned),
-        "project_id": agent_session.project_id,
-        "created_at": format_utc_datetime(agent_session.created_at),
-        "updated_at": format_utc_datetime(agent_session.updated_at),
-        "metadata": agent_session.extra_metadata or {},
-        "thread_status": thread_status,
-    }
 
 
 def check_control_key(key: str) -> None:

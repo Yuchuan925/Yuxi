@@ -151,11 +151,10 @@ async def prepare_run_execution(
 
     context = backend.context_schema()
     configured = run.input_payload.get("context_snapshot")
-    if configured is None:
-        configured = (agent_item.config_json or {}).get("context") or {}
+    if not isinstance(configured, dict) or not {"model", "tool_approval_mode"} <= configured.keys():
+        raise ValueError("Run 缺少完整配置快照")
     configurable_fields = {item.name for item in fields(context) if item.metadata.get("configurable", True)}
     context.update_config(configured)
-    payload = run.input_payload
     context.update(
         {
             "agent_slug": run.agent_slug,
@@ -168,10 +167,6 @@ async def prepare_run_execution(
             "workdir_path": runtime_workdir_path(workdir_binding.workdir_path),
         }
     )
-    if payload.get("model_spec"):
-        context.model = payload["model_spec"]
-    if payload.get("tool_approval_mode"):
-        context.tool_approval_mode = payload["tool_approval_mode"]
     configured_prompt = context.system_prompt
     context = await prepare_agent_runtime_context(context)
     if not getattr(context, "_runtime_prepared", False):

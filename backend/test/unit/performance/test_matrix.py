@@ -270,7 +270,12 @@ class ContinuousChannelsTest(unittest.IsolatedAsyncioTestCase):
                 }
 
             async def get_turn_result(self, thread_id, turn_id):
-                return {"turn_id": "turn", "status": "completed", "result_run_id": "r"}
+                return {
+                    "id": "turn",
+                    "object": "agent.session.turn",
+                    "status": "completed",
+                    "yuxi": {"result_run_id": "r"},
+                }
 
         client = Client()
         with patch("test.performance.matrix.time.perf_counter", side_effect=[10, 10.1]):
@@ -308,7 +313,14 @@ class ContinuousChannelsTest(unittest.IsolatedAsyncioTestCase):
 
             healthy.submit_input = submit
             healthy.consume_run_events = AsyncMock(return_value=({}, None, 1, 2, 3))
-            healthy.get_turn_result = AsyncMock(return_value={"status": "completed", "result_run_id": "r"})
+            healthy.get_turn_result = AsyncMock(
+                return_value={
+                    "id": "turn-1",
+                    "object": "agent.session.turn",
+                    "status": "completed",
+                    "yuxi": {"result_run_id": "r"},
+                }
+            )
             async with asyncio.TaskGroup() as tasks:
                 bad = tasks.create_task(run_channel((failed, "a", "bad", "req-bad", "bad"), 5, 0))
                 good = tasks.create_task(run_channel((healthy, "a", "good", "req-good", "good"), 5, 1))
@@ -322,7 +334,7 @@ class ContinuousChannelsTest(unittest.IsolatedAsyncioTestCase):
         """Input 已消费但本地未记下 Turn 时，按 Input 查询后取消并回读。"""
         run_id = "00000000-0000-0000-0000-000000000001"
         calls = []
-        statuses = iter(["running", "cancelled"])
+        statuses = iter(["in_progress", "cancelled"])
 
         def transport(request):
             """第一次结果仍在运行，不能据取消接口的 200 提前结束。"""
@@ -337,7 +349,8 @@ class ContinuousChannelsTest(unittest.IsolatedAsyncioTestCase):
             return httpx.Response(
                 200,
                 json={
-                    "turn_id": "turn",
+                    "id": "turn",
+                    "object": "agent.session.turn",
                     "status": next(statuses),
                 },
             )
@@ -418,7 +431,12 @@ class ObservationPersistenceTest(unittest.IsolatedAsyncioTestCase):
                     }
 
                 async def turn_result(load, thread_id, turn_id):
-                    return {"turn_id": turn_id, "status": "completed", "result_run_id": "r1"}
+                    return {
+                        "id": turn_id,
+                        "object": "agent.session.turn",
+                        "status": "completed",
+                        "yuxi": {"result_run_id": "r1"},
+                    }
 
                 async def cancel(load, row):
                     """显式区分已确认与未确认终态，不冒充取消成功。"""

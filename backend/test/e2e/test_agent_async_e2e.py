@@ -68,8 +68,8 @@ async def _create_thread(client: httpx.AsyncClient, headers: dict[str, str], age
         json={"agent_id": agent_slug, "title": make_test_session_title("agent-async-e2e")},
         headers={**headers, "Idempotency-Key": f"async-thread-{uuid.uuid4().hex}"},
     )
-    assert response.status_code == 200, response.text
-    thread_id = response.json().get("thread_id")
+    assert response.status_code == 201, response.text
+    thread_id = response.json()["id"]
     assert thread_id, response.text
     return str(thread_id)
 
@@ -98,7 +98,7 @@ async def _submit_input(client: httpx.AsyncClient, headers: dict[str, str], thre
     )
     assert response.status_code == 202, response.text
     accepted = response.json()
-    assert accepted["thread_id"] == thread_id
+    assert accepted["session_id"] == thread_id
     assert accepted["input_id"] and accepted["turn_id"] and accepted["run_id"], accepted
     return accepted
 
@@ -213,14 +213,16 @@ async def test_async_agent_run_stream_result_and_persistence(
         assert streamed[-1]["type"] == "agent.session.turn.completed", streamed[-1]
         assert streamed[-1]["yuxi"]["run_id"] == run_id and streamed[-1]["yuxi"]["input_id"] == input_id
 
-        turn_response = await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/turns/{turn_id}", headers=e2e_headers)
+        turn_response = await e2e_client.get(
+            f"/api/v1/agents/sessions/{thread_id}/turns/{turn_id}", headers=e2e_headers
+        )
         assert turn_response.status_code == 200, turn_response.text
         turn = turn_response.json()
         if turn["status"] != "completed":
             skip_if_external_quota(turn.get("error"))
         assert turn["status"] == "completed", turn
-        assert turn["result_run_id"] == run_id
-        assert EXPECTED_OUTPUT in output_text(turn["output"])
+        assert turn["yuxi"]["result_run_id"] == run_id
+        assert EXPECTED_OUTPUT in output_text(turn["yuxi"]["output"])
 
         run_response = await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/runs/{run_id}", headers=e2e_headers)
         assert run_response.status_code == 200, run_response.text
@@ -228,16 +230,16 @@ async def test_async_agent_run_stream_result_and_persistence(
         assert run["status"] == "completed" and run["turn_id"] == turn_id
         assert run["input_id"] == input_id and all(item["yuxi"]["run_id"] == run_id for item in run["output"])
 
-        history_response = await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/history", headers=e2e_headers)
+        history_response = await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/items?order=asc&limit=100", headers=e2e_headers)
         assert history_response.status_code == 200, history_response.text
         history = history_response.json()
-        assert any(item["yuxi"].get("input_id") == input_id and item["turn_id"] == turn_id for item in history["items"])
+        assert any(item["yuxi"].get("input_id") == input_id and item["turn_id"] == turn_id for item in history["data"])
         assert any(
             item["yuxi"]["run_id"] == run_id and item["turn_id"] == turn_id and EXPECTED_OUTPUT in output_text([item])
-            for item in history["items"]
+            for item in history["data"]
             if item["type"] == "message" and item["role"] == "assistant"
         )
-        assert any(item["run_id"] == run_id and item["turn_id"] == turn_id for item in history["runs"])
+        assert any(item["id"] == run_id and item["turn_id"] == turn_id for item in history["yuxi"]["runs"])
 
         await _assert_run_persisted(
             run_id=run_id,

@@ -106,8 +106,8 @@ async def test_main_agent_reads_personal_skill_directly_from_user_workspace(
                 "title": make_test_session_title("personal-skill-e2e"),
             },
         )
-        assert thread_response.status_code == 200, thread_response.text
-        thread_id = str(thread_response.json()["thread_id"])
+        assert thread_response.status_code == 201, thread_response.text
+        thread_id = str(thread_response.json()["id"])
 
         run_response = await e2e_client.post(
             f"/api/v1/agents/sessions/{thread_id}/events",
@@ -150,15 +150,17 @@ async def test_main_agent_reads_personal_skill_directly_from_user_workspace(
 
         event_count = await asyncio.wait_for(consume_output(), timeout=RUN_TIMEOUT_SECONDS)
         assert event_count > 0, event_count
-        turn_response = await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/turns/{turn_id}", headers=e2e_headers)
+        turn_response = await e2e_client.get(
+            f"/api/v1/agents/sessions/{thread_id}/turns/{turn_id}", headers=e2e_headers
+        )
         assert turn_response.status_code == 200, turn_response.text
         turn = turn_response.json()
         if turn["status"] != "completed":
             skip_if_external_quota((turn.get("error") or {}).get("message"))
         assert turn["status"] == "completed", turn
-        assert turn["result_run_id"] == run_id, turn
+        assert turn["yuxi"]["result_run_id"] == run_id, turn
 
-        assert marker in output_text(turn.get("output") or []), turn
+        assert marker in output_text(turn["yuxi"]["output"] or []), turn
 
         conn = await asyncpg.connect(postgres_dsn())
         try:

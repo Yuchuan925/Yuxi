@@ -159,8 +159,8 @@ async def test_dashboard_http_counts_all_sessions_and_excludes_deleted(test_clie
                 "title": make_test_session_title(f"{marker}-{status}"),
             },
         )
-        assert response.status_code == 200, response.text
-        thread_ids.append(str(response.json().get("thread_id") or response.json()["id"]))
+        assert response.status_code == 201, response.text
+        thread_ids.append(str(response.json()["id"]))
 
     await _set_session_statuses(thread_ids[1], thread_ids[2])
 
@@ -202,8 +202,8 @@ async def test_dashboard_http_reads_run_token_totals(test_client, admin_headers)
             "title": make_test_session_title(marker),
         },
     )
-    assert response.status_code == 200
-    thread_id = str(response.json().get("thread_id") or response.json()["id"])
+    assert response.status_code == 201
+    thread_id = str(response.json()["id"])
     engine = create_async_engine(os.environ["POSTGRES_URL"])
     try:
         async with async_sessionmaker(engine, expire_on_commit=False)() as db:

@@ -5,6 +5,7 @@ import os
 import uuid
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock
+from types import SimpleNamespace
 
 import pytest
 import pytest_asyncio
@@ -62,29 +63,34 @@ async def tree(monkeypatch):
 
     monkeypatch.setattr(pg_manager, "get_async_session_context", transaction)
 
-    async def resolve_config(model, approval, agent, *args):
-        """隔离外部模型目录，保留 Agent 配置与显式模型选择。"""
-        return model or ((agent.config_json or {}).get("context") or {}).get(
-            "model"
-        ) or "test:mock", approval or "always_trust"
-
-    monkeypatch.setattr("yuxi.modules.agents.services.inputs.resolve_agent_run_config", resolve_config)
-    monkeypatch.setattr("yuxi.modules.agents.services.cooperation.resolve_agent_run_config", resolve_config)
+    monkeypatch.setattr(
+        "yuxi.modules.agents.services.input_config.model_cache.get_model_info",
+        lambda spec: SimpleNamespace(model_type="chat"),
+    )
+    monkeypatch.setattr(
+        "yuxi.modules.agents.services.input_config.system_options",
+        SimpleNamespace(get=AsyncMock(return_value={"default_model": "test:mock"})),
+    )
     monkeypatch.setattr("yuxi.modules.agents.services.cooperation.deliver", AsyncMock())
+    monkeypatch.setattr("yuxi.modules.agents.services.scheduler.deliver", AsyncMock())
     run_id, thread_id, _message_id = await create_agent_run(
         factory,
         prefix="cooperation",
         message_content="PRIVATE_ROOT_HISTORY",
         input_payload={
-            "model_spec": "test:mock",
-            "tool_approval_mode": "always_trust",
-            "context_snapshot": {"tools": [], "system_prompt": "CONFIG"},
+            "context_snapshot": {
+                "model": "test:mock",
+                "tool_approval_mode": "always_trust",
+                "tools": [],
+                "system_prompt": "CONFIG",
+            },
         },
         status="pending",
     )
     async with transaction() as db:
         root = await db.scalar(select(Session).where(Session.thread_id == thread_id))
         run = await db.get(AgentRun, run_id)
+        root.config_snapshot = dict(run.input_payload["context_snapshot"])
         agent_slug = f"cooperation-{thread_id[-12:]}"
         root.agent_id = run.agent_slug = agent_slug
         db.add(
@@ -136,7 +142,7 @@ async def test_creation_is_idempotent_and_context_is_independent(tree):
         assert member.project_id == root.project_id and member.agent_id == root.agent_id
         run = await db.get(AgentRun, created["run_id"])
         assert run.run_type == "chat" and run.runtime_scope_id == root_id
-        assert run.input_payload["model_spec"] == "test:mock"
+        assert run.input_payload["context_snapshot"]["model"] == "test:mock"
         messages = list((await db.scalars(select(Message).where(Message.session_record_id == member.id))).all())
         assert [message.content for message in messages] == ["EXPLICIT_reviewer"]
         assert "PRIVATE_ROOT_HISTORY" not in str(run.input_payload)
@@ -265,8 +271,8 @@ async def test_selected_agent_freezes_target_config_model_and_parent_approval(tr
         assert member.config_snapshot["system_prompt"] == "TARGET_CONFIG"
         assert member.config_snapshot["tools"] == ["ask_user_question"]
         assert run.input_payload["context_snapshot"] == member.config_snapshot
-        assert run.input_payload["model_spec"] == member.extra_metadata["model_spec"] == "test:target"
-        assert run.input_payload["tool_approval_mode"] == "always_trust"
+        assert run.input_payload["context_snapshot"]["model"] == member.config_snapshot["model"] == "test:target"
+        assert run.input_payload["context_snapshot"]["tool_approval_mode"] == "always_trust"
         assert (
             await db.scalar(
                 select(func.count()).select_from(AgentInput).where(AgentInput.thread_id == member.thread_id)
@@ -306,7 +312,8 @@ async def test_empty_selected_config_stays_frozen_when_target_changes(tree, monk
     async with factory() as db:
         run = await db.get(AgentRun, created["run_id"])
         member = await db.scalar(select(Session).where(Session.thread_id == created["session_id"]))
-        assert member.config_snapshot == run.input_payload["context_snapshot"] == {}
+        assert member.config_snapshot == run.input_payload["context_snapshot"]
+        assert member.config_snapshot["system_prompt"] == "You are a helpful assistant."
         result = await prepare_run_execution(
             run=run,
             user=await db.scalar(select(User).where(User.uid == uid)),
@@ -1261,7 +1268,7 @@ async def test_summary_reads_whole_tree_with_constant_queries_and_omits_results(
             event.remove(engine, "before_cursor_execute", record)
 
 
-@pytest.mark.parametrize("lock_owner", ["dispatch", "metadata", "continue", "run_owner", "run_terminal", "turn"])
+@pytest.mark.parametrize("lock_owner", ["dispatch", "configuration", "continue", "run_owner", "run_terminal", "turn"])
 async def test_message_foreign_keys_do_not_deadlock_session_writers(tree, monkeypatch, lock_owner):
     """树通知与会话写入并发时，外键键共享锁不得形成反向等待。"""
     from sqlalchemy import text
@@ -1304,9 +1311,10 @@ async def test_message_foreign_keys_do_not_deadlock_session_writers(tree, monkey
             else:
                 if lock_owner == "dispatch":
                     await repo.lock_session_by_thread_id(root_id)
-                elif lock_owner == "metadata":
-                    root = await repo.get_session_by_thread_id(root_id)
-                    await repo._lock_session_by_id(root.id)
+                elif lock_owner == "configuration":
+                    root = await repo.lock_session_by_thread_id(root_id)
+                    root.config_snapshot = {**root.config_snapshot, "system_prompt": "UPDATED"}
+                    await db.flush()
                 elif lock_owner == "run_owner":
                     await AgentRunRepository(db).lock_run_for_user(run_id, uid)
                 elif lock_owner == "run_terminal":

@@ -25,7 +25,6 @@ export async function* parseSse(body: ReadableStream<Uint8Array>): AsyncGenerato
         else if (field === "event" || field === "id") event[field] = value;
       }
     }
-    if (data.length) yield { ...event, data: data.join("\n") };
   } finally {
     await reader.cancel().catch(() => undefined);
     reader.releaseLock();

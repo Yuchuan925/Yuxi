@@ -72,8 +72,10 @@ async def _create_schema():
         )
         await connection.execute(
             text(
-                "INSERT INTO sessions (thread_id, tree_root_thread_id, uid, agent_id, project_id, is_pinned, status) "
-                "VALUES ('input-thread', 'input-thread', 'input-user', 'main', 'input-project', false, 'active')"
+                "INSERT INTO sessions "
+                "(thread_id, tree_root_thread_id, uid, agent_id, project_id, is_pinned, status, config_snapshot) "
+                "VALUES ('input-thread', 'input-thread', 'input-user', 'main', 'input-project', false, 'active', "
+                '\'{"model":"test:chat","tool_approval_mode":"default"}\')'
             )
         )
     return schema, admin_engine, engine
@@ -275,8 +277,10 @@ async def test_product_key_active_turn_and_steer_uniqueness_are_enforced() -> No
         async with engine.begin() as connection:
             await connection.execute(
                 text(
-                    "INSERT INTO sessions (thread_id, tree_root_thread_id, uid, agent_id, project_id, is_pinned, status) "
-                    "VALUES ('other-thread', 'other-thread', 'input-user', 'main', 'input-project', false, 'active')"
+                    "INSERT INTO sessions "
+                    "(thread_id, tree_root_thread_id, uid, agent_id, project_id, is_pinned, status, config_snapshot) "
+                    "VALUES ('other-thread', 'other-thread', 'input-user', 'main', 'input-project', false, 'active', "
+                    '\'{"model":"test:chat","tool_approval_mode":"default"}\')'
                 )
             )
         async with sessions() as db:
@@ -584,3 +588,60 @@ async def test_reused_tool_call_id_never_reuses_another_message_declaration():
             await db.commit()
     finally:
         await _drop_schema(schema, admin_engine, engine)
+
+
+async def test_attachment_schema_upgrade_is_idempotent_and_preserves_inputs():
+    """显式 v5 升级只补附件表，重跑保留输入并拒绝无效准备状态。"""
+    from datetime import timedelta
+    from yuxi.modules.agents.models.attachments import AgentAttachment
+    from yuxi.migrations.schema import add_attachment_table, create_schema_version_table, record_schema_version
+    from yuxi.shared.datetime import utc_now
+
+    schema, admin, engine = await _create_schema()
+    manager = object.__new__(PostgresManager)
+    PostgresManager.__init__(manager)
+    manager.async_engine = engine
+    manager._initialized = True
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        async with factory() as db:
+            db.add(
+                AgentInput(
+                    id="upgrade-input",
+                    thread_id="input-thread",
+                    uid="input-user",
+                    agent_slug="main",
+                    kind="follow_up",
+                    status="pending",
+                    input_payload={"context_snapshot": {"model": "test:chat", "tool_approval_mode": "default"}},
+                )
+            )
+            await db.commit()
+        async with engine.begin() as connection:
+            await connection.run_sync(lambda sync: AgentAttachment.__table__.drop(sync))
+        await create_schema_version_table(manager)
+        await record_schema_version(manager, "business", 5)
+        await add_attachment_table(manager)
+        await add_attachment_table(manager)
+        async with factory() as db:
+            assert (await db.get(AgentInput, "upgrade-input")).status == "pending"
+            assert await db.scalar(text("SELECT version FROM yuxi_schema_migrations WHERE domain='business'")) == 6
+            with pytest.raises(IntegrityError, match="ck_agent_attachments_preparation"):
+                async with db.begin_nested():
+                    db.add(
+                        AgentAttachment(
+                            id="invalid-ready",
+                            uid="input-user",
+                            filename="file.txt",
+                            mime_type="text/plain",
+                            size_bytes=1,
+                            created_at=utc_now(),
+                            expires_at=utc_now() + timedelta(days=1),
+                            status="ready",
+                            object_name="temporary",
+                        )
+                    )
+                    await db.flush()
+            assert await db.get(AgentAttachment, "invalid-ready") is None
+    finally:
+        await _drop_schema(schema, admin, engine)

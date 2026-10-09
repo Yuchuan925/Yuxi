@@ -216,7 +216,7 @@ async def cancel_failed_request(load_client, row):
             await load_client.cancel_turn(row["thread_id"], row["turn_id"], row["event_key"], row.get("run_id"))
             while True:
                 result = await load_client.get_turn_result(row["thread_id"], row["turn_id"])
-                if result.get("turn_id") != row["turn_id"]:
+                if result["id"] != row["turn_id"]:
                     raise ValueError("取消结果与目标 Turn 串绑")
                 if result.get("status") in TERMINAL_STATUSES:
                     row["cancel_confirmed"] = True
@@ -269,7 +269,7 @@ async def run_request(load_client, slug, thread_id, event_key, uid, *, row=None)
                 and result.get("input_id") == row["input_id"]
                 and result.get("turn_id") == row["turn_id"]
                 and turn_result.get("status") == "completed"
-                and turn_result.get("result_run_id") == row["run_id"]
+                and turn_result["yuxi"]["result_run_id"] == row["run_id"]
                 and result.get("status") == "completed"
                 and isinstance(result.get("output"), dict)
                 and result["output"].get("run_id") == row["run_id"]

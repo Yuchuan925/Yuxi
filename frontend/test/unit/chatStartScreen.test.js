@@ -35,6 +35,8 @@ test('新建路由且没有线程才显示欢迎布局，加载和空消息不�
             Vue.createSSRApp({
               data: () => ({
                 isNewSession,
+                currentChatId: threadId,
+                pendingSends: {},
                 showStartScreen: showStartScreen.value,
                 isLoadingMessages,
                 runGroups,

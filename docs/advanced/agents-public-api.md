@@ -1,6 +1,47 @@
 # Agents Public API
 
-本页供外部应用查找 Session 接口、输入格式及状态读取方式。第一次接入见[运行一次公开 Agent 对话](../intro/agents-api-quickstart.md)。部署的 `/docs#/agents-public-v1` 和 `/openapi.json` 提供参数、类型、限制和示例。运行时状态与恢复规则见 [Agent 输入队列与调度](../mechanisms/agent-request-queue.md)。公开流以 [OpenAI Agents streaming events](https://developers.openai.com/api/reference/resources/beta/subresources/agents/streaming-events) 为基线。标准事件保留官方字段和语义，业务扩展放入 `yuxi`，专有事件使用 `yuxi.*`；尚未支持的官方输入动作返回 `422`。
+本页供外部集成开发者查找 Session 接口、输入格式、响应和恢复规则。第一次接入见[运行一次公开 Agent 对话](../intro/agents-api-quickstart.md)。部署的 `/docs#/agents-public-v1` 与 `/openapi.json` 提供生成的字段、类型、限制和示例。运行时机制见[Agent 输入队列与调度](../mechanisms/agent-request-queue.md)。
+
+## 协议范围与差异
+
+主路径 `/api/v1/agents/sessions` 对齐 [OpenAI Agents Sessions](https://developers.openai.com/api/docs/guides/agents-api/sessions) 的核心子集：保存的 Agent、字符串或消息数组初始输入、消息/取消事件、公开持久 Items 和 `agent.session.*` 输出。Session ID 沿用内部 Thread UUID；数据库 Session 行与 Thread 一对一，调用方始终使用公开 UUID。
+
+创建返回 `201`，事件提交返回 `202`。创建、详情、列表元素、POST 更新、已读和归档返回相同的 `object=agent.session` 资源。核心字段包括 `id`、`agent`、Unix 秒 `created_at/last_active_at` 和工作 `status`；展示、队列和等待点位于 `yuxi`。`agent.model` 返回会话配置快照中的有效模型，创建时依次从显式值、Agent 配置和系统默认模型解析；空会话同样要求模型可用。Session 工作状态为 `idle/in_progress/requires_action/completed/failed/cancelled`。空会话为 `idle`；执行及协作等待为 `in_progress`；需要回答或审批为 `requires_action`；最近 Turn 的成功、失败、取消直接返回对应终态。后续输入是否可以接收由等待点与队列门禁决定。归档使用 `yuxi.archived`；未读使用独立的 `yuxi.unread`，已读操作不改变工作状态。
+
+`yuxi.current_turn` 为最近轮次的概览，字段为 `id/status/current_run_id/result_run_id/waitpoint`。Session、Turn 详情和 SSE 中的工作状态使用相同语义。waitpoint 只描述等待内容；Run 的状态用于执行段详情。
+
+`last_active_at` 来自持久接收回执、Input 消费/取消和 Run 执行时间；没有活动时使用创建时间。标题、置顶、已读和归档更新不改变该字段。创建回执单独放在 `yuxi.receipt`，普通资源读取的该字段为空。
+
+SSE 是覆盖多轮工作的长期订阅，单轮终态后保持连接。调用方按 Turn ID 观察 `completed/failed/cancelled`，回读持久结果并主动关闭连接；不承诺官方 SDK 自动结束调用或收集最终结果。创建流先返回 `agent.session.created`，其 `session` 为同一 Session 响应。
+
+Yuxi 要求创建与提交携带幂等键，每次仅接收一个事件，图片只接受内联 data URL。创建仅支持已保存的 `agent_id` 与 `agent.model` 覆盖；环境配置、内联完整 Agent、外部 `tool_result` 和 computer-use approval 未实现，返回 `422`。FIFO、显式 steer、人工回答/通用工具审批、回执和 Run/Input 查询、协作控制属于 Yuxi 扩展。对齐边界与后续 SDK 验证范围见[对齐计划](../develop-guides/agents-api-alignment-plan.md)。
+
+```json
+{
+  "id": "<session-id>",
+  "object": "agent.session",
+  "agent": {"id": "default-chatbot", "model": "<provider:model>"},
+  "created_at": 1791504000,
+  "last_active_at": 1791504000,
+  "status": "in_progress",
+  "yuxi": {
+    "title": "新的对话",
+    "archived": false,
+    "unread": false,
+    "receipt": {
+      "object": "yuxi.session.event.accepted",
+      "event_id": "<receipt-id>",
+      "session_id": "<session-id>",
+      "input_id": "<input-id>",
+      "turn_id": "<turn-id>",
+      "run_id": "<run-id>",
+      "status": "accepted"
+    }
+  }
+}
+```
+
+示例省略部分展示与队列字段，完整响应以 OpenAPI 的 `SessionResponse` 为准。`yuxi.receipt.status=accepted` 只表达该次持久接收；工作结果由目标 Turn 查询拥有。
 
 ## 身份与作用域
 
@@ -14,27 +55,33 @@
 
 Thread 是长期对话，Turn 是一轮工作，Run 是其中一段有执行 owner 的运行。普通消息先保存为 Input，`follow_up` 彼此 FIFO，`steer` 合并为唯一的待消费优先批次。线程空闲且队列未暂停时领取优先队头并创建 Turn/Run；运行中在安全边界消费 steer，在同一 Turn 创建下一 Run。回答或审批消费明确等待点，也在同一 Turn 创建下一 Run。接收响应中的 `event_id`、`input_id` 和状态只证明持久接收；工作结果通过 Turn 查询。
 
-`/api/v1/agents/sessions` 是公开入口。Session ID 沿用内部 Thread UUID；本次仅统一公开路径与命名，创建仍返回 200，事件接收返回 202，原有输入格式和业务响应字段继续使用。创建和详情的 object 为 `agent.session`；`thread_id` 是内部关联字段，与公开 id 相同。
+`/api/v1/agents/sessions` 是主协议。创建回执的关联 ID 位于 `yuxi.receipt`；事件提交回执使用 `yuxi.session.event.accepted`，保留明确的 `session_id`、`input_id`、`turn_id` 和 `run_id`。
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
 | `GET` | `/api/v1/agents`、`/api/v1/agents/{agent_id}` | 查询可见主 Agent |
 | `POST`、`GET` | `/api/v1/agents/sessions` | 创建空或带首批输入的 Thread；按 APP 作用域列出 active Thread |
-| `GET`、`PATCH` | `/api/v1/agents/sessions/{session_id}` | 读取快照；修改标题、置顶及后续输入默认配置 |
+| `GET`、`POST` | `/api/v1/agents/sessions/{session_id}` | 读取资源；修改标题、置顶及后续输入默认配置 |
 | `POST` | `/api/v1/agents/sessions/{session_id}/archive` | 无活跃 Turn 和待处理 Input 时归档，保留历史 |
 | `POST`、`GET` | `/api/v1/agents/sessions/{session_id}/events` | 提交单个输入或控制事件；订阅整段 Thread |
 | `GET` | `/api/v1/agents/sessions/{session_id}/queue` | 查看待处理 Input 和暂停状态 |
 | `GET` | `/api/v1/agents/sessions/{session_id}/inputs/{input_id}` | 查看接收、消费和消息归属 |
+| `GET` | `/api/v1/agents/sessions/{session_id}/receipt?idempotency_key=<key>` | 响应丢失后定位原提交的回执 |
+| `GET` | `/api/v1/agents/sessions/{session_id}/turns` | 分页发现本会话的轮次，包含零输出轮次 |
 | `GET` | `/api/v1/agents/sessions/{session_id}/turns/{turn_id}` | 查看整轮状态、等待点、Run 和明确结果 |
-| `GET` | `/api/v1/agents/sessions/{session_id}/turns/{turn_id}/items` | 按 `after_id`、`limit` 读取本轮公开 items |
+| `GET` | `/api/v1/agents/sessions/{session_id}/items` | 分页读取会话公开内容 |
+| `GET` | `/api/v1/agents/sessions/{session_id}/turns/{turn_id}/items` | 分页读取指定轮次的公开内容 |
 | `GET` | `/api/v1/agents/sessions/{session_id}/runs/{run_id}` | 查看指定执行段 |
-| `GET` | `/api/v1/agents/sessions/{session_id}/history` | 查看持久历史及轻量 Run 列表 |
 
 Thread 的创建、事件提交都必须提供长度为 1–128 的 `Idempotency-Key`。同一身份、Thread 和键重复提交相同意图返回首次回执；改变命令、目标或内容返回 `409`。未知字段、批量事件或无效内容返回 `422`。
 
+Session 列表返回 `{object:"list", data, first_id, last_id, has_more}`，默认 `order=desc`、`limit=50`，limit 为 1–100。以创建时间和 ID 稳定排序，将上一页 `last_id` 作为 `after`；改名、置顶、已读和归档不会移动下一页边界。`agent_id`、`archived` 与 `is_pinned` 筛选授权范围内的资源；`after` 必须属于当前用户和 APP，否则返回 `400`。Web 单独读取全部置顶页并合并展示，普通列表游标保持独立。
+
+POST 更新使用 `{"agent":{"model":"<provider:model>"},"yuxi":{"title":"新标题","is_pinned":true,"tool_approval_mode":"always_trust"}}`，每个字段均可省略。模型使用 `agent.model`，消息级覆盖使用事件的 `yuxi.model`；显式 `null` 没有重置语义，返回 `422`。更新响应为同一 Session 资源。会话配置来自创建时的 Agent Context 与默认值，修改保存的 Agent 或系统默认值不会改变该会话；更新模型与审批模式影响更新后接收的新输入，已接收的队列输入、当前 Turn 和恢复执行保留原配置。
+
 ## 创建与提交消息
 
-创建可传 `agent_id`、`title`、`project_id`、`model_spec`、`tool_approval_mode`、`input` 和 `stream`。`agent_id` 使用可见 Agent slug；`input` 是有序的 `user` 消息数组，内容块支持 `input_text` 与内联 `data:image/...;base64,...` 的 `input_image`。每条消息最多 10 张图片，图片内容总量最多 80 MiB；内置 nginx 对 Thread 创建和消息事件放行 100 MiB 请求体，外层代理也需配置相应上限。`stream=true` 要求同时提供输入。带输入创建把 Thread、Message、Input、回执和首个 Turn/Run 在同一数据库事务提交；提交后才投递 worker。
+创建可传 `agent_id`、`title`、`project_id`、`agent.model`、`tool_approval_mode`、`input`、`attachment_file_ids` 和 `stream`。`agent_id` 使用可见 Agent slug；`input` 是文本字符串或有序的 `user` 消息数组，内容块支持 `input_text` 与内联 `data:image/...;base64,...` 的 `input_image`。每条消息最多 10 张图片，图片内容总量最多 80 MiB；内置 nginx 对 Thread 创建和消息事件放行 100 MiB 请求体，外层代理也需配置相应上限。`stream=true` 要求同时提供输入。带输入创建先把 Thread、Message、Input 和回执在同一数据库事务提交；有附件时再准备 Workdir 文件并提交就绪事实。只有文件就绪且队列允许领取时才创建 Turn/Run，提交后投递 worker。
 
 ```bash
 curl --fail "$BASE_URL/api/v1/agents/sessions" \
@@ -49,7 +96,7 @@ curl --fail "$BASE_URL/api/v1/agents/sessions" \
 
 未指定 mode 时，服务在 Thread 锁内按运行中 steer、空闲 follow-up 选择；等待用户回答、审批或取消清理时拒绝普通消息；协作等待时默认为 follow-up，只进入 FIFO 队列。一次 POST 只接收一个事件，事件内可有多条有序消息。幂等重试返回同一回执与 Input，不重新入队；已消费后返回实际 Turn/Run 归属。两类 pending Input 的 Turn/Run ID 均为空。
 
-新 Input 的模型与审批配置在接收时冻结。steer 不接受显式模型或审批配置；空闲调度使用批次创建时冻结的默认配置，运行中安全接管沿用当前 Run 配置。调度、暂停和取消批次的详细规则见[输入队列机制](../mechanisms/agent-request-queue.md)。
+新 Input 在接收时冻结完整的可配置 Context，包含模型、审批模式、提示词、资源选择和执行限制。`follow_up` 的单次模型与审批覆盖随消息原子接收，仅作用于该输入。steer 不接受显式模型或审批配置；空闲调度使用批次创建时冻结的会话配置，运行中安全接管沿用当前 Run 配置。运行身份由 worker 注入，资源权限在准备和工具执行时校验。调度、暂停和取消批次的详细规则见[输入队列机制](../mechanisms/agent-request-queue.md)。
 
 ```bash
 curl --fail -X POST "$BASE_URL/api/v1/agents/sessions/$SESSION_ID/events" \
@@ -60,13 +107,64 @@ curl --fail -X POST "$BASE_URL/api/v1/agents/sessions/$SESSION_ID/events" \
   -d '{"events":[{"type":"agent.session.input.message","yuxi":{"mode":"follow_up"},"input":[{"role":"user","content":[{"type":"input_text","text":"请继续"}]}]}]}'
 ```
 
+## 图片与文件附件
+
+直接视觉输入使用 `{"type":"input_image","image_url":"data:image/png;base64,..."}`，保留实际 MIME 与完整 data URL。当前不支持远程图片 URL。内联图片不会自动生成 Workdir 文件；需要文件操作或 Agent OCR 工具时，把图片作为文件附件上传。
+
+`POST /api/v1/agents/files` 接收 multipart 的 `file`，大小上限 5 MiB，返回 `201` 文件草稿资源：
+
+```json
+{"id":"0123456789abcdef0123456789abcdef","object":"file","filename":"report.pdf","bytes":1024,"mime_type":"application/pdf","created_at":1791504000,"expires_at":1791590400,"status":"draft"}
+```
+
+上传不创建 Session，也不写入 Workdir 或对话历史。草稿在 24 小时内提交；`GET /files/{file_id}` 读取草稿信息，`DELETE /files/{file_id}` 删除未提交草稿。未提交的过期原文件和派生资源在同作用域后续上传时清理。服务端管理存储地址，调用方只保存 `id`。
+
+```bash
+curl --fail "$BASE_URL/api/v1/agents/files" \
+  -H "Authorization: Bearer $API_KEY" \
+  -F 'file=@report.pdf'
+```
+
+发送时将返回的 `id` 放入创建请求顶层 `attachment_file_ids`，并同时提供 `input`；后续消息放入事件的 `yuxi.attachment_file_ids`，每次最多 20 个。两种提交都校验用户、APP、有效期与已有归属。每个草稿只归属一个 Input；另一条消息需要重新上传。同一个 pending steer 的追加可继续引用已有文件，新文件失败不会覆盖已提交文件。
+
+```json
+{"agent_id":"default-chatbot","input":"请总结报告","attachment_file_ids":["0123456789abcdef0123456789abcdef"]}
+```
+
+```json
+{"events":[{"type":"agent.session.input.message","input":[{"role":"user","content":[{"type":"input_text","text":"请总结报告"}]}],"yuxi":{"mode":"follow_up","attachment_file_ids":["0123456789abcdef0123456789abcdef"]}}]}
+```
+
+接收回执证明 Input 与来源已经持久化。准备失败仍返回已接收回执，`GET /sessions/{session_id}/inputs/{input_id}` 和 `/queue` 用 `attachment_status=preparing`、`attachment_error` 表达未就绪；恢复扫描调用同一准备函数补全 Input 与目标文件。回执读取和同幂等键重放只返回接收事实，不补文件或派发。未就绪输入不能执行，也不会被后续 FIFO 输入跳过。准备完成提交后状态为 `ready`，清理 MinIO 原文件和私有预解析临时内容，正式内容由 Workdir 拥有；清理失败由现有恢复循环重试。无附件输入同样返回 `ready`。
+
+提交后通过 `GET /sessions/{session_id}/attachments` 回读正式文件引用、`input_id` 和 artifact URL；draft 读、删、预解析接口不再接受该文件（`409`）。文件归授权 Workdir 管理，使用相同 Project 的 Session 可通过文件 API/工具发现它。模型上下文只列本次输入与此前已消费输入的附件，不提前列出后续排队或已取消 Input 的文件。取消排队输入保留已接收文件，归档会话或软删除 Project 后仍恢复尚未完成的文件提交，但不启动新 Run；显式删除使用 `/sessions/{session_id}/attachments/{file_id}`，文件提交未完成、待消费引用或运行期间拒绝删除。
+
+产品手动 OCR 预解析与图片缩略图处理分别使用 JWT 私有 `/api/agent/files/{file_id}/parse`、`/api/agent/images`，所有 API Key 都不能调用。Public 上传与发送不需要预解析、解析引擎或对象路径。配置了 `ocr_parse_file` 的 Agent 仍可按需解析 Workdir 文件，详见[运行时文件机制](../mechanisms/agent-runtime.md)。旧 Public 临时上传、confirm、parse 和 images 入口已移除。
+
 ## 错误与重试
 
 错误保留 FastAPI 的 `{detail: ...}` 结构，校验错误 detail 可为数组。`401` 检查凭据，`403` 检查 Key 权限/终端身份，`404` 表示资源不存在或当前作用域不可见，`409` 表示幂等意图冲突或状态不允许，`422` 表示输入/配置/游标无效。超时或丢失响应使用原幂等键重试同一意图；修改意图必须生成新键。各接口的生成文档列出适用错误与处理方向。
 
+## 断线恢复
+
+创建响应丢失时，重放相同 `POST /sessions` 请求、身份和幂等键，得到原 Session 与 `yuxi.receipt`。已有 Session 的提交响应丢失时，先用原键查询回执：
+
+```bash
+curl --fail --get "$BASE_URL/api/v1/agents/sessions/$SESSION_ID/receipt" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H 'X-End-User-Id: crm-user-42' \
+  --data-urlencode 'idempotency_key=crm-message-0002'
+```
+
+回执 `404` 只表示该次查询尚未发现已提交记录；原请求仍可能在途。重放原意图与原键会由同一幂等边界串行处理。查询超时保留原命令与键，不生成另一条提交。接收后用 `input_id` 查询 Input；pending 等待消费，cancelled 表达排队取消，consumed 的 `turn_id/run_id` 指向固定执行归属。控制回执直接指向原控制目标。
+
+观察目标 Turn 的持久状态；完成后读取该 Turn 的 `yuxi.output`，归属由 `result_run_id` 决定。Session 的 current_turn 是当前活动概览，排队输入可能属于另一轮；相邻 Turn 的完成不能结算当前提交。`in_progress` 继续观察，包括协作等待；`requires_action` 按 waitpoint 提交回答或审批。
+
+SSE 断开后保留最后一条已成功处理事件的 `id`，通过 `Last-Event-ID` 重连。收到 resync 时暂停事件应用，分页读取目标 Turn 的 Items 和 Turn 资源，合并成功后推进游标。HTTP 200、EOF、正文 done 和 Run settled 都不能代替目标 Turn 终态。事件已过期或未收到任何 delta 时，仍可从持久 Turn 输出取得结果。重新打开客户端可从 Session、Turn 列表和 Items 找到持久工作。
+
 ## 等待、取消与队列
 
-Turn 等待用户回答或审批时普通消息被拒绝，协作等待时 follow-up 只进入 FIFO 队列。Turn 快照的 `waitpoint` 提供 `id`、`kind` 和应回答的问题或应决策的工具调用。恢复事件必须提供 `turn_id`、`waitpoint_id`，并按等待点完整提交 `answer` 或 `approval` 响应；旧等待点或重复改变意图返回 `409`。
+Turn 等待用户回答或审批时普通消息被拒绝，协作等待时 follow-up 只进入 FIFO 队列。Turn 资源的 `yuxi.waitpoint` 提供 `id`、`kind` 和应回答的问题或应决策的工具调用。恢复事件必须提供 `turn_id`、`waitpoint_id`，并按等待点完整提交 `answer` 或 `approval` 响应；旧等待点或重复改变意图返回 `409`。
 
 ```json
 {"events":[{"type":"yuxi.session.input.resume","turn_id":"<turn-id>","waitpoint_id":"<waitpoint-id>","response":{"type":"answer","answers":[{"question_id":"<question-id>","answer":"确认"}]}}]}
@@ -76,10 +174,13 @@ Turn 等待用户回答或审批时普通消息被拒绝，协作等待时 follo
 
 ## 读取与事件
 
-SSE 覆盖多轮工作，单轮终态后保持连接；调用方观察目标 Turn 的终态、回读持久结果后主动关闭。官方 SDK 自动结束调用和收集最终结果不属于当前兼容承诺。
+Session、Turn 和 Items 列表均返回 `{object:"list", data, first_id, last_id, has_more}`，使用 `after/limit/order`。Session 默认每页 50 条，Turn 与 Items 默认 20 条，limit 为 1–100。默认 `order=desc`，传上一页 `last_id` 为 `after` 读取更早内容；`order=asc` 从最早内容开始。同一消息的多个公开 item 可分在不同页。Items 的游标必须属于当前 Session，指定 Turn 的 Items 游标还必须属于该 Turn；否则返回 `400`。排队用户输入的 `turn_id` 可空，消费状态见 `yuxi.delivery_status`；内部 prompt、checkpoint 和未登记的助手审计不进入 Items。
 
+Items 页面另含 `yuxi.runs`，仅返回当前页内容引用的轻量 Run，使用 `id` 标识执行段，提供状态、时间和错误。Turn 列表是摘要，包含核心状态和 `yuxi.current_run_id/result_run_id/waitpoint`；完整执行段、用量和输出通过指定 Turn 的详情读取。数据库先按作用域、游标和页大小选择公开内容，查询不会先装载全部历史再截页。
 
-`GET /sessions/{session_id}` 返回 Thread 状态、`current_turn`、`queue_paused` 和 `queued_input_count`。Turn 结果只来自 `result_run_id` 指向的当前 Turn Run；模型正文结束、`interrupted` 和 `yielded` 均不表示 Turn 完成。`/history` 返回 `thread`、`runs`、`items`，`/turns/{turn_id}/items` 复用相同公开投影。普通用户可读取已经展示的工具参数、结果和执行状态；内部 prompt、checkpoint 和完整审计不进入普通历史，审计仍仅允许超级管理员 JWT。
+`GET /sessions/{session_id}` 返回 Session 资源，`yuxi` 包含 `current_turn`、`queue_paused` 和 `queued_input_count`。`/turns/{turn_id}` 返回 `object=agent.session.turn`，核心字段与 SSE 事件中的 `turn` 使用同一投影：`id`、`session_id`、Agent、状态、Unix 秒时间、错误和用量。`started_at` 表达本轮首次执行，恢复 Run 不重置它。核心状态为 `queued/in_progress/requires_action/completed/failed/cancelled`；取消清理期间保持 `in_progress`。waitpoint 提供等待内容，内部 Turn/Run 状态不用于修正公开工作状态。核心 `usage` 为 null，Yuxi 用量统计位于 `yuxi.usage`。
+
+Turn 详情的 `yuxi` 包含 `current_run_id`、`result_run_id`、`waitpoint`、`runs` 和 `output`。结果只来自 `yuxi.result_run_id` 指向的本轮 Run；模型正文结束、`interrupted` 和 `yielded` 均不表示 Turn 完成。`/turns/{turn_id}/items` 复用相同分页与公开投影。`/state` 提供运行状态，内容统一从 Items 读取。普通用户可读取已经展示的工具参数、结果和执行状态；内部 prompt、checkpoint 和完整审计不进入普通历史，审计仍仅允许超级管理员 JWT。
 
 `GET /sessions/{session_id}/events` 订阅整个 Thread，每条 SSE `data` 就是一个公开事件，`event` 等于其 `type`，`id` 是订阅 cursor。`event_id` 标识逻辑事件，Redis 重放保持稳定；它与 cursor 分开。`session_id` 是真实 Thread ID，`yuxi.run_id` 是业务执行段。协作成员通过自己的 Thread 入口读取历史和事件；父页面通过 `/state` 的 `agent_state.cooperation` 读取树内持久状态。
 
@@ -101,4 +202,4 @@ SSE 覆盖多轮工作，单轮终态后保持连接；调用方观察目标 Tur
 
 协作成员拥有独立 Thread、Turn、Run、等待点和结果，全部使用相同公开协议。父轮次完成、失败或取消均保留后代工作；普通取消固定指定 Turn。“停止全部”通过 POST `/sessions/{session_id}/events` 提交 `yuxi.session.tree.stop`，停止所有成员在途 Turn 与队列消费；`yuxi.session.tree.continue` 在在途工作收敛后重新消费保留队列，已取消轮次不恢复。这两种控制输入本身不作为 SSE 输出事件发布，结果通过持久树状态和各 Turn 观察。整树共享实际沙盒与 Project Workdir，各 Run 的 lease 和 heartbeat 独立。工具与用户操作见[会话协作](../agents/session-cooperation.md)。
 
-该协议使用 business schema v5、Redis 事件格式 v2 和 cursor v2，只支持全新数据初始化。没有旧数据迁移、旧事件 reader 或双格式消费。
+该协议使用 business schema v6、Redis 事件格式 v2 和 cursor v2。schema-init 支持新库初始化，以及 business v5→v6 原子添加附件表；不导入历史 JSON 附件，也不转换缺失的配置快照。既有会话和输入须具备完整配置快照。事件使用唯一格式，没有旧事件 reader 或双格式消费。

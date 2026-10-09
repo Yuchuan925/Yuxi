@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from yuxi.api.routers.public_v1.agents.schemas import SessionCreate, ThreadUpdate
+from yuxi.api.routers.public_v1.agents.schemas import SessionCreate, SessionUpdate
 
 
 def test_thread_create_rejects_legacy_direct_workdir_path():
@@ -13,4 +13,4 @@ def test_thread_create_rejects_legacy_direct_workdir_path():
 def test_thread_update_rejects_project_rebinding():
     """已有 Session 不接受 project_id 改绑。"""
     with pytest.raises(ValidationError):
-        ThreadUpdate(project_id="project-2")
+        SessionUpdate(project_id="project-2")

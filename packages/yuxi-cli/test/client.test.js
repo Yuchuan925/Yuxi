@@ -61,9 +61,62 @@ test("maps structured HTTP errors without hiding the server status", async () =>
   });
 });
 
+test("preserves Session resources through CLI create and retrieve", async () => {
+  const session = { id: "session/1", object: "agent.session", status: "idle", agent: { id: "agent", model: "model" }, yuxi: { title: "session", archived: false } };
+  const seen = [];
+  await withServer((request, response) => {
+    seen.push({ url: request.url, key: request.headers["idempotency-key"] });
+    json(response, request.method === "POST" ? 201 : 200, session);
+  }, async url => {
+    const client = new Client({ name: "test", url, apiKey: "yxkey_test" });
+    assert.deepEqual(await client.createThread("agent", "create-key"), session);
+    assert.deepEqual(await client.thread("session/1"), session);
+  });
+  assert.deepEqual(seen, [
+    { url: "/api/v1/agents/sessions", key: "create-key" },
+    { url: "/api/v1/agents/sessions/session%2F1", key: undefined },
+  ]);
+});
+
 test("uses the server status when a structured error omits its code and message", async () => {
   await withServer((_request, response) => json(response, 503, { detail: {} }), async url => {
     const client = new Client({ name: "test", url });
     await assert.rejects(() => client.request("/error"), error => error.status === 503 && error.message === "Service Unavailable");
   });
+});
+
+test("uploads binary draft once and sends its id with the original PNG data URL", async () => {
+  const requests = [];
+  const file = { id: "1234567890abcdef1234567890abcdef", object: "file", filename: "source.txt", bytes: 8 };
+  const client = new Client({ name: "test", url: "http://fixture", apiKey: "test-key" }, 30000, async (url, options) => {
+    requests.push({ url, options });
+    return new Response(JSON.stringify(url.endsWith("/files") ? file : { input_id: "input" }), { status: 201 });
+  });
+  assert.deepEqual(await client.uploadFile(new Blob(["original"], { type: "text/plain" }), "source.txt"), file);
+  assert.equal(requests[0].options.headers.get("Content-Type"), null);
+  assert.equal(await requests[0].options.body.get("file").text(), "original");
+  const png = "data:image/png;base64,iVBORw0KGgo=";
+  await client.send("thread", "read", "send-key", [file.id], [png]);
+  const event = JSON.parse(requests[1].options.body).events[0];
+  assert.deepEqual(event.yuxi.attachment_file_ids, [file.id]);
+  assert.deepEqual(event.input[0].content[1], { type: "input_image", image_url: png });
+  assert.equal(requests[1].options.headers.get("Idempotency-Key"), "send-key");
+  assert.equal(requests.length, 2);
+});
+
+test("已接收的 POST 响应被断开后用原键读取回执，不重新提交", async () => {
+  const seen = [];
+  const receipt = { object: "yuxi.session.event.accepted", session_id: "session", input_id: "fixed-input", turn_id: null, run_id: null, event_id: "receipt", status: "accepted" };
+  await withServer((request, response) => {
+    seen.push({ method: request.method, path: request.url, key: request.headers["idempotency-key"] });
+    if (request.method === "POST") { request.resume(); request.on("end", () => response.destroy()); }
+    else json(response, 200, receipt);
+  }, async url => {
+    const client = new Client({ name: "test", url });
+    assert.deepEqual(await client.send("session", "original", "key/with spaces"), receipt);
+  });
+  assert.deepEqual(seen, [
+    { method: "POST", path: "/api/v1/agents/sessions/session/events", key: "key/with spaces" },
+    { method: "GET", path: "/api/v1/agents/sessions/session/receipt?idempotency_key=key%2Fwith+spaces", key: undefined },
+  ]);
 });

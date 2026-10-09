@@ -15,7 +15,7 @@ from test.live_api_cleanup import delete_test_session_resources, validate_test_r
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
 
-async def _delete_created_threads(*thread_ids: str | None) -> None:
+async def delete_created_threads(*thread_ids: str | None) -> None:
     """仅清理本测试创建的隐式 Project、Thread 和 Workdir。"""
 
     targets = {thread_id for thread_id in thread_ids if thread_id}
@@ -73,11 +73,11 @@ async def test_unbound_full_key_uses_owners_product_thread_scope(test_client, ad
             json={"agent_id": "default-chatbot"},
             headers={**key_headers, "Idempotency-Key": str(uuid.uuid4())},
         )
-        assert created.status_code == 200, created.text
-        thread_id = created.json()["thread_id"]
+        assert created.status_code == 201, created.text
+        thread_id = created.json()["id"]
         from_jwt = await test_client.get(f"/api/v1/agents/sessions/{thread_id}", headers=admin_headers)
         assert from_jwt.status_code == 200, from_jwt.text
-        assert from_jwt.json()["thread_id"] == thread_id
+        assert from_jwt.json()["id"] == thread_id
 
         forged = await test_client.get(
             f"/api/v1/agents/sessions/{thread_id}",
@@ -85,7 +85,7 @@ async def test_unbound_full_key_uses_owners_product_thread_scope(test_client, ad
         )
         assert forged.status_code == 403, forged.text
     finally:
-        await _delete_created_threads(thread_id)
+        await delete_created_threads(thread_id)
         await test_client.delete(f"/api/user/apikey/{key_id}", headers=admin_headers)
 
 
@@ -135,8 +135,8 @@ async def test_agents_key_cannot_use_product_routes_or_spoof_source(test_client,
             json={"agent_id": agent_slug},
             headers={**admin_headers, "Idempotency-Key": str(uuid.uuid4())},
         )
-        assert product_thread.status_code == 200, product_thread.text
-        product_thread_id = product_thread.json().get("thread_id") or product_thread.json()["id"]
+        assert product_thread.status_code == 201, product_thread.text
+        product_thread_id = product_thread.json()["id"]
         conn = await asyncpg.connect(os.environ["POSTGRES_URL"].replace("+asyncpg", ""))
         try:
             stored = await conn.fetchrow(
@@ -151,18 +151,22 @@ async def test_agents_key_cannot_use_product_routes_or_spoof_source(test_client,
             await conn.close()
         isolated = await test_client.get(f"/api/v1/agents/sessions/{product_thread_id}", headers=headers)
         assert isolated.status_code == 404, isolated.text
+        isolated_items = await test_client.get(f"/api/v1/agents/sessions/{product_thread_id}/items", headers=headers)
+        assert isolated_items.status_code == 404, isolated_items.text
 
         public_thread = await test_client.post(
             "/api/v1/agents/sessions",
             json={"agent_id": agent_slug},
             headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
         )
-        assert public_thread.status_code == 200, public_thread.text
-        public_thread_id = public_thread.json()["thread_id"]
+        assert public_thread.status_code == 201, public_thread.text
+        public_thread_id = public_thread.json()["id"]
         own_thread = await test_client.get(f"/api/v1/agents/sessions/{public_thread_id}", headers=headers)
         assert own_thread.status_code == 200, own_thread.text
         jwt_isolated = await test_client.get(f"/api/v1/agents/sessions/{public_thread_id}", headers=admin_headers)
         assert jwt_isolated.status_code == 404, jwt_isolated.text
+        jwt_items = await test_client.get(f"/api/v1/agents/sessions/{public_thread_id}/items", headers=admin_headers)
+        assert jwt_items.status_code == 404, jwt_items.text
 
         replay = await test_client.post("/api/user/apikey/", json=payload, headers=admin_headers)
         assert replay.status_code == 200, replay.text
@@ -184,7 +188,7 @@ async def test_agents_key_cannot_use_product_routes_or_spoof_source(test_client,
         if product_thread_id is not None:
             await test_client.post(f"/api/v1/agents/sessions/{product_thread_id}/archive", headers=admin_headers)
         try:
-            await _delete_created_threads(public_thread_id, product_thread_id)
+            await delete_created_threads(public_thread_id, product_thread_id)
         finally:
             await test_client.delete(f"/api/user/apikey/{key_id}", headers=admin_headers)
 
@@ -237,15 +241,15 @@ async def test_key_without_end_user_id_cannot_reach_product_project_files(test_c
             json={"agent_id": agent_slug},
             headers={**admin_headers, "Idempotency-Key": str(uuid.uuid4())},
         )
-        assert product_thread.status_code == 200, product_thread.text
-        product_thread_id = product_thread.json()["thread_id"]
+        assert product_thread.status_code == 201, product_thread.text
+        product_thread_id = product_thread.json()["id"]
         app_thread = await test_client.post(
             "/api/v1/agents/sessions",
             json={"agent_id": agent_slug},
             headers={**key_headers, "Idempotency-Key": str(uuid.uuid4())},
         )
-        assert app_thread.status_code == 200, app_thread.text
-        app_thread_id = app_thread.json()["thread_id"]
+        assert app_thread.status_code == 201, app_thread.text
+        app_thread_id = app_thread.json()["id"]
 
         conn = await asyncpg.connect(os.environ["POSTGRES_URL"].replace("+asyncpg", ""))
         try:
@@ -313,7 +317,7 @@ async def test_key_without_end_user_id_cannot_reach_product_project_files(test_c
         if product_thread_id is not None:
             await test_client.post(f"/api/v1/agents/sessions/{product_thread_id}/archive", headers=admin_headers)
         try:
-            await _delete_created_threads(app_thread_id, product_thread_id)
+            await delete_created_threads(app_thread_id, product_thread_id)
         finally:
             await test_client.delete(f"/api/user/apikey/{key_id}", headers=admin_headers)
 

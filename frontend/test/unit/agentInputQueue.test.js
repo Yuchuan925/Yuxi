@@ -39,9 +39,9 @@ after(async () => {
 
 test('审批前后的工具和思考跨关联 Run 连续展示，正文仍独立', () => {
   const runs = [
-    { run_id: 'first', turn_id: 'turn-1', status: 'interrupted', timing: { created_at: '2026-09-16T00:00:00Z' } },
+    { id: 'first', turn_id: 'turn-1', status: 'interrupted', timing: { created_at: '2026-09-16T00:00:00Z' } },
     {
-      run_id: 'resume',
+      id: 'resume',
       turn_id: 'turn-1',
       run_type: 'resume',
       status: 'completed',
@@ -101,7 +101,7 @@ test('审批前后的工具和思考跨关联 Run 连续展示，正文仍独立
 
 test('协作恢复的实时消息没有 Run 快照时，仍与等待工具连续展示', () => {
   const waiting = {
-    run: { run_id: 'before', turn_id: 'turn-1', status: 'interrupted' },
+    run: { id: 'before', turn_id: 'turn-1', status: 'interrupted' },
     messages: [{
       id: 'wait', type: 'ai', run_id: 'before', turn_id: 'turn-1',
       tool_calls: [{ id: 'wait-call', name: 'wait_inputs', status: 'waiting', args: {} }]
@@ -121,7 +121,7 @@ test('协作恢复的实时消息没有 Run 快照时，仍与等待工具连续
   assert.deepEqual(items[0].entries.map((entry) => entry.type), ['tool', 'reasoning'])
   assert.equal(items[0].toolCalls[0].status, 'waiting')
   assert.deepEqual(groups[0].messages.map((message) => message.run_id), ['before', 'after'])
-  assert.equal(groups[0].run.run_id, 'after')
+  assert.equal(groups[0].run.id, 'after')
   assert.equal(groups[0].status, 'streaming')
   for (const messages of [
     [{ ...live.messages[0], turn_id: 'turn-2' }],

@@ -314,7 +314,7 @@ const handleTogglePinChat = async (threadId) => {
   const thread = threads.value.find((item) => item.id === threadId)
   if (!thread) return
   try {
-    await chatThreadsStore.updateThread(threadId, null, !thread.is_pinned)
+    await chatThreadsStore.updateThread(threadId, null, !thread.yuxi.is_pinned)
     await chatThreadsStore.loadThreads()
     if (currentThreadId.value) {
       chatThreadsStore.setCurrentThreadId(currentThreadId.value)
@@ -475,7 +475,7 @@ provide('settingsModal', {
           v-if="!sidebarCollapsed"
           class="sidebar-sessions"
           :current-chat-id="activeSessionThreadId"
-          :chats-list="threads.filter((thread) => !thread.parent_session_id)"
+          :chats-list="threads.filter((thread) => !thread.yuxi.parent_session_id)"
           :projects="projects"
           :projects-loading="projectsLoading && !projectsStore.hasLoaded"
           :projects-error="projectsStore.hasLoaded ? '' : projectsError"
@@ -546,7 +546,7 @@ provide('settingsModal', {
       v-model:open="sessionSearchOpen"
       :modes="['session', 'file']"
       default-mode="session"
-      :recent-threads="threads.filter((thread) => !thread.parent_session_id)"
+      :recent-threads="threads.filter((thread) => !thread.yuxi.parent_session_id)"
       :file-search="searchWorkspace"
       file-placeholder="搜索个人空间文件..."
       @select-thread="handleSearchSelectThread"

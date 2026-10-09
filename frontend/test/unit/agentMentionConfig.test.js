@@ -107,7 +107,34 @@ test('资源 mention 按智能体选择生成，不把预加载 Skills 当成可
       { slug: 'skill-a', name: 'Skill A', description: '' },
       { slug: 'skill-b', name: 'Skill B', description: '' }
     ])
+  } finally {
+    await server.close()
+  }
+})
 
+test('智能体 mention 只包含可运行目录并响应目录更新', async () => {
+  const server = await createServer({
+    server: { middlewareMode: true, hmr: false },
+    appType: 'custom'
+  })
+  try {
+    const { useAgentMentionConfig } = await server.ssrLoadModule(
+      '/src/modules/session/model/useAgentMentionConfig.js'
+    )
+    const agents = ref([
+      { agent_id: 'researcher', name: '研究员', can_run: true },
+      { agent_id: 'private', name: '不可运行', can_run: false },
+      { name: '缺少标识', can_run: true }
+    ])
+    const { mentionConfig } = useAgentMentionConfig({
+      currentThreadAttachments: ref([]),
+      configurableItems: ref({}),
+      agentConfig: ref({}),
+      agents
+    })
+    assert.deepEqual(mentionConfig.value.agents, [agents.value[0]])
+    agents.value = []
+    assert.deepEqual(mentionConfig.value.agents, [])
   } finally {
     await server.close()
   }

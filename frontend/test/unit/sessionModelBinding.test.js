@@ -15,7 +15,7 @@ test('新建对话按智能体 slug 解析当前智能体并启用输入框', ()
 
   assert.match(agentBlock, /agents\.value\.find\(\(agent\) => agent\.agent_id === currentAgentId\.value\)/)
   assert.doesNotMatch(agentBlock, /agent\.id === currentAgentId\.value/)
-  assert.match(source, /:disabled="!currentAgent \|\| currentToolApprovalVisible"/)
+  assert.match(source, /:disabled="!currentAgent \|\| currentToolApprovalVisible \|\| !!pendingSends\[currentChatId\]"/)
 })
 
 test('模型选择按当前选择、Session、智能体默认的顺序解析', () => {
@@ -26,30 +26,30 @@ test('模型选择按当前选择、Session、智能体默认的顺序解析', (
 
   for (const expression of [
     'selectedModelByThread',
-    'currentThread.value?.metadata?.model_spec',
+    'currentThread.value?.agent.model',
     'agentDefaultModel.value'
   ]) assert.ok(modelBlock.includes(expression), expression)
 
   assert.ok(
     modelBlock.indexOf('selectedModelByThread') <
-      modelBlock.indexOf('currentThread.value?.metadata?.model_spec')
+      modelBlock.indexOf('currentThread.value?.agent.model')
   )
   assert.ok(
-    modelBlock.indexOf('currentThread.value?.metadata?.model_spec') <
+    modelBlock.indexOf('currentThread.value?.agent.model') <
       modelBlock.indexOf('agentDefaultModel.value')
   )
 })
 
-test('发送当前展示模型并在 Input 被接受后同步 Session metadata', () => {
+test('发送当前展示模型并在 Input 被接受后同步 Session model', () => {
   const sendBlock = source.slice(
     source.indexOf('const handleSendMessage'),
     source.indexOf('const handleDirectSteer')
   )
 
-  assert.match(sendBlock, /const modelSpec = currentModelSpec\.value \|\| null/)
+  assert.match(sendBlock, /const modelSpec = original \? original\.data\.model_spec : currentModelSpec\.value \|\| null/)
   assert.match(sendBlock, /model_spec: modelSpec/)
   assert.match(sendBlock, /if \(modelSpec\) \{/)
-  assert.match(sendBlock, /thread\.metadata = \{ \.\.\.\(thread\.metadata \|\| \{\}\), model_spec: modelSpec \}/)
+  assert.match(sendBlock, /thread\.agent\.model = modelSpec/)
 })
 
 test('路由选择即使已预写当前线程也会加载消息', () => {

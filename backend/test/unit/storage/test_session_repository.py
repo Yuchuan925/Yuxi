@@ -337,23 +337,21 @@ async def test_only_state_proven_terminal_model_audit_keeps_tool_call_visible(se
 
 
 @pytest.mark.asyncio
-async def test_list_sessions_includes_different_sources(session_session):
+async def test_session_page_includes_different_sources(session_session):
     normal, scheduled, public_api, _ = _seed_source_filter_sessions()
     session_session.add_all([normal, scheduled, public_api])
     await session_session.commit()
 
     repo = SessionRepository(session_session)
-    items = await repo.list_sessions(
-        uid="user-a",
-        limit=20,
-        offset=0,
+    items, _ = await repo.list_public_sessions(
+        uid="user-a", app_id=None, agent_id=None, limit=20, after=None, order="desc"
     )
 
     assert {item.thread_id for item in items} == {"thread-normal", "thread-public", "thread-scheduled"}
 
 
 @pytest.mark.asyncio
-async def test_list_sessions_paginates_only_non_pinned_items(session_session):
+async def test_session_page_bounds_pinned_items_and_uses_stable_cursor(session_session):
     now = utc_now()
     pinned = Session(
         thread_id="thread-pinned",
@@ -383,11 +381,16 @@ async def test_list_sessions_paginates_only_non_pinned_items(session_session):
     await session_session.commit()
 
     repository = SessionRepository(session_session)
-    first_page = await repository.list_sessions(uid="user-a", limit=2, offset=0)
-    second_page = await repository.list_sessions(uid="user-a", limit=2, offset=2)
+    first_page, has_more = await repository.list_public_sessions(
+        uid="user-a", app_id=None, agent_id=None, limit=2, after=None, order="desc"
+    )
+    second_page, _ = await repository.list_public_sessions(
+        uid="user-a", app_id=None, agent_id=None, limit=2, after=first_page[-1].thread_id, order="desc"
+    )
 
-    assert [item.thread_id for item in first_page] == ["thread-pinned", "thread-3", "thread-2"]
-    assert [item.thread_id for item in second_page] == ["thread-pinned", "thread-1", "thread-0"]
+    assert has_more is True
+    assert [item.thread_id for item in first_page] == ["thread-pinned", "thread-3"]
+    assert [item.thread_id for item in second_page] == ["thread-2", "thread-1"]
 
 
 @pytest.mark.asyncio
@@ -605,3 +608,62 @@ async def test_search_sessions_by_message_content_filters_agent_and_paginates(se
     assert [item["agent_session"].thread_id for item in first_page] == ["thread-second"]
     assert second_has_more is False
     assert [item["agent_session"].thread_id for item in second_page] == ["thread-first"]
+
+
+@pytest.mark.asyncio
+async def test_search_batches_snippets_without_query_growth(session_session):
+    """命中会话增加时 SQL 数量固定，片段有界且保留所属会话。"""
+    from sqlalchemy import event
+    from yuxi.modules.agents.repositories.sessions import MESSAGE_SEARCH_SNIPPETS_PER_THREAD
+
+    now = utc_now()
+    sessions = [
+        Session(
+            thread_id=f"batch-{i}",
+            project_id=f"project-batch-{i}",
+            uid="batch-user",
+            agent_id="agent",
+            status="active",
+            created_at=now,
+            updated_at=now,
+        )
+        for i in range(3)
+    ]
+    session_session.add_all(sessions)
+    await session_session.flush()
+    for i, agent_session in enumerate(sessions):
+        session_session.add_all(
+            [
+                Message(
+                    agent_session=agent_session,
+                    role="user",
+                    content=f"batch-key-{i}-{j}",
+                    message_type="text",
+                    created_at=now + timedelta(seconds=j),
+                )
+                for j in range(5)
+            ]
+        )
+    await session_session.commit()
+    statements = []
+
+    def record(_conn, _cursor, statement, _params, _context, _many):
+        statements.append(statement)
+
+    engine = session_session.bind.sync_engine
+    event.listen(engine, "before_cursor_execute", record)
+    try:
+        for limit in [1, 3]:
+            statements.clear()
+            rows, more = await SessionRepository(session_session).search_sessions_by_message_content(
+                uid="batch-user", query="batch-key", limit=limit, app_id=None
+            )
+            assert len(rows) == limit and more is (limit == 1)
+            assert len(statements) == 2
+            for row in rows:
+                index = row["agent_session"].thread_id.split("-")[-1]
+                assert len(row["snippets"]) == MESSAGE_SEARCH_SNIPPETS_PER_THREAD
+                assert all(f"batch-key-{index}-" in snippet["content"] for snippet in row["snippets"])
+                assert row["snippets"][0]["content"].endswith("-4")
+    finally:
+        event.remove(engine, "before_cursor_execute", record)

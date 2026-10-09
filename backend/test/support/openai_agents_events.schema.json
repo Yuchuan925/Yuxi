@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$comment": "Reviewed subset of OpenAI Agents streaming events, 2026-09-30. Source: https://developers.openai.com/api/reference/resources/beta/subresources/agents/streaming-events . Independently maintained oracle; no generation from Yuxi implementation.",
+  "$comment": "Reviewed subset of OpenAI Agents streaming events, 2026-09-30. Source: https://developers.openai.com/api/reference/resources/beta/subresources/agents/streaming-events . Independently maintained oracle; no generation from Yuxi implementation. Session created subset reviewed against official Session streaming reference on 2026-10-09.",
   "oneOf": [
     {
       "type": "object",
@@ -1438,6 +1438,50 @@
         "yuxi"
       ],
       "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "agent.session.created"
+        },
+        "event_id": {
+          "type": "string"
+        },
+        "session": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "object": {
+              "const": "agent.session"
+            },
+            "status": {
+              "enum": [
+                "idle",
+                "in_progress",
+                "requires_action",
+                "failed"
+              ]
+            },
+            "created_at": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "id",
+            "object",
+            "status",
+            "created_at"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "event_id",
+        "session"
+      ]
     }
   ],
   "$defs": {

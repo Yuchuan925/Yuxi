@@ -22,13 +22,19 @@ def clean_discovery_test_modules():
 
 
 def test_preset_discovery_includes_shipping_roles():
-    """发布内容完整，深度研究保持原有委派关系。"""
+    """发布角色完整，知识库问答启用并预加载内置技能。"""
     found = {preset.slug: preset for preset in presets.discover_agent_presets()}
     assert set(found) == {
         "default-chatbot",
         "deep-research",
+        "knowledge-base-qa",
     }
     assert found["default-chatbot"].backend_id == "ChatbotAgent"
+    knowledge_qa = found["knowledge-base-qa"]
+    assert knowledge_qa.name == "知识库问答"
+    assert knowledge_qa.backend_id == "ChatbotAgent"
+    assert knowledge_qa.context["skills"] == ["knowledge-base"]
+    assert knowledge_qa.context["preload_skills"] == ["knowledge-base"]
 
 
 def test_new_preset_file_is_discovered_without_registry(tmp_path, monkeypatch):

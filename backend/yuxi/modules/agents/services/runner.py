@@ -745,7 +745,6 @@ async def process_agent_run(ctx, run_id: str):
             "thread_id": thread_id,
             "uid": user.uid,
             "has_image": bool(image_content),
-            "attachment_file_ids": input_metadata.get("attachment_file_ids") or [],
             "model_spec": context.model,
             "tool_approval_mode": context.tool_approval_mode,
             "run_type": run_type,

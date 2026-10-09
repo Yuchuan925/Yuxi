@@ -10,6 +10,7 @@ from yuxi.modules.agents.models.messages import Message
 from yuxi.modules.agents.models.runs import AgentRun
 from yuxi.modules.agents.models.sessions import Session
 from yuxi.modules.agents.models.turns import AgentTurn
+from yuxi.modules.agents.repositories.attachments import AttachmentRepository
 from yuxi.shared.datetime import utc_now
 
 
@@ -177,6 +178,8 @@ class AgentInputRepository:
         run = await self.db.get(AgentRun, run_id)
         if input_item is None or input_item.status != "pending":
             raise ValueError("Input 已领取或不存在")
+        if await AttachmentRepository(self.db).has_unready(input_id):
+            raise ValueError("Input 附件尚未就绪")
         if turn is None or run is None or run.turn_id != turn_id:
             raise ValueError("消费目标必须属于本轮 Turn")
         if (input_item.uid, input_item.app_id, input_item.thread_id) != (

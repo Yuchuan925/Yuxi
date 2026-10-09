@@ -41,9 +41,8 @@ async def test_viewer_and_artifact_download_preserve_mime_and_multichunk_bytes(t
         json={"agent_id": agent_id, "title": make_test_session_title("mime-fd-copy")},
         headers={**headers, "Idempotency-Key": str(uuid4())},
     )
-    assert created.status_code == 200, created.text
-    payload = created.json()
-    thread_id = payload.get("thread_id") or payload["id"]
+    assert created.status_code == 201, created.text
+    thread_id = created.json()["id"]
     content = b"# fd copy\n" + b"x" * (1024 * 1024 + 7)
     uploaded = await test_client.post(
         "/api/viewer/filesystem/upload",

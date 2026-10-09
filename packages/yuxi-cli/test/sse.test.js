@@ -12,3 +12,11 @@ test("parses SSE fields and multiline data", async () => {
   });
   assert.deepEqual(await Array.fromAsync(parseSse(body)), [{ id: "7", event: "message", data: '{\n"ok"}' }]);
 });
+
+test("断流时丢弃尚未结束的事件帧", async () => {
+  const body = new ReadableStream({ start(controller) {
+    controller.enqueue(new TextEncoder().encode('id: incomplete\ndata: {"type":"agent.session.turn.completed"}\n'));
+    controller.close();
+  } });
+  assert.deepEqual(await Array.fromAsync(parseSse(body)), []);
+});

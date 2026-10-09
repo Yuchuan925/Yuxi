@@ -7,6 +7,8 @@ import uuid
 
 import asyncpg
 import pytest
+from langchain_core.messages import ToolMessage
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 from test.e2e.e2e_helpers import archive_public_thread, delete_agent, postgres_dsn
 from test.e2e.test_agent_lifecycle_e2e import _agent, _message, _provider, output_text
@@ -24,8 +26,13 @@ TARGET_MODEL = "cooperation-target-replay:deterministic-chat"
 SUMMARY_PROMPT = "COOPERATION_SUMMARY_FIXTURE\n{messages}"
 
 
-@pytest.mark.parametrize("parallel_question,select_agent", [(False, False), (True, False), (False, True)])
-async def test_sessions_use_public_state_and_shared_sandbox(e2e_client, e2e_headers, parallel_question, select_agent):
+@pytest.mark.parametrize(
+    "parallel_question,select_agent,cancel_wait",
+    [(False, False, False), (True, False, False), (False, True, False), (True, False, True), (False, False, True)],
+)
+async def test_sessions_use_public_state_and_shared_sandbox(
+    e2e_client, e2e_headers, parallel_question, select_agent, cancel_wait
+):
     """根工具创建普通会话，结果通过持久等待返回，文件在同一 Project 中。"""
     me = await e2e_client.get("/api/auth/me", headers=e2e_headers)
     uid = me.json()["uid"]
@@ -64,12 +71,12 @@ async def test_sessions_use_public_state_and_shared_sandbox(e2e_client, e2e_head
             json={
                 "agent_id": slug,
                 "title": make_test_session_title("session-cooperation"),
-                "model_spec": MODEL,
+                "agent": {"model": MODEL},
                 "tool_approval_mode": "always_trust",
             },
         )
-        assert created.status_code == 200, created.text
-        thread_id = created.json()["thread_id"]
+        assert created.status_code == 201, created.text
+        thread_id = created.json()["id"]
         root = await conn.fetchrow(
             "SELECT s.project_id, p.workdir_path FROM sessions s "
             "JOIN projects p ON p.id=s.project_id WHERE s.thread_id=$1",
@@ -108,8 +115,51 @@ async def test_sessions_use_public_state_and_shared_sandbox(e2e_client, e2e_head
                 )
                 assert response.status_code == 200, response.text
                 turn = response.json()
-                if parallel_question and turn["status"] == "waiting" and turn["waitpoint"]["kind"] == "answer":
-                    await _assert_thread_activity(e2e_client, e2e_headers, thread_id, "waiting_answer")
+                if (
+                    (parallel_question or cancel_wait)
+                    and turn["status"] == ("requires_action" if parallel_question else "in_progress")
+                    and (turn["yuxi"]["waitpoint"] or {}).get("kind")
+                    == ("answer" if parallel_question else "cooperation")
+                ):
+                    await _assert_thread_activity(
+                        e2e_client,
+                        e2e_headers,
+                        thread_id,
+                        "requires_action" if parallel_question else "in_progress",
+                    )
+                    if cancel_wait:
+                        config = {"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}}
+                        async with AsyncPostgresSaver.from_conn_string(postgres_dsn()) as saver:
+                            before = await saver.aget_tuple(config)
+                            prior_messages = list(before.checkpoint["channel_values"]["messages"])
+                            for _, channel, values in before.pending_writes or []:
+                                if channel == "messages":
+                                    prior_messages.extend(values if isinstance(values, list) else [values])
+                            completed = [message for message in prior_messages if isinstance(message, ToolMessage)]
+                            assert any(message.tool_call_id == "create-worker" for message in completed)
+                            cancelled = await e2e_client.post(
+                                f"/api/v1/agents/sessions/{thread_id}/events",
+                                headers={**e2e_headers, "Idempotency-Key": str(uuid.uuid4())},
+                                json={"events": [{"type": "agent.session.input.cancel", "yuxi": {"turn_id": turn_id}}]},
+                            )
+                            assert cancelled.status_code == 202, cancelled.text
+                            snapshot = await e2e_client.get(
+                                f"/api/v1/agents/sessions/{thread_id}/turns/{turn_id}", headers=e2e_headers
+                            )
+                            assert snapshot.json()["status"] == "cancelled", snapshot.text
+                            after = await saver.aget_tuple(config)
+                            messages = after.checkpoint["channel_values"]["messages"]
+                            assert all(message in messages for message in completed)
+                            assert any(
+                                isinstance(message, ToolMessage)
+                                and message.tool_call_id
+                                == ("parallel-question" if parallel_question else "wait-worker")
+                                and message.content == "[已取消]"
+                                for message in messages
+                            )
+                            assert not any(channel == "__interrupt__" for _, channel, _ in after.pending_writes or [])
+                        assert await conn.fetchval("SELECT result_run_id FROM agent_turns WHERE id=$1", turn_id) is None
+                        return
                     resumed = await e2e_client.post(
                         f"/api/v1/agents/sessions/{thread_id}/events",
                         headers={**e2e_headers, "Idempotency-Key": str(uuid.uuid4())},
@@ -118,7 +168,7 @@ async def test_sessions_use_public_state_and_shared_sandbox(e2e_client, e2e_head
                                 {
                                     "type": "yuxi.session.input.resume",
                                     "turn_id": turn_id,
-                                    "waitpoint_id": turn["waitpoint"]["id"],
+                                    "waitpoint_id": turn["yuxi"]["waitpoint"]["id"],
                                     "response": {
                                         "type": "answer",
                                         "answers": [{"question_id": "confirm", "answer": "继续"}],
@@ -132,7 +182,7 @@ async def test_sessions_use_public_state_and_shared_sandbox(e2e_client, e2e_head
                     break
                 await asyncio.sleep(0.2)
         assert turn["status"] == "completed", turn
-        assert output_text(turn["output"]) == OUTPUT
+        assert output_text(turn["yuxi"]["output"]) == OUTPUT
         assert await conn.fetchval("SELECT count(*) FROM sessions WHERE parent_thread_id=$1", thread_id) == 1
         child = await conn.fetchrow("SELECT * FROM sessions WHERE parent_thread_id=$1", thread_id)
         assert child and child["status"] == "active"
@@ -145,8 +195,9 @@ async def test_sessions_use_public_state_and_shared_sandbox(e2e_client, e2e_head
         payload = json.loads(run["input_payload"])
         assert json.loads(run["manifest"])["model"]["spec"] == (TARGET_MODEL if select_agent else MODEL)
         assert child["agent_id"] == run["agent_slug"] == (target_slug if select_agent else slug)
-        assert payload["model_spec"] == (TARGET_MODEL if select_agent else MODEL)
-        assert payload["tool_approval_mode"] == "always_trust"
+        assert payload["context_snapshot"]["model"] == (TARGET_MODEL if select_agent else MODEL)
+        assert payload["context_snapshot"]["tool_approval_mode"] == "always_trust"
+        assert "model_spec" not in payload and "tool_approval_mode" not in payload
         if select_agent:
             assert "COOP_TARGET_CONFIG" in snapshot["system_prompt"]
             assert "COOP_PARENT_CONFIG" not in snapshot["system_prompt"]
@@ -165,7 +216,7 @@ async def test_sessions_use_public_state_and_shared_sandbox(e2e_client, e2e_head
         child_turn = await e2e_client.get(
             f"/api/v1/agents/sessions/{child['thread_id']}/turns/{run['turn_id']}", headers=e2e_headers
         )
-        assert child_turn.status_code == 200 and output_text(child_turn.json()["output"]) == OUTPUT
+        assert child_turn.status_code == 200 and output_text(child_turn.json()["yuxi"]["output"]) == OUTPUT
         assert json.loads(child["config_snapshot"])["system_prompt"].count("用户工作区 agents/AGENTS.md") == 0
         provider = get_sandbox_provider()
         connection = await asyncio.to_thread(provider.get, thread_id, uid=uid, workdir_path=root["workdir_path"])
@@ -257,12 +308,12 @@ async def test_full_tree_capacity_control_and_sibling_tools(e2e_client, e2e_head
             json={
                 "agent_id": slug,
                 "title": make_test_session_title("cooperation-capacity"),
-                "model_spec": MODEL,
+                "agent": {"model": MODEL},
                 "tool_approval_mode": "always_trust",
             },
         )
-        assert created.status_code == 200, created.text
-        root_id = created.json()["thread_id"]
+        assert created.status_code == 201, created.text
+        root_id = created.json()["id"]
         workdir = await conn.fetchval(
             "SELECT p.workdir_path FROM sessions s JOIN projects p ON p.id=s.project_id WHERE s.thread_id=$1", root_id
         )
@@ -292,7 +343,7 @@ async def test_full_tree_capacity_control_and_sibling_tools(e2e_client, e2e_head
                 if observed["children"] == 4 and observed["waiting"]:
                     break
                 await asyncio.sleep(0.05)
-        await _assert_thread_activity(e2e_client, e2e_headers, root_id, "waiting_cooperation")
+        await _assert_thread_activity(e2e_client, e2e_headers, root_id, "in_progress")
         members = await conn.fetch(
             "SELECT thread_id,cooperation_path FROM sessions WHERE tree_root_thread_id=$1 ORDER BY cooperation_path",
             root_id,
@@ -348,7 +399,7 @@ async def test_full_tree_capacity_control_and_sibling_tools(e2e_client, e2e_head
                 "SELECT bool_and(queue_paused) FROM sessions WHERE tree_root_thread_id=$1", root_id
             )
             assert await conn.fetchval("SELECT status FROM agent_inputs WHERE id=$1", queued["input_id"]) == "pending"
-            await _assert_thread_activity(e2e_client, e2e_headers, root_id, "idle")
+            await _assert_thread_activity(e2e_client, e2e_headers, root_id, "cancelled")
             await event(root_id, {"type": "yuxi.session.tree.continue"})
             async with asyncio.timeout(60):
                 while True:
@@ -442,14 +493,13 @@ async def test_full_tree_capacity_control_and_sibling_tools(e2e_client, e2e_head
 
 async def _assert_thread_activity(client, headers, thread_id, expected):
     """真实 HTTP 查看不改变 Turn 等待，列表与快照保持同一活动投影。"""
-    for path, method in (
-        (f"/api/v1/agents/sessions/{thread_id}", client.get),
-        (f"/api/v1/agents/sessions/{thread_id}/viewed", client.post),
-    ):
-        response = await method(path, headers=headers)
-        assert response.status_code == 200, response.text
-        assert response.json()["activity_status"] == expected, response.json()
+    detail = await client.get(f"/api/v1/agents/sessions/{thread_id}", headers=headers)
+    assert detail.status_code == 200, detail.text
+    viewed = await client.post(f"/api/v1/agents/sessions/{thread_id}/viewed", headers=headers)
+    assert viewed.status_code == 200, viewed.text
+    for snapshot in (detail.json(), viewed.json()):
+        assert snapshot["status"] == expected, snapshot
     listed = await client.get("/api/v1/agents/sessions", headers=headers, params={"limit": 100})
     assert listed.status_code == 200, listed.text
-    thread = next(item for item in listed.json() if item["id"] == thread_id)
-    assert thread["activity_status"] == expected, thread
+    thread = next(item for item in listed.json()["data"] if item["id"] == thread_id)
+    assert thread["status"] == expected, thread

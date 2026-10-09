@@ -23,7 +23,7 @@ export class MessageProcessor {
       messages: [],
       status: terminalStatuses.has(run.status) ? 'finished' : 'loading'
     }))
-    const byRunId = new Map(runGroups.map((group) => [group.run.run_id, group]))
+    const byRunId = new Map(runGroups.map((group) => [group.run.id, group]))
 
     for (const item of serverHistory) {
       if (item.type === 'tool' ||

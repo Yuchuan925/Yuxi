@@ -144,11 +144,11 @@ async (page) => {
 
   const dto = await page.evaluate(async (id) => {
     const token = localStorage.getItem('user_token')
-    const response = await fetch(`/api/v1/agents/sessions/${id}/history`, {
+    const response = await fetch(`/api/v1/agents/sessions/${id}/items?order=asc&limit=100`, {
       headers: { Authorization: `Bearer ${token}` }
     })
     const data = await response.json()
-    return (data.items || []).find((item) => item.type === 'message' && item.role === 'user')
+    return (data.data || []).find((item) => item.type === 'message' && item.role === 'user')
   }, threadId)
   check(dto, '历史接口没有返回用户 message item')
   const imageParts = dto.content.filter((part) => part.type === 'input_image')

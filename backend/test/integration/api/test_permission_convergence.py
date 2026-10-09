@@ -235,7 +235,9 @@ async def test_private_agent_crud_isolation_governance_and_app_default(actors):
         assert listing.status_code == 200 and slug not in {item["id"] for item in listing.json()["data"]}
         assert (await client.get(f"/api/v1/agents/{slug}", headers=headers)).status_code == 404
         run = await client.post(
-            "/api/v1/agents/sessions", headers={**headers, "Idempotency-Key": str(uuid.uuid4())}, json={"agent_id": slug}
+            "/api/v1/agents/sessions",
+            headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
+            json={"agent_id": slug},
         )
         assert run.status_code in {403, 404}, run.text
     deleted = await client.delete(f"/api/agent/{slug}", headers=owner["headers"])

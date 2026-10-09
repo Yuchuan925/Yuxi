@@ -15,6 +15,7 @@ from yuxi.infrastructure.observability.logging import logger
 from yuxi.infrastructure.postgres.manager import pg_manager
 from yuxi.modules.agents.models.definitions import Agent
 from yuxi.modules.agents.models.sessions import Session
+from yuxi.modules.agents.repositories.attachments import AttachmentRepository
 from yuxi.modules.agents.repositories.definitions import AgentRepository
 from yuxi.modules.agents.repositories.runs import AgentRunRepository
 from yuxi.modules.agents.repositories.sessions import SessionRepository
@@ -44,7 +45,7 @@ from yuxi.shared.hashing import hash_id
 
 
 def _with_attachment_context(message: HumanMessage, attachments: list[dict]) -> HumanMessage:
-    """把线程附件路径追加到本轮模型输入，不污染持久化用户消息。"""
+    """把已消费来源的附件路径追加到模型输入。"""
     attachment_lines = [
         f"- {item.get('file_name') or '未知文件'}: {item['path']}"
         for item in attachments
@@ -56,7 +57,7 @@ def _with_attachment_context(message: HumanMessage, attachments: list[dict]) -> 
     context = "\n".join(
         [
             "<attachment_context>",
-            "以下是本线程当前可用的历史附件。需要内容时，请使用 read_file 读取对应路径：",
+            "以下附件来自本次输入或此前已消费的输入。需要内容时，请使用 read_file 读取对应路径：",
             *attachment_lines,
             "</attachment_context>",
         ]
@@ -477,14 +478,15 @@ async def _stream_agent_execution(
             thread_id=thread_id,
             prepared_execution=prepared_execution,
         )
-        session_repo = SessionRepository(db)
         if is_resume:
             graph_input = Command(resume=resume_input)
             message_type = "resume"
         else:
             graph_input = [message.require_langchain_message() for message in input_messages]
             message_type = input_messages[0].message_type
-            attachments = await session_repo.get_attachments(agent_session.id)
+            attachments = await AttachmentRepository(db).list_for_thread(
+                thread_id, agent_session.uid, agent_session.app_id, model_input_id=meta["input_id"]
+            )
             authorized_attachments = [serialize_attachment(item, thread_id=thread_id) for item in attachments]
             graph_input[-1] = _with_attachment_context(graph_input[-1], authorized_attachments)
         langfuse_run = _build_langfuse_run_context(
@@ -568,7 +570,7 @@ async def _stream_agent_execution(
             terminal_status = await save_messages_from_langgraph_state(
                 state=final_state,
                 thread_id=thread_id,
-                session_repo=session_repo,
+                session_repo=SessionRepository(db),
                 trace_info=trace_info,
                 run_id=meta["run_id"],
                 turn_id=meta["turn_id"],

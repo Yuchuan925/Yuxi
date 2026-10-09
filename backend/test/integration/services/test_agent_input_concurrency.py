@@ -60,7 +60,9 @@ async def _queue_inputs(sessions, *, count: int) -> None:
                 app_id=None,
                 agent_slug="main",
                 kind="follow_up",
-                input_payload={"model_spec": "ci-replay:deterministic-chat", "tool_approval_mode": "default"},
+                input_payload={
+                    "context_snapshot": {"model": "ci-replay:deterministic-chat", "tool_approval_mode": "default"}
+                },
             )
             receipt = await AgentInputReceiptRepository(db).create(
                 receipt_id=f"receipt-{number}",

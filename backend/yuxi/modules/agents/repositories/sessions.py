@@ -7,8 +7,7 @@ import uuid as uuid_lib
 
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import joinedload, load_only, selectinload
-from sqlalchemy.orm.attributes import flag_modified
+from sqlalchemy.orm import selectinload
 
 from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.agents.models.messages import (
@@ -115,6 +114,7 @@ class SessionRepository:
         title: str | None = None,
         thread_id: str | None = None,
         metadata: dict | None = None,
+        config_snapshot: dict | None = None,
         project_id: str,
         creation_request_id: str | None = None,
         app_id: str | None = None,
@@ -124,7 +124,7 @@ class SessionRepository:
             thread_id = str(uuid_lib.uuid4())
 
         metadata = (metadata or {}).copy()
-        metadata["attachments"] = []
+        metadata.pop("attachments", None)
 
         normalized_title = self._normalize_title(title)
 
@@ -138,6 +138,7 @@ class SessionRepository:
             title=normalized_title or "New Session",
             status="active",
             extra_metadata=metadata,
+            config_snapshot=config_snapshot,
             last_viewed_run_id=UNVIEWED_RUN_MARKER,
             project_id=project_id,
         )
@@ -172,6 +173,26 @@ class SessionRepository:
         await self.db.refresh(agent_session)
         return agent_session
 
+    async def public_facts(self, sessions, *, uid, app_id) -> list[tuple]:
+        """批量读取资源事实，列表、搜索和详情共享同一查询集合。"""
+        from yuxi.modules.agents.models.runs import AGENT_RUN_TERMINAL_STATUSES
+        from yuxi.modules.agents.repositories.runs import AgentRunRepository
+        from yuxi.modules.agents.repositories.turn import AgentTurnRepository
+
+        ids = [session.thread_id for session in sessions]
+        if not ids:
+            return []
+        views = await AgentTurnRepository(self.db).list_current_views(thread_ids=ids, uid=uid, app_id=app_id)
+        latest = await AgentRunRepository(self.db).get_latest_top_level_runs_for_threads(uid, ids)
+        timestamps = await self.get_last_activity_for_threads(uid=uid, app_id=app_id, thread_ids=ids)
+        result = []
+        for session in sessions:
+            turn, run, count = views[session.thread_id]
+            run_id, run_status = latest.get(session.thread_id, (None, None))
+            unread = bool(run_id and run_status in AGENT_RUN_TERMINAL_STATUSES and run_id != session.last_viewed_run_id)
+            result.append((session, turn, run, count, timestamps.get(session.thread_id, session.created_at), unread))
+        return result
+
     async def get_session_by_thread_id(self, thread_id: str) -> Session | None:
         result = await self.db.execute(select(Session).where(Session.thread_id == thread_id))
         return result.scalar_one_or_none()
@@ -201,25 +222,6 @@ class SessionRepository:
             await self.db.commit()
             await self.db.refresh(agent_session)
         return agent_session
-
-    def _ensure_metadata(self, agent_session: Session) -> dict:
-        metadata = dict(agent_session.extra_metadata or {})
-        attachments = metadata.get("attachments", [])
-        metadata["attachments"] = [dict(item) for item in attachments if isinstance(item, dict)]
-        return metadata
-
-    async def _save_metadata(self, agent_session: Session, metadata: dict) -> None:
-        agent_session.extra_metadata = metadata
-        flag_modified(agent_session, "extra_metadata")
-        agent_session.updated_at = utc_now()
-        await self.db.flush()
-
-    async def _lock_session_by_id(self, session_record_id: int) -> Session | None:
-        """锁定会话元数据，串行化同一线程的附件更新。"""
-        result = await self.db.execute(
-            select(Session).where(Session.id == session_record_id).with_for_update(key_share=True)
-        )
-        return result.scalar_one_or_none()
 
     async def add_message(
         self,
@@ -403,32 +405,6 @@ class SessionRepository:
         truncated = len(messages) > limit
         return list(reversed(messages[:limit])), truncated
 
-    async def list_agent_runs_for_history(self, session_record_id: int) -> list[AgentRun]:
-        """按历史顺序读取当前会话全部轻量 Run，包含没有消息的运行。"""
-        result = await self.db.execute(
-            select(AgentRun)
-            .where(AgentRun.session_record_id == session_record_id)
-            .options(
-                load_only(
-                    AgentRun.id,
-                    AgentRun.turn_id,
-                    AgentRun.run_type,
-                    AgentRun.created_by_run_id,
-                    AgentRun.resume_from_run_id,
-                    AgentRun.status,
-                    AgentRun.created_at,
-                    AgentRun.started_at,
-                    AgentRun.prepared_at,
-                    AgentRun.first_model_request_at,
-                    AgentRun.first_output_at,
-                    AgentRun.finished_at,
-                    raiseload=True,
-                )
-            )
-            .order_by(AgentRun.created_at.asc(), AgentRun.id.asc())
-        )
-        return list(result.scalars().all())
-
     async def list_agent_runs_for_trace(self, session_record_id: int, *, limit: int) -> tuple[list[AgentRun], bool]:
         """按创建顺序返回有界 AgentRun 调试事实。"""
         result = await self.db.execute(
@@ -441,55 +417,70 @@ class SessionRepository:
         truncated = len(runs) > limit
         return list(reversed(runs[:limit])), truncated
 
-    async def list_sessions(
+    async def list_public_sessions(
         self,
-        uid: str | None = None,
-        agent_id: str | None = None,
-        status: str = "active",
-        limit: int | None = None,
-        offset: int = 0,
-        app_id: str | None | object = ALL_APP_SCOPES,
-    ) -> list[Session]:
-        """List sessions with pinned sessions always included first.
-
-        The limit applies only to non-pinned sessions to ensure pinned
-        sessions are always visible in the list.
-        """
-
-        base_conditions = [Session.status == status]
-        if uid:
-            base_conditions.append(Session.uid == str(uid))
+        *,
+        uid: str,
+        app_id: str | None,
+        agent_id: str | None,
+        after: str | None,
+        limit: int,
+        order: str,
+        archived: bool = False,
+        is_pinned: bool | None = None,
+    ) -> tuple[list[Session], bool]:
+        """按完整作用域和稳定创建顺序读取有界会话页。"""
+        conditions = [
+            Session.uid == uid,
+            Session.app_id == app_id,
+            Session.status == ("archived" if archived else "active"),
+        ]
         if agent_id:
-            base_conditions.append(Session.agent_id == agent_id)
-        if app_id is not ALL_APP_SCOPES:
-            base_conditions.append(Session.app_id == app_id)
+            conditions.append(Session.agent_id == agent_id)
+        if is_pinned is not None:
+            conditions.append(Session.is_pinned == is_pinned)
+        query = select(Session).where(*conditions)
+        if after:
+            anchor = (
+                await self.db.execute(
+                    select(Session).where(Session.uid == uid, Session.app_id == app_id, Session.thread_id == after)
+                )
+            ).scalar_one_or_none()
+            if anchor is None:
+                raise ValueError("after 不属于当前会话作用域")
+            from sqlalchemy import tuple_
 
-        # First, get all pinned sessions (no limit)
-        pinned_query = (
-            select(Session)
-            .options(joinedload(Session.project))
-            .where(*base_conditions)
-            .where(Session.is_pinned)
-            .order_by(Session.updated_at.desc())
+            position = tuple_(Session.created_at, Session.thread_id)
+            boundary = (anchor.created_at, anchor.thread_id)
+            query = query.where(position > boundary if order == "asc" else position < boundary)
+        sort = (
+            [Session.created_at.asc(), Session.thread_id.asc()]
+            if order == "asc"
+            else [Session.created_at.desc(), Session.thread_id.desc()]
         )
-        result = await self.db.execute(pinned_query)
-        pinned_sessions = list(result.scalars().all())
+        rows = list((await self.db.execute(query.order_by(*sort).limit(limit + 1))).scalars())
+        return rows[:limit], len(rows) > limit
 
-        # limit/offset 只作用于非置顶对话，避免重复附带的置顶项改变分页游标。
-        non_pinned_query = (
-            select(Session)
-            .options(joinedload(Session.project))
-            .where(*base_conditions)
-            .where(~Session.is_pinned)
-            .order_by(Session.updated_at.desc())
-            .offset(offset)
-        )
-        if limit is not None:
-            non_pinned_query = non_pinned_query.limit(limit)
-        result = await self.db.execute(non_pinned_query)
-        non_pinned_sessions = list(result.scalars().all())
+    async def get_last_activity_for_threads(self, *, uid: str, app_id: str | None, thread_ids: list[str]) -> dict:
+        """从已接收输入与执行时间计算活动时间，不受标题或已读更新影响。"""
+        from yuxi.modules.agents.models.inputs import AgentInput, AgentInputReceipt
 
-        return pinned_sessions + non_pinned_sessions
+        result = {}
+        for model, times in (
+            (AgentInputReceipt, (AgentInputReceipt.created_at,)),
+            (AgentInput, (AgentInput.created_at, AgentInput.consumed_at, AgentInput.cancelled_at)),
+            (AgentRun, (AgentRun.created_at, AgentRun.started_at, AgentRun.finished_at)),
+        ):
+            query = (
+                select(model.thread_id, *(func.max(column) for column in times))
+                .where(model.uid == uid, model.app_id == app_id, model.thread_id.in_(thread_ids))
+                .group_by(model.thread_id)
+            )
+            for thread_id, *values in (await self.db.execute(query)).all():
+                timestamp = max((value for value in values if value is not None), default=None)
+                if timestamp is not None and (thread_id not in result or timestamp > result[thread_id]):
+                    result[thread_id] = timestamp
+        return result
 
     async def search_sessions_by_message_content(
         self,
@@ -538,23 +529,41 @@ class SessionRepository:
         has_more = len(rows) > limit
         rows = rows[:limit]
 
-        items: list[dict] = []
-        for agent_session, matched_count, latest_match_at in rows:
-            snippet_result = await self.db.execute(
-                select(Message.id, Message.content, Message.created_at)
-                .where(Message.session_record_id == agent_session.id, *message_conditions)
-                .order_by(Message.created_at.desc(), Message.id.desc())
-                .limit(MESSAGE_SEARCH_SNIPPETS_PER_THREAD)
+        if not rows:
+            return [], has_more
+        matches = (
+            select(
+                Message.session_record_id,
+                Message.id,
+                Message.content,
+                Message.created_at,
+                func.row_number()
+                .over(
+                    partition_by=Message.session_record_id,
+                    order_by=(Message.created_at.desc(), Message.id.desc()),
+                )
+                .label("rank"),
             )
-            snippet_rows = list(snippet_result.all())
-            snippets = [
+            .where(Message.session_record_id.in_([session.id for session, *_ in rows]), *message_conditions)
+            .subquery()
+        )
+        snippets_by_session = {session.id: [] for session, *_ in rows}
+        snippet_result = await self.db.execute(
+            select(matches)
+            .where(matches.c.rank <= MESSAGE_SEARCH_SNIPPETS_PER_THREAD)
+            .order_by(matches.c.session_record_id, matches.c.rank)
+        )
+        for session_id, message_id, content, created_at, _rank in snippet_result:
+            snippets_by_session[session_id].append(
                 {
                     "message_id": message_id,
                     "content": self._build_message_search_snippet(content, normalized_query),
                     "created_at": created_at,
                 }
-                for message_id, content, created_at in snippet_rows
-            ]
+            )
+        items: list[dict] = []
+        for agent_session, matched_count, latest_match_at in rows:
+            snippets = snippets_by_session[agent_session.id]
 
             items.append(
                 {
@@ -803,79 +812,3 @@ class SessionRepository:
         while _json_size(payload) > MEMORY_HISTORY_READ_RESPONSE_MAX_BYTES and payload["messages"]:
             payload["messages"].pop(0)
             payload["truncated"] = True
-
-    async def get_attachments(self, session_record_id: int) -> list[dict]:
-        agent_session = await self.get_session_by_id(session_record_id)
-        if not agent_session:
-            return []
-        metadata = self._ensure_metadata(agent_session)
-        return list(metadata.get("attachments", []))
-
-    async def lock_attachments(self, session_record_id: int) -> list[dict]:
-        """锁定会话并返回当前附件，用于需要检查后更新的用例。"""
-        agent_session = await self._lock_session_by_id(session_record_id)
-        if not agent_session:
-            return []
-        return list(self._ensure_metadata(agent_session).get("attachments", []))
-
-    async def add_attachments(self, session_record_id: int, attachment_infos: list[dict]) -> list[dict] | None:
-        agent_session = await self._lock_session_by_id(session_record_id)
-        if not agent_session:
-            return None
-
-        metadata = self._ensure_metadata(agent_session)
-        attachments = metadata.get("attachments", [])
-        incoming_ids = {item.get("file_id") for item in attachment_infos}
-        attachments = [item for item in attachments if item.get("file_id") not in incoming_ids]
-        attachments.extend(attachment_infos)
-        metadata["attachments"] = attachments
-        await self._save_metadata(agent_session, metadata)
-        return attachment_infos
-
-    async def bind_attachments_to_input(self, session_record_id: int, input_id: str, file_ids: list[str]) -> list[dict]:
-        """在当前线程锁内把附件固定到持久 Input。"""
-        agent_session = await self._lock_session_by_id(session_record_id)
-        if not agent_session or not input_id or not file_ids:
-            return []
-
-        file_id_set = {str(file_id).strip() for file_id in file_ids if str(file_id).strip()}
-        if not file_id_set:
-            return []
-
-        metadata = self._ensure_metadata(agent_session)
-        attachments = metadata.get("attachments", [])
-        changed = False
-
-        for item in attachments:
-            if item.get("file_id") not in file_id_set:
-                continue
-            if item.get("input_id"):
-                continue
-            item["input_id"] = input_id
-            changed = True
-
-        if changed:
-            metadata["attachments"] = attachments
-            await self._save_metadata(agent_session, metadata)
-        return [dict(item) for item in attachments if item.get("input_id") == input_id]
-
-    async def get_attachments_by_input_id(self, session_record_id: int, input_id: str) -> list[dict]:
-        """读取同一 Input 已固定的附件。"""
-        attachments = await self.get_attachments(session_record_id)
-        return [item for item in attachments if item.get("input_id") == input_id]
-
-    async def remove_attachment(self, session_record_id: int, file_id: str) -> bool:
-        agent_session = await self._lock_session_by_id(session_record_id)
-        if not agent_session:
-            return False
-
-        metadata = self._ensure_metadata(agent_session)
-        attachments = metadata.get("attachments", [])
-        new_attachments = [item for item in attachments if item.get("file_id") != file_id]
-
-        if len(new_attachments) == len(attachments):
-            return False
-
-        metadata["attachments"] = new_attachments
-        await self._save_metadata(agent_session, metadata)
-        return True

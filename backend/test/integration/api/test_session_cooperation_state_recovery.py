@@ -30,9 +30,18 @@ def cleanup_test_sandboxes():
 @pytest_asyncio.fixture
 async def cooperation_user(test_client, admin_headers):
     """在测试管理员所属部门建立用户，不要求跨部门管理权限。"""
+    admin = await test_client.get("/api/auth/me", headers=admin_headers)
+    assert admin.status_code == 200, admin.text
     username, password = f"pytest_coop_{uuid.uuid4().hex[:8]}", f"Pw!{uuid.uuid4().hex}"
     response = await test_client.post(
-        "/api/auth/users", headers=admin_headers, json={"username": username, "password": password, "role": "user"}
+        "/api/auth/users",
+        headers=admin_headers,
+        json={
+            "username": username,
+            "password": password,
+            "role": "user",
+            "department_id": admin.json()["department_id"],
+        },
     )
     assert response.status_code == 200, response.text
     user = response.json()

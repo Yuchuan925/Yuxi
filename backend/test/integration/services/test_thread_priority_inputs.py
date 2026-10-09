@@ -69,6 +69,7 @@ async def sessions(monkeypatch):
         )
         agent_session = await SessionRepository(db).get_session_by_thread_id("input-thread")
         agent_session.queue_paused = True
+        agent_session.config_snapshot = {"model": "test:chat", "tool_approval_mode": "default"}
         await db.commit()
 
     async def resolve_binding(**kwargs):
@@ -94,7 +95,6 @@ async def sessions(monkeypatch):
     monkeypatch.setattr(turns, "finish_turn_observation_if_terminal", notify)
     monkeypatch.setattr(turns, "publish_cancel_signals", notify)
     monkeypatch.setattr(scheduler, "resolve_session_workdir_binding", resolve_binding)
-    monkeypatch.setattr(inputs, "deliver", deliver)
     monkeypatch.setattr(threads, "deliver", deliver)
     monkeypatch.setattr(scheduler, "deliver", deliver)
     monkeypatch.setattr(scheduler.pg_manager, "get_async_session_context", context)
@@ -132,6 +132,61 @@ async def _start(sessions, *, running: bool = True):
             assert acquired
         await db.commit()
         return run
+
+
+async def test_empty_session_freezes_system_default_before_first_input(sessions, monkeypatch):
+    """创建后的默认模型与 Agent 修改不影响首个输入，投递前事务已提交。"""
+    from unittest.mock import AsyncMock
+    from dataclasses import replace
+
+    defaults = {"default_model": "test:original-default"}
+    monkeypatch.setattr(input_config, "system_options", SimpleNamespace(get=AsyncMock(return_value=defaults)))
+    monkeypatch.setattr(
+        inputs, "resolve_session_workdir_binding", AsyncMock(return_value=replace(_binding(), directory_mode="linked"))
+    )
+    async with sessions() as db:
+        agent = await db.scalar(select(Agent).where(Agent.slug == "main"))
+        agent.config_json = {"context": {"model": "", "system_prompt": "ORIGINAL"}}
+        await db.commit()
+        created = await inputs.create_thread(
+            db=db,
+            scope=SCOPE,
+            agent_slug="main",
+            thread_id="default-snapshot-thread",
+            idempotency_key="default-snapshot-create",
+        )
+        assert created["input_id"] is None
+    async with sessions() as db:
+        agent_session = await SessionRepository(db).get_session_by_thread_id("default-snapshot-thread")
+        snapshot = agent_session.config_snapshot
+        assert snapshot["model"] == "test:original-default"
+        assert snapshot["system_prompt"] == "ORIGINAL"
+        agent = await db.scalar(select(Agent).where(Agent.slug == "main"))
+        agent.config_json = {"context": {"model": "", "system_prompt": "CHANGED"}}
+        await db.commit()
+    defaults["default_model"] = "test:changed-default"
+    async with sessions() as db:
+        accepted = await inputs.accept_message(
+            db=db,
+            scope=SCOPE,
+            thread_id="default-snapshot-thread",
+            idempotency_key="default-snapshot-input",
+            mode=None,
+            messages=[build_chat_input_message("first input")],
+        )
+    async with sessions() as db:
+        run = await db.get(AgentRun, accepted["run_id"])
+        assert run.input_payload["context_snapshot"]["model"] == "test:original-default"
+        assert run.input_payload["context_snapshot"] == snapshot
+        assert (await db.get(Session, run.session_record_id)).config_snapshot == snapshot
+        assert (await db.get(AgentInput, accepted["input_id"])).consumed_run_id == run.id
+        receipt = await AgentInputReceiptRepository(db).get_for_scope(
+            uid=SCOPE.uid,
+            app_id=SCOPE.app_id,
+            thread_id="default-snapshot-thread",
+            idempotency_key="default-snapshot-input",
+        )
+        assert receipt.input_id == accepted["input_id"] and receipt.run_id == run.id
 
 
 async def test_idle_steer_batch_precedes_fifo_and_is_sealed_on_claim(sessions):
@@ -212,7 +267,7 @@ async def test_safe_handoff_consumes_batch_in_same_turn_with_current_config(sess
         assert old.status == "yielded"
         assert next_run.turn_id == current.turn_id and next_run.resume_from_run_id == current.id
         assert next_run.input_payload == current.input_payload
-        assert next_run.input_payload["model_spec"] != "test:chat"
+        assert next_run.input_payload["context_snapshot"]["model"] != "test:chat"
         assert (await db.get(AgentInput, follow["input_id"])).status == "pending"
         messages = await AgentInputRepository(db).list_messages(next_run.input_id)
         assert [message.content for message in messages] == ["S1", "S2"]
@@ -265,7 +320,7 @@ async def test_recovery_claims_idle_steer_without_any_follow_up(sessions):
         batch = await db.get(AgentInput, steer["input_id"])
         assert batch.status == "consumed" and batch.consumed_run_id
         run = await db.get(AgentRun, batch.consumed_run_id)
-        assert run.input_payload["model_spec"] == "test:chat"
+        assert run.input_payload["context_snapshot"]["model"] == "test:chat"
         assert run.resume_from_run_id is None
 
 
@@ -423,7 +478,12 @@ async def test_cancelled_steer_continuation_preserves_wire_ids_and_audit_order(s
                 agent_slug="main",
                 input_messages=[build_chat_input_message("message-0")],
                 thread_id="input-thread",
-                meta={"run_id": current.id, "turn_id": current.turn_id, "worker_id": "owner"},
+                meta={
+                    "run_id": current.id,
+                    "turn_id": current.turn_id,
+                    "worker_id": "owner",
+                    "input_id": current.input_id,
+                },
                 current_user=SimpleNamespace(uid=SCOPE.uid),
                 db=db,
                 prepared_execution=SimpleNamespace(context=context),
@@ -492,7 +552,7 @@ async def test_completion_winning_thread_lock_still_accepts_steer(sessions):
         assert old_turn.status == "completed" and old_turn.result_run_id == current.id
         assert old_run.output_message_id == output_id
         new_run = await db.get(AgentRun, accepted["run_id"])
-        assert new_run.resume_from_run_id is None and new_run.input_payload["model_spec"] == "test:chat"
+        assert new_run.resume_from_run_id is None and new_run.input_payload["context_snapshot"]["model"] == "test:chat"
 
 
 async def test_concurrent_steer_receipts_share_one_thread_batch(sessions):

@@ -57,12 +57,52 @@ export class Client {
   agents() { return this.request<Json>("/v1/agents"); }
   agent(id: string) { return this.request<Json>(`/v1/agents/${encodeURIComponent(id)}`); }
   threads(params = "") { return this.request<Json>(`/v1/agents/sessions${params}`); }
-  createThread(agentId: string, idempotencyKey: string) { return this.request<Json>("/v1/agents/sessions", { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey }, body: JSON.stringify({ agent_id: agentId }) }); }
-  thread(id: string) { return this.request<Json>(`/v1/agents/sessions/${encodeURIComponent(id)}`); }
+  async createThread(agentId: string, idempotencyKey: string) {
+    const init = {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
+      body: JSON.stringify({ agent_id: agentId }),
+    };
+    try { return await this.request<Json>("/v1/agents/sessions", init); }
+    catch (error) {
+      if (error instanceof YuxiError && error.status && error.status < 500 && error.status !== 429) throw error;
+      return this.request<Json>("/v1/agents/sessions", init);
+    }
+  }
+  async thread(id: string) {
+    const session = await this.request<Json>(`/v1/agents/sessions/${encodeURIComponent(id)}`);
+    return session;
+  }
   turn(threadId: string, turnId: string) { return this.request<Json>(`/v1/agents/sessions/${encodeURIComponent(threadId)}/turns/${encodeURIComponent(turnId)}`); }
-  history(id: string) { return this.request<Json>(`/v1/agents/sessions/${encodeURIComponent(id)}/history`); }
-  send(id: string, message: string, key: string) { return this.event(id, { type: "agent.session.input.message", yuxi: { mode: "follow_up" }, input: [{ role: "user", content: [{ type: "input_text", text: message }] }] }, key); }
-  event(id: string, event: Json, key: string) { return this.request<Json>(`/v1/agents/sessions/${encodeURIComponent(id)}/events`, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": key }, body: JSON.stringify({ events: [event] }) }); }
+  items(id: string, params = "") { return this.request<Json>(`/v1/agents/sessions/${encodeURIComponent(id)}/items${params}`); }
+  turns(id: string, params = "") { return this.request<Json>(`/v1/agents/sessions/${encodeURIComponent(id)}/turns${params}`); }
+  input(id: string, inputId: string) { return this.request<Json>(`/v1/agents/sessions/${encodeURIComponent(id)}/inputs/${encodeURIComponent(inputId)}`); }
+  receipt(id: string, key: string) { return this.request<Json>(`/v1/agents/sessions/${encodeURIComponent(id)}/receipt?${new URLSearchParams({ idempotency_key: key })}`); }
+  /** 直接提交文件引用与完整图片 URL，不经过产品预处理 API。 */
+  send(id: string, message: string, key: string, fileIds: string[] = [], imageUrls: string[] = []) {
+    return this.event(id, { type: "agent.session.input.message", yuxi: { mode: "follow_up", attachment_file_ids: fileIds }, input: [{ role: "user", content: [{ type: "input_text", text: message }, ...imageUrls.map(image_url => ({ type: "input_image", image_url }))] }] }, key);
+  }
+  uploadFile(file: Blob, filename: string) {
+    const body = new FormData();
+    body.append("file", file, filename);
+    return this.request<Json>("/v1/agents/files", { method: "POST", body });
+  }
+  file(id: string) { return this.request<Json>(`/v1/agents/files/${encodeURIComponent(id)}`); }
+  deleteFile(id: string) { return this.request<Json>(`/v1/agents/files/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+  /** 未收到响应时查持久回执；未接收则只重放相同意图。 */
+  async event(id: string, event: Json, key: string) {
+    const path = `/v1/agents/sessions/${encodeURIComponent(id)}/events`;
+    const init = { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": key }, body: JSON.stringify({ events: [event] }) };
+    try { return await this.request<Json>(path, init); }
+    catch (error) {
+      if (error instanceof YuxiError && error.status && error.status < 500 && error.status !== 429) throw error;
+      try { return await this.receipt(id, key); }
+      catch (lookup) {
+        if (!(lookup instanceof YuxiError) || lookup.status !== 404) throw lookup;
+        return this.request<Json>(path, init);
+      }
+    }
+  }
   async *events(id: string, cursor?: string): AsyncGenerator<SseEvent> {
     const headers = new Headers({ Accept: "text/event-stream" });
     if (this.remote.apiKey) headers.set("Authorization", `Bearer ${this.remote.apiKey}`);

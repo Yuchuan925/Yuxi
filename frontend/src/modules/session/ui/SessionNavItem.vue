@@ -4,7 +4,7 @@
     :class="{
       active: currentChatId === chat.id,
       nested,
-      'has-status': isRunning || Boolean(activityLabel) || chat.thread_status === 'ready'
+      'has-status': isRunning || Boolean(activityLabel) || chat.yuxi.unread
     }"
   >
     <button
@@ -15,11 +15,11 @@
       @dblclick.stop="renameChat"
       @click.middle="$emit('archive-chat', chat.id)"
     >
-      <span class="session-title">{{ chat.title || '新的对话' }}</span>
+      <span class="session-title">{{ chat.yuxi.title || '新的对话' }}</span>
       <span
         v-if="activityLabel"
         class="activity-badge"
-        :class="`activity-${chat.activity_status}`"
+        :class="`activity-${chat.status}`"
         role="status"
         :title="activityLabel"
       >
@@ -36,7 +36,7 @@
         <span class="status-spinner" aria-hidden="true"></span>
       </span>
       <span
-        v-else-if="!activityLabel && chat.thread_status === 'ready'"
+        v-else-if="!activityLabel && chat.yuxi.unread"
         class="thread-status thread-status-ready"
         role="status"
         title="有新回复"
@@ -48,10 +48,10 @@
           <a-menu>
             <a-menu-item
               key="pin"
-              :icon="h(chat.is_pinned ? PinOff : Pin, { size: 14 })"
+              :icon="h(chat.yuxi.is_pinned ? PinOff : Pin, { size: 14 })"
               @click.stop="$emit('toggle-pin', chat.id)"
             >
-              {{ chat.is_pinned ? '取消置顶' : '置顶' }}
+              {{ chat.yuxi.is_pinned ? '取消置顶' : '置顶' }}
             </a-menu-item>
             <a-menu-item key="rename" :icon="h(SquarePen, { size: 14 })" @click.stop="renameChat">
               重命名
@@ -69,7 +69,7 @@
           <a-button type="text" class="more-btn" aria-label="对话操作">
             <MoreVertical :size="16" />
           </a-button>
-          <Pin v-if="chat.is_pinned" :size="14" class="pinned-indicator" />
+          <Pin v-if="chat.yuxi.is_pinned" :size="14" class="pinned-indicator" />
         </span>
       </a-dropdown>
     </span>
@@ -89,11 +89,11 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['select-chat', 'archive-chat', 'rename-chat', 'toggle-pin'])
-const activityLabel = computed(() => SESSION_ACTIVITY_LABELS[props.chat.activity_status] || '')
-const isRunning = computed(() => ['running', 'queued'].includes(props.chat.activity_status))
+const activityLabel = computed(() => SESSION_ACTIVITY_LABELS[props.chat.status] || '')
+const isRunning = computed(() => props.chat.status === 'in_progress')
 
 const renameChat = () => {
-  let newTitle = props.chat.title || ''
+  let newTitle = props.chat.yuxi.title || ''
   Modal.confirm({
     title: '重命名对话',
     icon: null,

@@ -22,14 +22,6 @@ export const uploadMultimodalImage = async (file, errorKey = 'image-upload') => 
     message.loading({ content: '正在处理图片...', key: 'image-upload' })
 
     const result = await multimodalApi.uploadImage(file)
-    if (!result.success) {
-      message.error({
-        content: `图片处理失败: ${result.error}`,
-        key: errorKey
-      })
-      return null
-    }
-
     message.success({
       content: '图片处理成功',
       key: 'image-upload',
@@ -38,8 +30,8 @@ export const uploadMultimodalImage = async (file, errorKey = 'image-upload') => 
 
     return {
       success: true,
-      imageContent: result.image_content,
-      thumbnailContent: result.thumbnail_content,
+      imageUrl: result.image_url,
+      thumbnailUrl: result.thumbnail_url,
       width: result.width,
       height: result.height,
       format: result.format,

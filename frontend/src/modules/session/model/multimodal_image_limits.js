@@ -28,7 +28,7 @@ export const splitDroppedFiles = (files = []) => {
 
 /** 这批图片的 base64 总量。 */
 export const sumBase64Bytes = (images = []) =>
-  images.reduce((total, image) => total + (image?.imageContent?.length || 0), 0)
+  images.reduce((total, image) => total + (image?.imageUrl?.length || 0), 0)
 
 /** 还能再收几张；到上限后为 0，不回负数。 */
 export const remainingImageSlots = (current = [], max = MAX_MULTIMODAL_IMAGES) =>

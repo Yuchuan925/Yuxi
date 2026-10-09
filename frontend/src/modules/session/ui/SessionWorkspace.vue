@@ -19,10 +19,10 @@
         <div class="header__left">
           <slot name="header-left"></slot>
           <div
-            v-if="currentThread?.title && currentThread.title !== '新的对话'"
+            v-if="currentThread?.yuxi.title && currentThread.yuxi.title !== '新的对话'"
             class="session-title"
           >
-            {{ currentThread.title }}
+            {{ currentThread.yuxi.title }}
           </div>
         </div>
         <div class="header__right">
@@ -94,6 +94,14 @@
             }"
           >
             <div class="chat-box">
+              <button
+                v-if="historyPages[currentChatId]?.hasMore"
+                class="agent-nav-btn"
+                :disabled="historyPages[currentChatId]?.loading"
+                @click="fetchThreadMessages({ threadId: currentChatId, more: true })"
+              >
+                加载更早消息
+              </button>
               <template v-for="row in messageGroupRows" :key="row.key">
                 <div v-if="row.type === 'message-group'" class="group-box">
                   <div v-if="row.timeLabel" class="message-group-time">
@@ -174,6 +182,10 @@
             </div>
             <div ref="messageInputDockRef" class="bottom" :class="{ 'start-screen': showStartScreen }">
               <div class="message-input-wrapper">
+                <div v-if="pendingSends[currentChatId]" class="queued-request-notice">
+                  <span>发送结果待确认，重试会确认同一条消息。</span>
+                  <button class="queued-request-continue" :disabled="sendCooldownActive" @click="handleSendMessage({ retry: true })">重试发送</button>
+                </div>
                 <!-- 加载状态：加载消息 -->
                 <div v-if="isLoadingMessages" class="chat-loading" role="status">
                   <div class="loading-spinner" aria-hidden="true"></div>
@@ -218,6 +230,9 @@
                       <span class="queued-request-content" :title="input.content || '排队输入'">
                         {{ input.content || '排队输入' }}
                       </span>
+                      <span v-if="input.attachment_status === 'preparing'" class="queued-request-notice">
+                        {{ input.attachment_error || '附件准备中' }}
+                      </span>
                       <div class="queued-request-actions">
                         <button
                           v-if="canCancelQueuedInput(input)"
@@ -257,7 +272,7 @@
                       ref="agentInputAreaRef"
                       v-model="userInput"
                       :is-loading="shouldShowStopButton"
-                      :disabled="!currentAgent || currentToolApprovalVisible"
+                      :disabled="!currentAgent || currentToolApprovalVisible || !!pendingSends[currentChatId]"
                       :send-button-disabled="isSendButtonDisabled"
                       :mention="mentionConfig"
                       :thread-id="currentChatId"
@@ -327,8 +342,6 @@
 
                 <AttachmentTmpUploadModal
                   v-model:open="attachmentUploadModalOpen"
-                  :thread-id="currentChatId"
-                  :ensure-thread="ensureAttachmentThread"
                   :initial-files="attachmentInitialFiles"
                   :initial-files-key="attachmentInitialFilesKey"
                   @added="handleTmpAttachmentsAdded"
@@ -997,7 +1010,7 @@ const {
   continueQueue,
   startInputMonitor
 } = sessionRuntime
-const { threadMessages, threadRuns } = storeToRefs(sessionRuntime)
+const { threadMessages, threadRuns, historyPages, pendingSends } = storeToRefs(sessionRuntime)
 const setCurrentThreadId = (threadId, options) => {
   currentThreadId.value = threadId || null
   if (!props.embedded && workspaceActive.value) {
@@ -1005,11 +1018,12 @@ const setCurrentThreadId = (threadId, options) => {
   }
 }
 const threadAttachmentsMap = ref({})
+const draftFilesByThread = ref({})
 const attachmentUploadModalOpen = ref(false)
 const attachmentInitialFiles = ref([])
 const attachmentInitialFilesKey = ref(0)
 const selectedProjectId = ref(AUTO_PROJECT_ID)
-const threadCreationRequestId = ref('')
+const threadCreationRequest = ref(null)
 const isRefreshingState = ref(false)
 const approvalSubmitting = computed(() =>
   Boolean(getThreadState(currentThreadId.value)?.approvalSubmitting)
@@ -1362,7 +1376,7 @@ const closePanelPreviewPath = (targetPath) => {
 
 // ==================== COMPUTED PROPERTIES ====================
 const currentAgentId = computed(() => {
-  return currentThread.value?.agent_id || props.agentId || selectedAgentId.value
+  return currentThread.value?.agent.id || props.agentId || selectedAgentId.value
 })
 
 const currentAgentName = computed(() => {
@@ -1413,7 +1427,7 @@ const agentDefaultModel = computed(
 const currentModelSpec = computed(
   () =>
     selectedModelByThread[currentChatId.value || DRAFT_MODEL_KEY] ||
-    currentThread.value?.metadata?.model_spec ||
+    currentThread.value?.agent.model ||
     agentDefaultModel.value
 )
 const handleModelSelect = (spec) => {
@@ -1433,7 +1447,7 @@ const configuredAgentToolApprovalMode = computed(() => {
 const currentToolApprovalMode = computed(() =>
   resolveToolApprovalMode({
     hasThread: Boolean(currentChatId.value),
-    threadMode: currentThread.value?.metadata?.tool_approval_mode,
+    threadMode: currentThread.value?.yuxi.tool_approval_mode,
     agentMode: configuredAgentToolApprovalMode.value,
     savedMode: savedToolApprovalMode.value
   })
@@ -1448,20 +1462,20 @@ const handleToolApprovalModeSelect = async (mode) => {
     return
   }
 
-  const previousMetadata = { ...(thread.metadata || {}) }
-  thread.metadata = { ...(thread.metadata || {}), tool_approval_mode: mode }
+  const previousMode = thread.yuxi.tool_approval_mode
+  thread.yuxi.tool_approval_mode = mode
   try {
     await chatThreadsStore.updateThread(thread.id, null, undefined, mode)
     savedToolApprovalMode.value = mode
     writeToolApprovalModePreference(mode)
   } catch {
-    thread.metadata = previousMetadata
+    thread.yuxi.tool_approval_mode = previousMode
     message.error('审批模式保存失败')
   }
 }
 
 const currentThreadAgentName = computed(() => {
-  const threadAgentId = currentThread.value?.agent_id
+  const threadAgentId = currentThread.value?.agent.id
   if (threadAgentId && agents.value?.length) {
     const threadAgent = agents.value.find((agent) => agent.agent_id === threadAgentId)
     if (threadAgent?.name) {
@@ -1763,7 +1777,7 @@ const currentThreadAttachments = computed(() => {
   return threadAttachmentsMap.value[currentChatId.value] || []
 })
 const currentPendingThreadAttachments = computed(() =>
-  currentThreadAttachments.value.filter((attachment) => !attachment?.input_id)
+  draftFilesByThread.value[currentChatId.value || DRAFT_MODEL_KEY] || []
 )
 const currentArtifacts = computed(() => {
   const artifacts = currentAgentState.value?.artifacts
@@ -1936,6 +1950,7 @@ const hasVisibleStateSections = computed(
 )
 
 const { mentionConfig } = useAgentMentionConfig({
+  agents,
   currentThreadAttachments,
   configurableItems,
   agentConfig
@@ -1944,7 +1959,7 @@ const { mentionConfig } = useAgentMentionConfig({
 const currentThreadMessages = computed(() => threadMessages.value[currentChatId.value] || [])
 const currentThreadRuns = computed(() => threadRuns.value[currentChatId.value] || [])
 const currentRunById = computed(
-  () => new Map(currentThreadRuns.value.map((run) => [run.run_id, run]))
+  () => new Map(currentThreadRuns.value.map((run) => [run.id, run]))
 )
 const getMessageRun = (message) => currentRunById.value.get(getMessageRunId(message)) || null
 const currentThreadHasHistory = computed(() => currentThreadMessages.value.length > 0)
@@ -2035,13 +2050,12 @@ const historyRunGroups = computed(() => {
 })
 
 function mergeLocalImageFields(message, localMessage) {
-  const localImages = localMessage?.image_contents || []
-  if (!localImages.length || message?.image_contents?.length) return message
+  const localImages = localMessage?.image_urls || []
+  if (!localImages.length || message?.image_urls?.length) return message
   return {
     ...message,
     message_type: localMessage.message_type || message.message_type,
-    image_content: localMessage.image_content,
-    image_contents: localImages,
+    image_urls: localImages,
     extra_metadata: message.extra_metadata || {}
   }
 }
@@ -2107,7 +2121,7 @@ function mergeActiveRunOngoingIntoHistory(historyRunGroups, ongoingMessages, act
     .filter((group) => group.messages.length > 0 || group.run)
 
   const activeGroupIndex = filteredHistoryRunGroups.findIndex(
-    (group) => group.run?.run_id === activeRunId
+    (group) => group.run?.id === activeRunId
   )
   if (activeGroupIndex !== -1) {
     const group = filteredHistoryRunGroups[activeGroupIndex]
@@ -2206,7 +2220,7 @@ const messageGroupRows = computed(() => {
     type: 'message-group',
     key:
       group.displayKey ||
-      group.run?.run_id ||
+      group.run?.id ||
       (group.status === 'streaming' ? 'ongoing-message-group' : `history-${index}`),
     group,
     timeLabel: getMessageGroupTimeLabel(group, runGroups.value[index - 1]),
@@ -2408,26 +2422,10 @@ const buildOptimisticHumanMessage = ({ inputId, text, imageContents = [], attach
   }
 
   if (imageContents.length) {
-    message.image_contents = imageContents
-    message.image_content = imageContents[0]
+    message.image_urls = imageContents
   }
 
   return message
-}
-
-const markAttachmentsInputId = (threadId, attachments, inputId) => {
-  if (!threadId || !attachments.length) return null
-  const previousAttachments = threadAttachmentsMap.value[threadId] || []
-  const fileIds = new Set(attachments.map((attachment) => attachment.file_id).filter(Boolean))
-  threadAttachmentsMap.value[threadId] = previousAttachments.map((attachment) =>
-    fileIds.has(attachment.file_id) ? { ...attachment, input_id: inputId } : attachment
-  )
-  return previousAttachments
-}
-
-const rollbackAttachments = (threadId, previousAttachments) => {
-  if (!threadId || !Array.isArray(previousAttachments)) return
-  threadAttachmentsMap.value[threadId] = previousAttachments
 }
 
 const CONFIG_CHANGE_NOTICE_MESSAGE =
@@ -2710,32 +2708,6 @@ const fetchThreads = async (agentId = null) => {
   await chatThreadsStore.loadThreads(agentId)
 }
 
-// 创建新线程
-const createThread = async (agentId, title = '新的对话', projectId = '', requestId = '') => {
-  if (!agentId) return null
-
-  try {
-    const thread = await chatThreadsStore.createThread(
-      agentId,
-      title,
-      { tool_approval_mode: currentToolApprovalMode.value },
-      {
-        requestId,
-        projectId: projectId || undefined
-      }
-    )
-    if (thread) {
-      threadMessages.value[thread.id] = []
-      threadAttachmentsMap.value[thread.id] = []
-    }
-    return thread
-  } catch (error) {
-    console.error('Failed to create thread:', error)
-    handleChatError(error, 'create')
-    throw error
-  }
-}
-
 // 把草稿线程的选择迁移到真实线程：真实线程未设值时才覆盖，迁移后删除草稿。
 const promoteDraftSelection = (selectionByThread, threadId) => {
   const draft = selectionByThread[DRAFT_MODEL_KEY]
@@ -2780,8 +2752,14 @@ const createActiveThread = async (title = '新的对话') => {
     projectId: selectedProject,
     threadId: startingThreadId
   }
-  const requestId =
-    threadCreationRequestId.value || (threadCreationRequestId.value = createClientRequestId())
+  let request = threadCreationRequest.value
+  if (!request || request.agentId !== selectedAgent || request.projectId !== selectedProject) {
+    request = {
+      ...creationContext, title: title || '新的对话', id: createClientRequestId(),
+      metadata: { tool_approval_mode: currentToolApprovalMode.value }
+    }
+    threadCreationRequest.value = request
+  }
   chatThreadsStore.setThreadCreationInFlight(true)
   try {
     const projectId = selectedProject === AUTO_PROJECT_ID ? '' : selectedProject
@@ -2792,16 +2770,24 @@ const createActiveThread = async (title = '新的对话') => {
         projectId: selectedProjectId.value,
         threadId: currentChatId.value
       }),
-      requestId,
+      requestId: request.id,
       create: (stableRequestId) =>
-        createThread(selectedAgent, title || '新的对话', projectId, stableRequestId)
+        chatThreadsStore.createThread(selectedAgent, request.title, request.metadata, {
+          requestId: stableRequestId, projectId: projectId || undefined
+        })
     })
     if (!thread) throw new Error('创建对话失败')
     if (!accepted) throw new Error('新对话上下文已变化，请重新发送或添加附件')
 
-    threadCreationRequestId.value = ''
+    threadMessages.value[thread.id] = []
+    threadAttachmentsMap.value[thread.id] = []
+    threadCreationRequest.value = null
+    promoteDraftSelection(draftFilesByThread.value, thread.id)
     setCurrentThreadId(thread.id, { force: true })
     return thread.id
+  } catch (error) {
+    if (error.status >= 400 && error.status < 500 && error.status !== 429) threadCreationRequest.value = null
+    throw error
   } finally {
     chatThreadsStore.setThreadCreationInFlight(false)
   }
@@ -2828,52 +2814,17 @@ const handleAttachmentUpload = async (files = []) => {
   attachmentUploadModalOpen.value = true
 }
 
-const ensureAttachmentThread = async () => {
-  if (currentChatId.value) return currentChatId.value
-  // 无线程状态上传附件会先创建线程：保留输入框已有文本并迁移到新线程草稿
-  const inputText = userInput.value
-  const threadId = await ensureActiveThread('新的对话')
-  if (threadId && inputText) {
-    userInput.value = inputText
-    threadDraftSession.clearDraftThread()
-  }
-  return threadId
+const handleTmpAttachmentsAdded = (files) => {
+  const key = currentChatId.value || DRAFT_MODEL_KEY
+  draftFilesByThread.value[key] = [...(draftFilesByThread.value[key] || []), ...files]
 }
 
-const handleTmpAttachmentsAdded = async () => {
-  const threadId = currentChatId.value
-  if (!threadId) return
-
-  await Promise.all([
-    fetchAgentState(currentAgentId.value, threadId),
-    fetchThreadAttachments(threadId)
-  ])
-  showFileTreePanel()
-  emit('thread-change', threadId)
-}
-
-watch(attachmentUploadModalOpen, (open) => {
-  if (!open && currentChatId.value) emit('thread-change', currentChatId.value)
-})
-
-const handleAttachmentRemove = async (attachment) => {
-  const threadId = currentChatId.value
-  const fileId = attachment?.file_id
-  if (!threadId || !fileId) return
-
-  const previousAttachments = threadAttachmentsMap.value[threadId] || []
-  threadAttachmentsMap.value[threadId] = previousAttachments.filter(
-    (item) => item.file_id !== fileId
-  )
-
+const handleAttachmentRemove = async (file) => {
+  const key = currentChatId.value || DRAFT_MODEL_KEY
   try {
-    await threadApi.deleteThreadAttachment(threadId, fileId)
-    await Promise.all([
-      fetchAgentState(currentAgentId.value, threadId),
-      fetchThreadAttachments(threadId)
-    ])
+    await threadApi.deleteDraftFile(file.id)
+    draftFilesByThread.value[key] = (draftFilesByThread.value[key] || []).filter((item) => item.id !== file.id)
   } catch (error) {
-    threadAttachmentsMap.value[threadId] = previousAttachments
     handleChatError(error, 'delete')
   }
 }
@@ -2981,7 +2932,7 @@ const selectChat = async (chatId) => {
     return false
   }
   const targetChat = threads.value.find((chat) => chat.id === chatId) || null
-  const targetAgentId = targetChat?.agent_id || currentAgentId.value
+  const targetAgentId = targetChat?.agent.id || currentAgentId.value
   const previousThreadId = currentThreadId.value
 
   if (!targetAgentId) {
@@ -3001,8 +2952,8 @@ const selectChat = async (chatId) => {
       // 先更新当前线程，确保底部智能体名称与选中项即时同步。
       setCurrentThreadId(chatId)
 
-      if (targetChat?.agent_id) {
-        await agentStore.fetchAgentDetail(targetChat.agent_id)
+      if (targetChat?.agent.id) {
+        await agentStore.fetchAgentDetail(targetChat.agent.id)
       }
 
       syncThreadConfigSnapshot(chatId)
@@ -3075,9 +3026,15 @@ const selectThreadFromRoute = async (threadId) => {
   return true
 }
 
-const handleSendMessage = async ({ images = [], mode = 'follow_up' } = {}) => {
-  const text = userInput.value.trim()
-  const imageContents = images.map((item) => item.imageContent).filter(Boolean)
+const handleSendMessage = async ({ images = [], mode = 'follow_up', retry = false } = {}) => {
+  const original = pendingSends.value[currentChatId.value]
+  if (original && !retry) return
+  if (retry && !original) return
+  const text = original?.text ?? userInput.value.trim()
+  images = original?.images || images
+  mode = original?.data.mode || mode
+  const pendingAttachments = original?.attachments || [...currentPendingThreadAttachments.value]
+  const imageContents = images.map((item) => item.imageUrl).filter(Boolean)
   if (
     (!text && !imageContents.length) ||
     !currentAgent.value ||
@@ -3092,7 +3049,6 @@ const handleSendMessage = async ({ images = [], mode = 'follow_up' } = {}) => {
   startSendCooldown()
 
   let threadId = currentChatId.value
-  const createdFromDraft = !threadId
   if (!threadId) {
     try {
       threadId = await ensureActiveThread(text)
@@ -3106,8 +3062,8 @@ const handleSendMessage = async ({ images = [], mode = 'follow_up' } = {}) => {
     threadDraftSession.clearDraftThread()
   }
   // 接收时冻结输入框展示的执行配置。
-  const modelSpec = currentModelSpec.value || null
-  const toolApprovalMode = currentToolApprovalMode.value
+  const modelSpec = original ? original.data.model_spec : currentModelSpec.value || null
+  const toolApprovalMode = original ? original.data.tool_approval_mode : currentToolApprovalMode.value
 
   userInput.value = ''
 
@@ -3124,9 +3080,8 @@ const handleSendMessage = async ({ images = [], mode = 'follow_up' } = {}) => {
     hideApprovalState()
   }
 
-  const pendingAttachments = [...currentPendingThreadAttachments.value]
   const pendingAttachmentFileIds = pendingAttachments
-    .map((attachment) => attachment.file_id)
+    .map((attachment) => attachment.id)
     .filter(Boolean)
 
   if (
@@ -3141,8 +3096,7 @@ const handleSendMessage = async ({ images = [], mode = 'follow_up' } = {}) => {
     }
   }
 
-  const clientKey = createClientRequestId()
-  const previousAttachments = markAttachmentsInputId(threadId, pendingAttachments, clientKey)
+  const clientKey = original?.data.idempotency_key || createClientRequestId()
   const inputMessage = buildOptimisticHumanMessage({
     inputId: clientKey,
     text,
@@ -3165,18 +3119,28 @@ const handleSendMessage = async ({ images = [], mode = 'follow_up' } = {}) => {
   }
 
   let acceptedInputId = clientKey
+  let messageAccepted = false
+  const data = original?.data || {
+    query: text,
+    idempotency_key: clientKey,
+    attachment_file_ids: pendingAttachmentFileIds,
+    image_content: imageContents.length ? imageContents : null,
+    model_spec: modelSpec,
+    tool_approval_mode: toolApprovalMode,
+    mode
+  }
+  pendingSends.value[threadId] = { text, images, attachments: pendingAttachments, data }
   try {
-    const accepted = await agentApi.sendThreadMessage(threadId, {
-      query: text,
-      idempotency_key: clientKey,
-      attachment_file_ids: pendingAttachmentFileIds,
-      image_content: imageContents.length ? imageContents : null,
-      model_spec: modelSpec,
-      tool_approval_mode: toolApprovalMode,
-      mode
-    })
+    let accepted
+    if (retry) {
+      try { accepted = await agentApi.getSessionReceipt(threadId, clientKey) }
+      catch (error) { if (error.status !== 404) throw error }
+    }
+    accepted ||= await agentApi.sendThreadMessage(threadId, data)
     acceptedInputId = accepted.input_id
     if (!acceptedInputId) throw new Error('Public API 未返回 input_id')
+    messageAccepted = true
+    delete pendingSends.value[threadId]
     if (acceptedInputId !== clientKey) {
       const optimistic = threadState.ongoingRunGroup.optimisticMessages[clientKey]
       if (optimistic) {
@@ -3196,7 +3160,6 @@ const handleSendMessage = async ({ images = [], mode = 'follow_up' } = {}) => {
         )
         delete threadState.ongoingRunGroup.optimisticMessages[clientKey]
       }
-      markAttachmentsInputId(threadId, pendingAttachments, acceptedInputId)
     }
     const acceptedMessage =
       acceptedInputId === clientKey
@@ -3213,6 +3176,8 @@ const handleSendMessage = async ({ images = [], mode = 'follow_up' } = {}) => {
               }))
             }
           }
+    draftFilesByThread.value[threadId] = (draftFilesByThread.value[threadId] || []).filter((item) => !pendingAttachmentFileIds.includes(item.id))
+    await fetchThreadAttachments(threadId)
     const inputSnapshot = await agentApi.getThreadInput(threadId, acceptedInputId)
     mergeItemSnapshot(threadState.ongoingRunGroup, inputSnapshot.items || [])
     delete threadState.ongoingRunGroup.optimisticMessages[clientKey]
@@ -3224,7 +3189,7 @@ const handleSendMessage = async ({ images = [], mode = 'follow_up' } = {}) => {
     if (modelSpec) {
       const thread = threads.value.find((item) => item.id === threadId)
       if (thread) {
-        thread.metadata = { ...(thread.metadata || {}), model_spec: modelSpec }
+        thread.agent.model = modelSpec
         delete selectedModelByThread[threadId]
       }
       void chatThreadsStore
@@ -3232,7 +3197,7 @@ const handleSendMessage = async ({ images = [], mode = 'follow_up' } = {}) => {
         .catch(() => {})
     }
     // 首个 Input 持久化后再进入新路由，新实例才能恢复已接收的工作。
-    if (createdFromDraft) emit('thread-change', threadId)
+    if (props.isNewSession) emit('thread-change', threadId)
     if (!runId) {
       for (const msg of threadState.ongoingRunGroup.optimisticMessages[acceptedInputId] || []) {
         if (msg.type === 'human') msg.delivery_status = 'queued'
@@ -3261,7 +3226,12 @@ const handleSendMessage = async ({ images = [], mode = 'follow_up' } = {}) => {
       })
     }
   } catch (error) {
-    if (createdFromDraft) emit('thread-change', threadId)
+    if (error.status >= 400 && error.status < 500 && error.status !== 429) delete pendingSends.value[threadId]
+    if (messageAccepted && props.isNewSession) emit('thread-change', threadId)
+    if (!messageAccepted && !pendingSends.value[threadId] && currentChatId.value === threadId) {
+      userInput.value = [text, userInput.value].filter(Boolean).join('\n')
+      agentInputAreaRef.value?.restoreImages?.(images)
+    }
     threadState.queuedInputs = threadState.queuedInputs.filter(
       (input) => ![clientKey, acceptedInputId].includes(input.input_id)
     )
@@ -3271,15 +3241,9 @@ const handleSendMessage = async ({ images = [], mode = 'follow_up' } = {}) => {
       threadState.pendingInputId = null
       resetOngoingRunGroup(threadId)
     }
-    rollbackAttachments(threadId, previousAttachments)
     if (isRunInterruptedConflict(error)) {
       threadState.isStreaming = false
       threadState.activeRunSteerable = false
-      if (currentChatId.value === threadId) {
-        const currentDraft = userInput.value
-        userInput.value = [text, currentDraft].filter(Boolean).join('\n')
-        agentInputAreaRef.value?.restoreImages?.(images)
-      }
       try {
         await fetchAgentState(currentAgentId.value, threadId, { required: true })
       } catch {
@@ -3386,10 +3350,10 @@ const handleApprovalWithStream = async (answer) => {
     const turnId = threadState.currentTurnId
     if (!turnId) throw new Error('当前线程没有等待中的 Turn')
     const turn = await agentApi.getThreadTurn(threadId, turnId)
-    const waitpoint = turn.waitpoint
+    const waitpoint = turn.yuxi.waitpoint
     if (
-      turn.status !== 'waiting' ||
-      turn.current_run_id !== interruptedRunId ||
+      turn.status !== 'requires_action' ||
+      turn.yuxi.current_run_id !== interruptedRunId ||
       !waitpoint?.id ||
       waitpoint.run_id !== interruptedRunId
     ) {
@@ -3472,7 +3436,7 @@ const handleQuestionCancel = async () => {
   threadState.approvalSubmitting = true
   try {
     const thread = await agentApi.getPublicThread(threadId)
-    const turnId = thread.current_turn?.turn_id
+    const turnId = thread.yuxi.current_turn?.id
     if (!turnId) throw new Error('当前线程没有等待中的 Turn')
     await agentApi.cancelThreadTurn(
       threadId,
@@ -3500,7 +3464,7 @@ const buildExportPayload = () => {
   }
 
   const payload = {
-    chatTitle: currentThread.value?.title || '新对话',
+    chatTitle: currentThread.value?.yuxi.title || '新对话',
     agentName: currentAgentName.value || currentAgent.value?.name || '智能助手',
     agentDescription: agentDescription || currentAgent.value?.description || '',
     messages: runGroups.value ? JSON.parse(JSON.stringify(runGroups.value)) : [],
@@ -3802,7 +3766,7 @@ watch(currentChatId, (threadId, oldThreadId) => {
   if (!threadId) {
     ensureActiveThread.reset()
     selectedProjectId.value = props.initialProjectId || AUTO_PROJECT_ID
-    threadCreationRequestId.value = ''
+    threadCreationRequest.value = null
   }
   if (threadId) {
     restorePendingInterruptForThread(threadId)

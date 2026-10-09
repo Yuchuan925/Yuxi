@@ -46,7 +46,7 @@ async def test_state_view_reads_postgres_snapshot_and_rejects_other_users(test_c
                 },
                 headers={**admin_headers, "Idempotency-Key": str(uuid.uuid4())},
             )
-            assert created_thread.status_code == 200, created_thread.text
+            assert created_thread.status_code == 201, created_thread.text
             thread_id = created_thread.json()["id"]
             url = f"/api/v1/agents/sessions/{thread_id}/state"
             empty = await test_client.get(url, headers=admin_headers)
@@ -73,12 +73,12 @@ async def test_state_view_reads_postgres_snapshot_and_rejects_other_users(test_c
             graph.add_edge("done", END)
             await graph.compile(checkpointer=saver).ainvoke(payload, {"configurable": {"thread_id": thread_id}})
 
-            response = await test_client.get(url, params={"include_messages": "true"}, headers=admin_headers)
+            response = await test_client.get(url, headers=admin_headers)
             assert response.status_code == 200, response.text
             state = response.json()["agent_state"]
             assert [member["session_id"] for member in state.pop("cooperation")["sessions"]] == [thread_id]
             assert state == {key: payload[key] for key in ("todos", "artifacts", "token_usage")}
-            assert response.json()["items"] == []  # 可见消息来自持久Message，不能从checkpoint伪造。
+            assert "items" not in response.json()  # 可见消息来自持久Message，不能从checkpoint伪造。
             assert "interrupt" not in response.json()
             assert (await test_client.get(url)).status_code == 401
             assert (await test_client.get(url, headers=standard_user["headers"])).status_code == 404

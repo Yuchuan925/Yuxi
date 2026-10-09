@@ -5,14 +5,16 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy import select
+from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.infrastructure.observability.logging import logger
 from yuxi.infrastructure.postgres.manager import pg_manager
+from yuxi.modules.agents.models.attachments import AgentAttachment
 from yuxi.modules.agents.models.inputs import AgentInput
 from yuxi.modules.agents.models.runs import AgentRun
 from yuxi.modules.agents.models.sessions import Session
+from yuxi.modules.agents.repositories.attachments import AttachmentRepository
 from yuxi.modules.agents.repositories.input import AgentInputRepository
 from yuxi.modules.agents.repositories.runs import AgentRunRepository
 from yuxi.modules.agents.repositories.sessions import SessionRepository
@@ -51,7 +53,7 @@ async def claim_next_input(
     head = await input_repo.get_queue_head(
         thread_id=agent_session.thread_id, uid=agent_session.uid, app_id=agent_session.app_id
     )
-    if head is None:
+    if head is None or await AttachmentRepository(db).has_unready(head.id):
         return None
     if binding is None:
         binding = await resolve_session_workdir_binding(agent_session=agent_session, uid=agent_session.uid, db=db)
@@ -95,19 +97,27 @@ async def dispatch_next_input(*, uid: str, agent_slug: str, thread_id: str) -> s
     """自管事务领取可执行队头；提交并物化目录后才投递。"""
     async with pg_manager.get_async_session_context() as db:
         agent_session = await SessionRepository(db).lock_session_by_thread_id(thread_id)
-        if (
-            agent_session is None
-            or agent_session.uid != uid
-            or agent_session.agent_id != agent_slug
-            or agent_session.status != "active"
-        ):
+        if agent_session is None or agent_session.uid != uid or agent_session.agent_id != agent_slug:
             return None
-        dispatch = await claim_next_input(db=db, agent_session=agent_session)
+        from yuxi.modules.agents.services.attachments import prepare_input_attachments
 
-    if dispatch is None:
-        return None
-    await deliver(dispatch)
-    return dispatch.run_id
+        # 归档只停止执行；已接收文件仍要完成提交，领取门禁由 claim_next_input 执行。
+        binding = await resolve_session_workdir_binding(agent_session=agent_session, uid=uid, db=db)
+        for input_item in await AttachmentRepository(db).list_preparing_inputs(thread_id, uid, agent_session.app_id):
+            if not await prepare_input_attachments(
+                db=db, agent_session=agent_session, input_item=input_item, binding=binding
+            ):
+                # 保留准备错误和来源；普通队列仍受优先队头约束。
+                continue
+        dispatch = await claim_next_input(db=db, agent_session=agent_session, binding=binding)
+
+    if dispatch is not None:
+        await deliver(dispatch)
+    from yuxi.modules.agents.services.attachments import cleanup_prepared_sources
+
+    async with pg_manager.get_async_session_context() as db:
+        await cleanup_prepared_sources(db=db, thread_id=thread_id)
+    return dispatch.run_id if dispatch else None
 
 
 async def deliver(dispatch: Dispatch) -> None:
@@ -127,7 +137,13 @@ async def recover_pending_dispatches() -> None:
             (
                 await db.execute(
                     select(AgentInput.uid, AgentInput.agent_slug, AgentInput.thread_id)
-                    .where(AgentInput.status == "pending")
+                    .where(
+                        (AgentInput.status == "pending")
+                        | exists().where(
+                            AgentAttachment.input_id == AgentInput.id,
+                            (AgentAttachment.status == "preparing") | AgentAttachment.object_name.is_not(None),
+                        )
+                    )
                     .distinct()
                 )
             ).all()

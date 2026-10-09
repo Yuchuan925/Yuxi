@@ -175,8 +175,8 @@ async def test_bound_skill_is_preloaded_without_explicit_selection(
             headers={**e2e_headers, "Idempotency-Key": f"skill-edit-thread-{uuid.uuid4()}"},
             json={"agent_id": agent_slug, "title": make_test_session_title("shared-skill-edit")},
         )
-        assert thread.status_code == 200, thread.text
-        thread_id = str(thread.json()["thread_id"])
+        assert thread.status_code == 201, thread.text
+        thread_id = str(thread.json()["id"])
         run = await e2e_client.post(
             f"/api/v1/agents/sessions/{thread_id}/events",
             headers={**e2e_headers, "Idempotency-Key": f"skill-edit-input-{uuid.uuid4()}"},
@@ -240,7 +240,7 @@ async def test_bound_skill_is_preloaded_without_explicit_selection(
         )
         assert turn.status_code == 200, turn.text
         assert turn.json()["status"] == "completed", turn.text
-        assert turn.json()["result_run_id"] == run_id, turn.text
+        assert turn.json()["yuxi"]["result_run_id"] == run_id, turn.text
         if edit_during_run:
             detail = await e2e_client.get(f"/api/system/skills/{slug}", headers=e2e_headers)
             assert (get_skill_data_dir() / detail.json()["data"]["dir_path"] / "SKILL.md").read_text() == changed

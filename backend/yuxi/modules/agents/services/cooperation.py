@@ -24,10 +24,10 @@ from yuxi.modules.agents.repositories.sessions import SessionRepository
 from yuxi.modules.agents.repositories.turn import AgentTurnRepository
 from yuxi.modules.agents.runtime.agent_backends import get_agent_backend
 from yuxi.modules.agents.services.directory import list_public_agents
-from yuxi.modules.agents.services.input_config import resolve_agent_run_config
+from yuxi.modules.agents.services.input_config import resolve_agent_context_snapshot
 from yuxi.modules.agents.services.input_messages import build_chat_input_message
 from yuxi.modules.agents.services.inputs import accept_locked
-from yuxi.modules.agents.services.scheduler import Dispatch, deliver
+from yuxi.modules.agents.services.scheduler import Dispatch, deliver, dispatch_next_input
 from yuxi.modules.agents.services.scope import ActorScope
 from yuxi.modules.identity.models import User
 from yuxi.modules.workspace.repositories.projects import ProjectRepository
@@ -75,18 +75,12 @@ class SessionCooperationService:
         if child is None:
             if await self.repo.resolve(caller, path) is not None:
                 raise ValueError("同父 Session 下名称已存在")
+            run_snapshot = run.input_payload["context_snapshot"]
             if agent_id is None:
-                snapshot = (
-                    self.config_snapshot
-                    or caller.config_snapshot
-                    or run.input_payload.get("context_snapshot")
-                    or (agent.config_json or {}).get("context", {})
-                )
-                model = run.input_payload["model_spec"]
+                snapshot = self.config_snapshot if self.config_snapshot is not None else run_snapshot
             else:
-                snapshot = (agent.config_json or {}).get("context") or {}
-                model, _ = await resolve_agent_run_config(
-                    None, run.input_payload["tool_approval_mode"], agent, get_agent_backend(agent.backend_id), self.db
+                snapshot = await resolve_agent_context_snapshot(
+                    None, run_snapshot["tool_approval_mode"], agent, get_agent_backend(agent.backend_id), self.db
                 )
             child = Session(
                 thread_id=child_id,
@@ -102,10 +96,7 @@ class SessionCooperationService:
                 title=name,
                 status="active",
                 config_snapshot=copy.deepcopy(snapshot),
-                extra_metadata={
-                    "model_spec": model,
-                    "tool_approval_mode": run.input_payload["tool_approval_mode"],
-                },
+                extra_metadata={},
             )
             self.db.add(child)
             await self.db.flush()
@@ -283,17 +274,8 @@ class SessionCooperationService:
                 "run_id": existing.run_id,
                 "status": "started" if existing.turn_id else "queued",
             }
-        snapshot = target.config_snapshot
-        metadata = target.extra_metadata or {}
-        model = metadata.get("model_spec")
-        approval = metadata.get("tool_approval_mode")
-        frozen = {
-            "model_spec": model,
-            "tool_approval_mode": approval,
-            "context_snapshot": snapshot,
-            "runtime": {"tool_call_id": call_id},
-        }
-        receipt, dispatch = await accept_locked(
+        frozen = {"runtime": {"tool_call_id": call_id}}
+        receipt = await accept_locked(
             db=self.db,
             scope=ActorScope(uid=run.uid, app_id=run.app_id, api_key_id=run.api_key_id),
             agent_session=target,
@@ -302,8 +284,8 @@ class SessionCooperationService:
             intent_hash=intent,
             mode="follow_up",
             messages=[build_chat_input_message(description)],
-            model_spec=model,
-            tool_approval_mode=approval,
+            model_spec=None,
+            tool_approval_mode=None,
             attachment_file_ids=[],
             source="cooperation",
             channel="internal",
@@ -312,8 +294,8 @@ class SessionCooperationService:
             frozen_payload=frozen,
         )
         await self.db.commit()
-        if dispatch:
-            await deliver(dispatch)
+        await dispatch_next_input(uid=run.uid, agent_slug=target.agent_id, thread_id=target.thread_id)
+        await self.db.refresh(receipt)
         return {
             "session_id": target.thread_id,
             "input_id": receipt.input_id,

@@ -40,15 +40,16 @@ export const agentApi = {
    */
   getAgentDetail: (agentId) => apiGet(`/api/agent/${agentId}`),
 
-  /**
-   * 获取智能体历史消息
-   * @param {string} agentId - 智能体ID
-   * @param {string} threadId - 会话ID
-   * @returns {Promise} - 历史消息
-   */
-  // 线程阅读快照：消息绑定 Turn/Run，结果由 Turn 的 result_run_id 指定。
-  getAgentHistory: (threadId, options = {}) =>
-    apiGet(`/api/v1/agents/sessions/${threadId}/history`, options),
+  /** 直接读取公开内容页，轮次恢复可限定 Turn。 */
+  getSessionItems: (threadId, { after, turnId, limit = 100, order = 'desc' } = {}) => {
+    const params = new URLSearchParams({ limit: String(limit), order })
+    if (after) params.set('after', after)
+    const path = turnId ? `/turns/${encodeURIComponent(turnId)}/items` : '/items'
+    return apiGet(`/api/v1/agents/sessions/${threadId}${path}?${params}`)
+  },
+
+  getSessionReceipt: (threadId, key) =>
+    apiGet(`/api/v1/agents/sessions/${threadId}/receipt?${new URLSearchParams({ idempotency_key: key })}`),
 
   /**
    * 获取会话内持久化的 Model/Tool 生命周期审计
@@ -70,9 +71,9 @@ export const agentApi = {
       { headers: { 'Idempotency-Key': idempotencyKey } }
     ),
 
-  getAgentState: (threadId, { includeMessages = false, includeRelations = true } = {}) =>
+  getAgentState: (threadId, { includeRelations = true } = {}) =>
     apiGet(
-      `/api/v1/agents/sessions/${threadId}/state?include_messages=${includeMessages}&include_relations=${includeRelations}`
+      `/api/v1/agents/sessions/${threadId}/state?include_relations=${includeRelations}`
     ),
 
   getCooperationSummary: (threadId) => apiGet(`/api/v1/agents/sessions/${threadId}/cooperation`),
@@ -100,10 +101,10 @@ export const agentApi = {
       ...(data.query ? [{ type: 'input_text', text: data.query }] : []),
       ...(data.image_content || []).map((image) => ({
         type: 'input_image',
-        image_url: image.startsWith('data:image/') ? image : `data:image/jpeg;base64,${image}`
+        image_url: image
       }))
     ]
-    return apiPost(
+    return postSessionEvents(
       `/api/v1/agents/sessions/${threadId}/events`,
       {
         events: [
@@ -114,7 +115,7 @@ export const agentApi = {
               mode: data.mode,
               ...(data.mode !== 'steer'
                 ? {
-                    model_spec: data.model_spec,
+                    model: data.model_spec,
                     tool_approval_mode: data.tool_approval_mode
                   }
                 : {}),
@@ -123,7 +124,7 @@ export const agentApi = {
           }
         ]
       },
-      { headers: { 'Idempotency-Key': data.idempotency_key } }
+      data.idempotency_key
     )
   },
 
@@ -208,6 +209,20 @@ export const agentApi = {
     apiGet(`/api/v1/agents/sessions/${threadId}/runs/${runId}`, options)
 }
 
+/** 提交响应丢失时读取同一键的持久回执，未确认则交给原命令重试。 */
+async function postSessionEvents(path, body, key) {
+  try {
+    return await apiPost(path, body, { headers: { 'Idempotency-Key': key } })
+  } catch (error) {
+    if (error.status >= 400 && error.status < 500 && error.status !== 429) throw error
+    try {
+      return await apiGet(`${path.slice(0, -'/events'.length)}/receipt?${new URLSearchParams({ idempotency_key: key })}`)
+    } catch {
+      throw error
+    }
+  }
+}
+
 // =============================================================================
 // === 多模态图片支持分组 ===
 // =============================================================================
@@ -223,7 +238,7 @@ export const multimodalApi = {
     formData.append('file', file)
 
     return apiRequest(
-      '/api/v1/agents/images',
+      '/api/agent/images',
       {
         method: 'POST',
         body: formData
@@ -242,14 +257,15 @@ export const threadApi = {
    * 获取对话线程列表
    * @param {string | null | undefined} agentId - 智能体ID，可选；不传时返回全部智能体对话
    * @param {number} limit - 返回数量限制，默认100
-   * @param {number} offset - 偏移量，默认0
-   * @returns {Promise} - 对话线程列表
+   * @param {string | null} after - 上一页的 last_id
+   * @returns {Promise} - Session 资源分页
    */
-  getThreads: (agentId = null, limit = 100, offset = 0) => {
+  getThreads: (agentId = null, limit = 100, after = null, { isPinned = null } = {}) => {
     const params = new URLSearchParams({
-      limit: String(limit),
-      offset: String(offset)
+      limit: String(limit)
     })
+    if (after) params.set('after', after)
+    if (isPinned !== null) params.set('is_pinned', String(isPinned))
     if (agentId) {
       params.set('agent_id', agentId)
     }
@@ -286,24 +302,19 @@ export const threadApi = {
    * @returns {Promise} - 创建结果
    */
   createThread: async (agentId, title, metadata, { requestId, projectId } = {}) => {
-    const thread = await apiPost(
+    const session = await apiPost(
       '/api/v1/agents/sessions',
       {
         agent_id: agentId,
-        title: Array.from(title || '新的对话').slice(0, 255).join(''),
+        title: Array.from(title || '新的对话')
+          .slice(0, 255)
+          .join(''),
         tool_approval_mode: metadata?.tool_approval_mode,
         ...(projectId ? { project_id: projectId } : {})
       },
       { headers: { 'Idempotency-Key': requestId } }
     )
-    return {
-      id: thread.id,
-      agent_id: agentId,
-      title: thread.title,
-      project_id: thread.project_id,
-      metadata: metadata || {},
-      thread_status: 'active'
-    }
+    return session
   },
 
   /**
@@ -316,12 +327,10 @@ export const threadApi = {
    */
   updateThread: (threadId, title, is_pinned, toolApprovalMode, modelSpec) =>
     apiRequest(`/api/v1/agents/sessions/${threadId}`, {
-      method: 'PATCH',
+      method: 'POST',
       body: JSON.stringify({
-        title,
-        is_pinned,
-        tool_approval_mode: toolApprovalMode,
-        model_spec: modelSpec
+        yuxi: { title, is_pinned, tool_approval_mode: toolApprovalMode },
+        ...(modelSpec ? { agent: { model: modelSpec } } : {})
       })
     }),
 
@@ -394,35 +403,19 @@ export const threadApi = {
       destination_path: destinationPath
     }),
 
-  /**
-   * 上传临时附件
-   * @param {File} file
-   * @returns {Promise}
-   */
-  uploadTmpAttachment: (file) => {
-    const formData = new FormData()
-    formData.append('file', file)
-    return apiRequest('/api/v1/agents/attachments/tmp', {
-      method: 'POST',
-      body: formData
-    })
+  /** 上传为独立 draft，发送时提交返回的文件 ID。 */
+  uploadDraftFile: (file) => {
+    const body = new FormData()
+    body.append('file', file)
+    return apiRequest('/api/v1/agents/files', { method: 'POST', body })
   },
 
-  /**
-   * 解析临时附件
-   * @param {Object} payload
-   * @returns {Promise}
-   */
-  parseTmpAttachment: (payload) => apiPost('/api/v1/agents/attachments/tmp/parse', payload),
+  getDraftFile: (fileId) => apiGet(`/api/agent/files/${fileId}`),
 
-  /**
-   * 确认添加临时附件到线程
-   * @param {string} threadId
-   * @param {Array} attachments
-   * @returns {Promise}
-   */
-  confirmTmpThreadAttachments: (threadId, attachments) =>
-    apiPost(`/api/v1/agents/sessions/${threadId}/attachments/confirm`, { attachments }),
+  parseDraftFile: (fileId, parseMethod) =>
+    apiPost(`/api/agent/files/${fileId}/parse`, { parse_method: parseMethod }),
+
+  deleteDraftFile: (fileId) => apiDelete(`/api/v1/agents/files/${fileId}`),
 
   /**
    * 删除附件

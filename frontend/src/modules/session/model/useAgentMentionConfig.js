@@ -35,7 +35,12 @@ const normalizeMentionResource = (option, kind) => {
   }
 }
 
-export function useAgentMentionConfig({ currentThreadAttachments, configurableItems, agentConfig }) {
+export function useAgentMentionConfig({
+  currentThreadAttachments,
+  configurableItems,
+  agentConfig,
+  agents
+}) {
   const mentionConfig = computed(() => {
     const files = []
     const seenPaths = new Set()
@@ -77,7 +82,11 @@ export function useAgentMentionConfig({ currentThreadAttachments, configurableIt
         .filter(Boolean)
     })
 
-    return { files, ...resources }
+    return {
+      files,
+      ...resources,
+      agents: (agents?.value || []).filter((agent) => agent.can_run && agent.agent_id)
+    }
   })
 
   return {

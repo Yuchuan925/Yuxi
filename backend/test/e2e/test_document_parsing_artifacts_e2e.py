@@ -19,6 +19,7 @@ from test.live_api_cleanup import make_test_session_title, remove_e2e_thread_sto
 from yuxi.bootstrap.models import load_models
 from yuxi.infrastructure.minio import get_minio_client
 from yuxi.infrastructure.postgres.manager import pg_manager
+from yuxi.modules.agents.models.attachments import AgentAttachment
 from yuxi.modules.agents.repositories.sessions import SessionRepository
 from yuxi.modules.knowledge.repositories.files import KnowledgeFileRepository
 from yuxi.modules.workspace.filesystem import Workspace
@@ -39,7 +40,7 @@ def _result_archive() -> tuple[bytes, bytes]:
     return archive.getvalue(), image.getvalue()
 
 
-async def test_chat_parse_confirm_and_delete_preserve_complete_local_directory(
+async def test_private_draft_parse_send_and_delete_preserve_complete_local_directory(
     e2e_client,
     e2e_headers,
     e2e_agent_context,
@@ -85,38 +86,57 @@ async def test_chat_parse_confirm_and_delete_preserve_complete_local_directory(
             json={"agent_id": e2e_agent_context["agent_slug"], "title": make_test_session_title("parser-folder")},
             headers={**e2e_headers, "Idempotency-Key": uuid4().hex},
         )
-        assert created.status_code == 200, created.text
-        thread_id = created.json()["thread_id"]
+        assert created.status_code == 201, created.text
+        thread_id = created.json()["id"]
         source = io.BytesIO()
         writer = PdfWriter()
         writer.add_blank_page(width=100, height=100)
         writer.write(source)
         uploaded_response = await e2e_client.post(
-            "/api/v1/agents/attachments/tmp",
+            "/api/v1/agents/files",
             files={"file": ("source.pdf", source.getvalue(), "application/pdf")},
             headers=e2e_headers,
         )
-        assert uploaded_response.status_code == 200, uploaded_response.text
+        assert uploaded_response.status_code == 201, uploaded_response.text
         uploaded = uploaded_response.json()
         parsed = await e2e_client.post(
-            "/api/v1/agents/attachments/tmp/parse",
-            json={"object_name": uploaded["object_name"], "parse_method": "mineru_ocr"},
+            f"/api/agent/files/{uploaded['id']}/parse",
+            json={"parse_method": "mineru_ocr"},
             headers=e2e_headers,
         )
         assert parsed.status_code == 200, parsed.text
-        parsed_name = parsed.json()["parsed_object_name"]
+        assert parsed.json()["status"] == "parsed"
+        pg_manager.initialize()
+        async with pg_manager.get_async_session_context() as db:
+            draft = await db.get(AgentAttachment, uploaded["id"])
+            assert draft.uid == str(uid) and draft.status == "draft" and draft.input_id is None
+            parsed_name = draft.parsed_source
         temporary_directory = PurePosixPath(parsed_name).parent
         workspace = Workspace(uid)
         assert workspace.read_authorized_file(f"/{temporary_directory}/images/images/chart.png", 1024) == image
         assert await client.alist_object_metadata(client.KB_BUCKETS["documents"], parsed_name) == []
         assert await client.alist_object_metadata(client.KB_BUCKETS["images"], "unknown/") == image_objects_before
-        confirmed = await e2e_client.post(
-            f"/api/v1/agents/sessions/{thread_id}/attachments/confirm",
-            json={"attachments": [{"object_name": uploaded["object_name"], "parsed_object_name": parsed_name}]},
-            headers=e2e_headers,
+        pg_manager.initialize()
+        async with pg_manager.get_async_session_context() as db:
+            agent_session = await SessionRepository(db).get_session_by_thread_id(thread_id)
+            agent_session.queue_paused = True
+        accepted = await e2e_client.post(
+            f"/api/v1/agents/sessions/{thread_id}/events",
+            json={
+                "events": [
+                    {
+                        "type": "agent.session.input.message",
+                        "input": [{"role": "user", "content": [{"type": "input_text", "text": "保留完整文档资源"}]}],
+                        "yuxi": {"mode": "follow_up", "attachment_file_ids": [uploaded["id"]]},
+                    }
+                ]
+            },
+            headers={**e2e_headers, "Idempotency-Key": uuid4().hex},
         )
-        assert confirmed.status_code == 200, confirmed.text
-        [attachment] = confirmed.json()["attachments"]
+        assert accepted.status_code == 202, accepted.text
+        [attachment] = (
+            await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/attachments", headers=e2e_headers)
+        ).json()["attachments"]
         markdown_response = await e2e_client.get(attachment["artifact_url"], headers=e2e_headers)
         assert markdown_response.status_code == 200, markdown_response.text
         assert "![chart](images/images/chart.png)" in markdown_response.text
@@ -126,14 +146,19 @@ async def test_chat_parse_confirm_and_delete_preserve_complete_local_directory(
         assert image_response.content == image
         anonymous = await e2e_client.get(image_url)
         assert anonymous.status_code == 401
-        with pytest.raises(FileNotFoundError):
-            workspace.read_authorized_file("/" + parsed_name, 1024)
+        assert (await e2e_client.get(f"/api/v1/agents/files/{uploaded['id']}", headers=e2e_headers)).status_code == 409
         pg_manager.initialize()
         async with pg_manager.get_async_session_context() as db:
-            repository = SessionRepository(db)
-            agent_session = await repository.get_session_by_thread_id(thread_id)
-            [stored] = await repository.get_attachments(agent_session.id)
-            assert stored["parsed_directory"] == str(PurePosixPath(attachment["path"]).parent)
+            stored = await db.get(AgentAttachment, uploaded["id"])
+            assert stored.status == "ready" and stored.input_id == accepted.json()["input_id"]
+            assert stored.path == attachment["path"]
+            assert stored.object_name is None and stored.parsed_source is None
+        cancelled = await e2e_client.post(
+            f"/api/v1/agents/sessions/{thread_id}/events",
+            headers={**e2e_headers, "Idempotency-Key": uuid4().hex},
+            json={"events": [{"type": "yuxi.session.input.cancel_input", "input_id": accepted.json()["input_id"]}]},
+        )
+        assert cancelled.status_code == 202, cancelled.text
         deleted = await e2e_client.delete(
             f"/api/v1/agents/sessions/{thread_id}/attachments/{attachment['file_id']}",
             headers=e2e_headers,
@@ -142,9 +167,7 @@ async def test_chat_parse_confirm_and_delete_preserve_complete_local_directory(
         assert (await e2e_client.get(image_url, headers=e2e_headers)).status_code == 404
         assert (await e2e_client.get(attachment["artifact_url"], headers=e2e_headers)).status_code == 404
         async with pg_manager.get_async_session_context() as db:
-            repository = SessionRepository(db)
-            agent_session = await repository.get_session_by_thread_id(thread_id)
-            assert await repository.get_attachments(agent_session.id) == []
+            assert await db.get(AgentAttachment, uploaded["id"]) is None
         attachment = None
     finally:
         restored = await e2e_client.put(
@@ -158,7 +181,7 @@ async def test_chat_parse_confirm_and_delete_preserve_complete_local_directory(
                 f"/api/v1/agents/sessions/{thread_id}/attachments/{attachment['file_id']}", headers=e2e_headers
             )
         if uploaded:
-            prefix = str(PurePosixPath(uploaded["object_name"]).parents[1])
+            prefix = f"tmp/chat_attachments/{uid}/{uploaded['id']}"
             await client.adelete_objects_by_prefix(client.KB_BUCKETS["documents"], prefix + "/")
             try:
                 Workspace(uid).delete_authorized_path("/" + prefix, root="/")

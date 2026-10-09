@@ -23,7 +23,6 @@ from yuxi.modules.agents.runtime.middlewares.token_usage import TOKEN_USAGE_CONT
 from yuxi.modules.agents.runtime.sandbox import ProvisionerSandboxBackend, get_sandbox_provider
 from yuxi.modules.agents.runtime.sandbox.backend import create_agent_composite_backend
 from yuxi.modules.agents.runtime.sandbox.paths import runtime_workdir_path
-from yuxi.modules.agents.services.input_config import resolve_agent_run_model_spec
 from yuxi.modules.extensions.skills.projection import get_user_skills_root_dir
 from yuxi.modules.identity.models import User
 from yuxi.modules.workspace.services.bindings import ensure_session_workdir_available
@@ -64,13 +63,9 @@ async def compress_thread_context(
     context = agent.context_schema()
     configured = agent_session.config_snapshot
     if configured is None:
-        configured = (agent_item.config_json or {}).get("context") or {}
+        raise ValueError("Session 缺少配置快照")
     context.update_config(configured)
-    model_spec = await resolve_agent_run_model_spec(
-        (agent_session.extra_metadata or {}).get("model_spec"),
-        context.model,
-        db,
-    )
+    model_spec = context.model
     workdir_path = await ensure_session_workdir_available(
         agent_session=agent_session,
         uid=uid,

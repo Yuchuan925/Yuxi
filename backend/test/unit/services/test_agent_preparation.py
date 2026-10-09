@@ -194,11 +194,19 @@ def test_limits_captured_from_context(field, expected):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("run_type", ["chat", "resume"])
 @pytest.mark.parametrize("empty_config", [False, True])
-@pytest.mark.parametrize("context_snapshot", [None, {}, {"system_prompt": "frozen"}])
+@pytest.mark.parametrize(
+    "context_snapshot",
+    [
+        None,
+        {},
+        {"model": "chosen", "tool_approval_mode": "always_trust"},
+        {"model": "chosen", "tool_approval_mode": "always_trust", "system_prompt": "frozen"},
+    ],
+)
 async def test_manifest_uses_prepared_context_and_persisted_overrides(
     monkeypatch, run_type, empty_config, context_snapshot
 ):
-    """配置快照、默认值、工作区提示词与 Skill 摘要来自同一执行对象。"""
+    """完整快照优先于已变化的 Agent 配置，摘要来自真实执行对象。"""
     import hashlib
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
@@ -258,14 +266,20 @@ async def test_manifest_uses_prepared_context_and_persisted_overrides(
         runtime_scope_id="root",
         thread_id="thread",
         input_payload={
-            "model_spec": "chosen",
-            "tool_approval_mode": "always_trust",
+            "context_snapshot": context_snapshot,
             "runtime": {"parent_thread_id": "parent"},
         },
     )
     if context_snapshot is not None:
         run.input_payload["context_snapshot"] = context_snapshot
     binding = SimpleNamespace(workdir_path="projects/project")
+    if context_snapshot is None or not context_snapshot:
+        with pytest.raises(ValueError, match="Run 缺少完整配置快照"):
+            await service.prepare_run_execution(
+                run=run, user=SimpleNamespace(uid="user"), db=object(), workdir_binding=binding, worker_id="owner"
+            )
+        assert not seen
+        return
     result = await service.prepare_run_execution(
         run=run, user=SimpleNamespace(uid="user"), db=object(), workdir_binding=binding, worker_id="owner"
     )

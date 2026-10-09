@@ -96,17 +96,17 @@ async def test_private_agent_key_run_uses_end_user_workspace_and_app_scope(e2e_c
         body = {
             "agent_id": slug,
             "title": make_test_session_title("lifecycle-key-worker"),
-            "model_spec": MODEL,
+            "agent": {"model": MODEL},
             "input": [_message(OUTPUT)],
         }
         accepted = await e2e_client.post("/api/v1/agents/sessions", headers=public_headers, json=body)
-        assert accepted.status_code == 200, accepted.text
+        assert accepted.status_code == 201, accepted.text
         assert accepted.headers["X-App-Id"] == app_id
-        receipt = accepted.json()
-        thread_id = receipt["thread_id"]
+        receipt = accepted.json()["yuxi"]["receipt"]
+        thread_id = receipt["session_id"]
         replay = await e2e_client.post("/api/v1/agents/sessions", headers=public_headers, json=body)
-        assert replay.status_code == 200, replay.text
-        assert replay.json()["thread_id"] == thread_id
+        assert replay.status_code == 201, replay.text
+        assert replay.json()["id"] == thread_id
 
         for headers in (
             {"Authorization": public_headers["Authorization"]},
@@ -121,8 +121,8 @@ async def test_private_agent_key_run_uses_end_user_workspace_and_app_scope(e2e_c
 
         completed = await _turn(e2e_client, public_headers, thread_id, receipt["turn_id"])
         assert completed["status"] == "completed", completed
-        assert completed["result_run_id"] == receipt["run_id"]
-        assert OUTPUT in output_text(completed["output"])
+        assert completed["yuxi"]["result_run_id"] == receipt["run_id"]
+        assert OUTPUT in output_text(completed["yuxi"]["output"])
         conn = await asyncpg.connect(postgres_dsn())
         try:
             persisted = await conn.fetchrow(

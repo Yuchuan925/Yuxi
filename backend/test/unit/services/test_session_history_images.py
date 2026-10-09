@@ -7,8 +7,8 @@ from datetime import datetime
 import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from yuxi.modules.agents.services.messages import get_thread_history
-from yuxi.modules.agents.services.scope import ActorScope
+from yuxi.modules.agents.repositories.public_items import PublicItemRepository
+from yuxi.modules.agents.services.public_items import serialize_public_items
 from yuxi.modules.agents.services.input_messages import build_chat_input_message
 from yuxi.modules.agents.models.runs import AgentRun
 from yuxi.modules.agents.models.turns import AgentTurn
@@ -78,8 +78,8 @@ async def session():
 
 
 async def _history(session) -> list[dict]:
-    view = await get_thread_history(thread_id="thread-images", scope=ActorScope(uid="user-1", app_id=None), db=session)
-    return view["items"]
+    rows = await PublicItemRepository(session).list_items(thread_id="thread-images", uid="user-1", app_id=None)
+    return [item for message, run, result_id in rows for item in serialize_public_items(message, run, result_id)]
 
 
 async def test_多图历史行的投影按顺序给出全部图片(session):

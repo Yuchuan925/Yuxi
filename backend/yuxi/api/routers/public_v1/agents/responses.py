@@ -1,16 +1,6 @@
-"""公开接口错误及长期 SSE 的文档说明。"""
+"""公开 Session 响应装配及 HTTP/OpenAPI 说明。"""
 
-from typing import Any
-
-from pydantic import BaseModel
-
-
-class PublicError(BaseModel):
-    """现有 FastAPI 错误结构。"""
-
-    detail: str | dict[str, Any] | list[dict[str, Any]]
-
-
+from yuxi.api.routers.public_v1.agents.schemas import PublicError
 
 PUBLIC_ERRORS = {
     401: {"model": PublicError, "description": "缺少有效 JWT 或 API Key。"},

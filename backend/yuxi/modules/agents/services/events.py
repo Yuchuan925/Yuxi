@@ -16,6 +16,7 @@ from yuxi.modules.agents.repositories.input_receipt import AgentInputReceiptRepo
 from yuxi.modules.agents.repositories.runs import TERMINAL_RUN_STATUSES, AgentRunRepository
 from yuxi.modules.agents.repositories.turn import AgentTurnRepository
 from yuxi.modules.agents.services.openai_events import OpenAIEventAdapter
+from yuxi.modules.agents.services.public_resources import turn_core
 from yuxi.modules.agents.services.scope import ActorScope
 from yuxi.modules.agents.services.threads import require_thread
 from yuxi.modules.agents.services.transport import list_recent_run_stream_events, list_run_stream_events
@@ -84,18 +85,13 @@ async def stream_thread_events(
                 app_id=scope.app_id,
                 after_sequence=max(0, cursor.run_seq - 1),
             )
-            facts = [
-                (
-                    run,
-                    await AgentTurnRepository(db).get_for_scope(
-                        turn_id=run.turn_id,
-                        thread_id=thread_id,
-                        uid=scope.uid,
-                        app_id=scope.app_id,
-                    ),
-                )
-                for run in runs
-            ]
+            turn_ids = list({run.turn_id for run in runs})
+            repo = AgentTurnRepository(db)
+            turns = await repo.list_for_scope(
+                turn_ids=turn_ids, thread_id=thread_id, uid=scope.uid, app_id=scope.app_id
+            )
+            facts = [(run, turns.get(run.turn_id)) for run in runs]
+            start_times = await repo.get_start_times(turn_ids=turn_ids, uid=scope.uid, app_id=scope.app_id)
         emitted = False
         for receipt in receipts:
             cursor.receipt_seq = receipt.receive_seq
@@ -132,14 +128,17 @@ async def stream_thread_events(
             if cursor.run_phase == 1:
                 cursor.run_phase = 2
                 if run.resume_from_run_id is None:
-                    yield cursor.encode(), _turn_event(adapter, run, turn, "created", "queued")
+                    yield cursor.encode(), _turn_event(adapter, run, turn, "created", "queued", start_times[turn.id])
                     emitted = True
             if cursor.run_phase == 2:
                 if run.started_at is None and run.status not in TERMINAL_RUN_STATUSES:
                     break
                 cursor.run_phase = 3
                 if run.started_at is not None:
-                    yield cursor.encode(), _turn_event(adapter, run, turn, "in_progress", "in_progress")
+                    yield (
+                        cursor.encode(),
+                        _turn_event(adapter, run, turn, "in_progress", "in_progress", start_times[turn.id]),
+                    )
                     emitted = True
             if cursor.run_phase == 3:
                 try:
@@ -195,14 +194,20 @@ async def stream_thread_events(
                     cursor.run_phase = 7
                     yield (
                         cursor.encode(),
-                        adapter.extension(
-                            "turn.waiting", "waiting", waitpoint=turn.waitpoint, current_run_id=turn.current_run_id
-                        ),
+                        {
+                            **adapter.extension(
+                                "turn.waiting", "waiting", waitpoint=turn.waitpoint, current_run_id=turn.current_run_id
+                            ),
+                            "turn": turn_core(turn, run, started_at=start_times[turn.id]),
+                        },
                     )
                     emitted = True
                 elif turn.status in {"completed", "failed", "cancelled"}:
                     cursor.run_phase = 6
-                    yield cursor.encode(), _turn_event(adapter, run, turn, turn.status, turn.status)
+                    yield (
+                        cursor.encode(),
+                        _turn_event(adapter, run, turn, turn.status, turn.status, start_times[turn.id]),
+                    )
                     emitted = True
                 else:
                     break
@@ -222,34 +227,15 @@ async def stream_thread_events(
         await asyncio.sleep(0.2)
 
 
-def _turn_event(adapter: OpenAIEventAdapter, run, turn, name: str, status: str) -> dict:
+def _turn_event(adapter: OpenAIEventAdapter, run, turn, name: str, status: str, started_at) -> dict:
     """标准 Turn 字段使用官方类型，业务错误分类留在扩展中。"""
-
-    def timestamp(value):
-        """将 PostgreSQL UTC 时间投影为官方秒数。"""
-        return value.timestamp() if value else None
 
     return {
         "type": f"agent.session.turn.{name}",
         "event_id": hash_id("event_", f"{run.id}:turn:{name}", length=64),
         "session_id": run.thread_id,
         "turn_id": turn.id,
-        "turn": {
-            "id": turn.id,
-            "object": "agent.session.turn",
-            "session_id": run.thread_id,
-            "agent_id": run.agent_slug,
-            # 每个 Session 是独立主会话，官方 Turn 协议仍要求保留 nullable 字段。
-            "subagent_id": None,
-            "status": status,
-            "created_at": timestamp(turn.created_at),
-            "started_at": timestamp(run.started_at),
-            "completed_at": timestamp(turn.finished_at) if status in {"completed", "failed", "cancelled"} else None,
-            "error": {"code": "internal_error", "message": run.error_message or "执行失败"}
-            if status == "failed"
-            else None,
-            "usage": None,
-        },
+        "turn": turn_core(turn, run, started_at=started_at, status=status),
         "yuxi": {
             "run_id": run.id,
             "input_id": run.input_id,

@@ -20,48 +20,13 @@ from yuxi.modules.agents.repositories.tool_audit import ToolMessageAuditReposito
 from yuxi.modules.agents.repositories.turn import AgentTurnRepository
 from yuxi.modules.agents.services.runs import settle_checkpoint
 from yuxi.modules.agents.services.scope import ActorScope
-from yuxi.modules.agents.services.threads import get_thread_snapshot, require_thread
+from yuxi.modules.agents.services.threads import require_thread
 from yuxi.modules.agents.services.transport import enqueue_agent_run
 from yuxi.modules.models.utils import parse_assistant_message_body
 from yuxi.shared.datetime import format_utc_datetime, utc_now
 
 MESSAGE_AUDIT_LIMIT = 500
 AGENT_RUN_TRACE_LIMIT = 500
-
-
-async def get_thread_history(*, db: AsyncSession, scope: ActorScope, thread_id: str) -> dict:
-    """使用与实时相同的 item 投影恢复正文及可见工具过程。"""
-    from yuxi.modules.agents.repositories.public_items import PublicItemRepository
-    from yuxi.modules.agents.services.public_items import serialize_public_items
-
-    agent_session = await require_thread(db=db, scope=scope, thread_id=thread_id)
-    rows = await PublicItemRepository(db).list_items(thread_id=thread_id, uid=scope.uid, app_id=scope.app_id)
-    runs = await SessionRepository(db).list_agent_runs_for_history(agent_session.id)
-    return {
-        "thread": await get_thread_snapshot(db=db, scope=scope, thread_id=thread_id),
-        "runs": [
-            {
-                "run_id": run.id,
-                "turn_id": run.turn_id,
-                "run_type": run.run_type,
-                "created_by_run_id": run.created_by_run_id,
-                "resume_from_run_id": run.resume_from_run_id,
-                "timing": build_agent_run_timing(
-                    created_at=run.created_at,
-                    started_at=run.started_at,
-                    prepared_at=run.prepared_at,
-                    first_model_request_at=run.first_model_request_at,
-                    first_output_at=run.first_output_at,
-                    finished_at=run.finished_at,
-                ),
-                "status": run.status,
-                "error_type": run.error_type,
-                "error_message": run.error_message,
-            }
-            for run in runs
-        ],
-        "items": [item for message, run, result_id in rows for item in serialize_public_items(message, run, result_id)],
-    }
 
 
 async def get_thread_audits(*, db: AsyncSession, scope: ActorScope, thread_id: str) -> dict:

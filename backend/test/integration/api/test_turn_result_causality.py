@@ -28,12 +28,13 @@ async def test_turn_result_follows_only_its_bound_run(test_client, admin_headers
         json={"agent_id": agent_slug, "title": make_test_session_title("turn-result")},
         headers={**admin_headers, "Idempotency-Key": str(uuid.uuid4())},
     )
-    assert created.status_code == 200, created.text
-    thread_id = created.json()["thread_id"]
+    assert created.status_code == 201, created.text
+    thread_id = created.json()["id"]
     me = await test_client.get("/api/auth/me", headers=admin_headers)
     uid = str(me.json()["uid"])
     turn_ids = [str(uuid.uuid4()), str(uuid.uuid4())]
     run_ids = [str(uuid.uuid4()), str(uuid.uuid4())]
+    first_run_id = str(uuid.uuid4())
     conn = await asyncpg.connect(os.environ["POSTGRES_URL"].replace("+asyncpg", ""))
     load_models()
     engine = create_async_engine(os.environ["POSTGRES_URL"])
@@ -97,12 +98,27 @@ async def test_turn_result_follows_only_its_bound_run(test_client, admin_headers
                     run_id,
                 )
 
+        await conn.execute(
+            "INSERT INTO agent_runs "
+            "(id, thread_id, runtime_scope_id, agent_slug, uid, turn_id, status, run_type, source, channel, "
+            "input_payload, token_usage, origin_metadata, session_record_id, started_at) "
+            "VALUES ($1, $2, $2, $3, $4, $5, 'yielded', 'chat', 'public_api', 'api', "
+            "'{}'::jsonb, '{}'::jsonb, '{}'::jsonb, $6, '2026-10-08T00:00:00Z')",
+            first_run_id,
+            thread_id,
+            agent_slug,
+            uid,
+            turn_ids[1],
+            session_record_id,
+        )
+        await conn.execute("UPDATE agent_runs SET started_at='2026-10-09T00:00:00Z' WHERE id=$1", run_ids[1])
         url = f"/api/v1/agents/sessions/{thread_id}/turns/{turn_ids[1]}"
         result = await test_client.get(url, headers=admin_headers)
         assert result.status_code == 200, result.text
-        assert result.json()["result_run_id"] == run_ids[1]
-        assert result.json()["output"][0]["content"] == [{"type": "output_text", "text": "second output"}]
-        assert result.json()["output"][0]["phase"] == "final_answer"
+        assert result.json()["yuxi"]["result_run_id"] == run_ids[1]
+        assert result.json()["yuxi"]["output"][0]["content"] == [{"type": "output_text", "text": "second output"}]
+        assert result.json()["yuxi"]["output"][0]["phase"] == "final_answer"
+        assert result.json()["started_at"] == 1791417600
         assert (await test_client.get(url, headers=standard_user["headers"])).status_code == 404
 
         with pytest.raises(asyncpg.ForeignKeyViolationError):
@@ -128,7 +144,7 @@ async def test_turn_result_follows_only_its_bound_run(test_client, admin_headers
                 turn_ids,
             )
             await conn.execute("DELETE FROM messages WHERE run_id = ANY($1::text[])", run_ids)
-            await conn.execute("DELETE FROM agent_runs WHERE id = ANY($1::text[])", run_ids)
+            await conn.execute("DELETE FROM agent_runs WHERE id = ANY($1::text[])", [*run_ids, first_run_id])
             await conn.execute("DELETE FROM agent_turns WHERE id = ANY($1::text[])", turn_ids)
         await conn.close()
         await engine.dispose()

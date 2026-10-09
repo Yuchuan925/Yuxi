@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
+from copy import deepcopy
 from typing import Literal
 
 from fastapi import HTTPException
@@ -15,20 +16,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.modules.agents.models.inputs import AgentInputReceipt
 from yuxi.modules.agents.models.messages import Message
 from yuxi.modules.agents.models.sessions import Session
+from yuxi.modules.agents.repositories.attachments import AttachmentRepository
 from yuxi.modules.agents.repositories.definitions import AgentRepository
 from yuxi.modules.agents.repositories.input import AgentInputRepository
 from yuxi.modules.agents.repositories.input_receipt import AgentInputReceiptRepository
+from yuxi.modules.agents.repositories.runs import AgentRunRepository
 from yuxi.modules.agents.repositories.sessions import SessionRepository
 from yuxi.modules.agents.repositories.turn import AgentTurnRepository
 from yuxi.modules.agents.runtime.agent_backends import AgentBackendNotFoundError, get_agent_backend
+from yuxi.modules.agents.services.attachments import serialize_attachment, stage_input_attachments
 from yuxi.modules.agents.services.input_config import (
-    resolve_agent_run_config,
+    resolve_agent_context_snapshot,
     resolve_agent_run_model_spec,
     resolve_agent_run_tool_approval_mode,
 )
 from yuxi.modules.agents.services.input_messages import AgentRunInputMessage
 from yuxi.modules.agents.services.public_items import serialize_public_items
-from yuxi.modules.agents.services.scheduler import Dispatch, claim_next_input, deliver
+from yuxi.modules.agents.services.scheduler import dispatch_next_input
 from yuxi.modules.agents.services.scope import ActorScope
 from yuxi.modules.agents.services.threads import require_thread
 from yuxi.modules.identity.models import User
@@ -102,11 +106,12 @@ async def create_thread(
             require_input_replay(existing, "yuxi.session.create", intent_hash)
             return _accepted(existing)
         raise HTTPException(status_code=409, detail="Thread ID 已存在")
+    try:
+        backend = get_agent_backend(agent_item.backend_id)
+    except AgentBackendNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    config_snapshot = await resolve_agent_context_snapshot(model_spec, tool_approval_mode, agent_item, backend, db)
     thread_metadata = {"source": source, "channel": channel}
-    if model_spec is not None:
-        thread_metadata["model_spec"] = await resolve_agent_run_model_spec(model_spec, None, db)
-    if tool_approval_mode is not None:
-        thread_metadata["tool_approval_mode"] = resolve_agent_run_tool_approval_mode(tool_approval_mode, None)
     try:
         async with db.begin_nested():
             project = (
@@ -122,6 +127,7 @@ async def create_thread(
                 title=title,
                 thread_id=thread_id,
                 metadata=thread_metadata,
+                config_snapshot=config_snapshot,
                 project_id=project.id,
                 creation_request_id=hash_id("thread:", f"{scope.uid}:{scope.app_id}:{idempotency_key}", length=64),
                 app_id=scope.app_id,
@@ -138,7 +144,7 @@ async def create_thread(
         raise HTTPException(status_code=409, detail="Thread 创建冲突") from exc
     binding = await resolve_session_workdir_binding(agent_session=agent_session, uid=scope.uid, db=db, project=project)
     if input_messages:
-        receipt, dispatch = await accept_locked(
+        receipt = await accept_locked(
             db=db,
             scope=scope,
             agent_session=agent_session,
@@ -154,7 +160,6 @@ async def create_thread(
             channel=channel,
             external_id=external_id,
             origin_metadata=origin_metadata,
-            binding=binding,
         )
     else:
         receipt = await receipt_repo.create(
@@ -166,12 +171,11 @@ async def create_thread(
             event_type="yuxi.session.create",
             intent_hash=intent_hash,
         )
-        dispatch = None
     await db.commit()
     if binding.materialize_managed:
         ensure_bound_user_workdir(binding.uid, binding.workdir_path)
-    if dispatch is not None:
-        await deliver(dispatch)
+    await dispatch_next_input(uid=scope.uid, agent_slug=agent_session.agent_id, thread_id=agent_session.thread_id)
+    await db.refresh(receipt)
     return _accepted(receipt)
 
 
@@ -223,7 +227,7 @@ async def accept_message(
         require_input_replay(existing, "agent.session.input.message", intent_hash)
         return _accepted(existing)
 
-    receipt, dispatch = await accept_locked(
+    receipt = await accept_locked(
         db=db,
         scope=scope,
         agent_session=agent_session,
@@ -241,8 +245,19 @@ async def accept_message(
         origin_metadata=origin_metadata,
     )
     await db.commit()
-    if dispatch is not None:
-        await deliver(dispatch)
+    await dispatch_next_input(uid=scope.uid, agent_slug=agent_session.agent_id, thread_id=agent_session.thread_id)
+    await db.refresh(receipt)
+    return _accepted(receipt)
+
+
+async def get_receipt_snapshot(*, db: AsyncSession, scope: ActorScope, thread_id: str, idempotency_key: str) -> dict:
+    """响应丢失时按原幂等键读取接收事实，消费归属继续从 Input 查询。"""
+    await require_thread(db=db, scope=scope, thread_id=thread_id)
+    receipt = await AgentInputReceiptRepository(db).get_for_scope(
+        uid=scope.uid, app_id=scope.app_id, thread_id=thread_id, idempotency_key=idempotency_key
+    )
+    if receipt is None:
+        raise HTTPException(status_code=404, detail="回执不存在")
     return _accepted(receipt)
 
 
@@ -257,6 +272,8 @@ async def get_input_snapshot(*, db: AsyncSession, scope: ActorScope, thread_id: 
     if input_item is None:
         raise HTTPException(status_code=404, detail="Input 不存在")
     messages = await AgentInputRepository(db).list_messages(input_id)
+    attachments = await AttachmentRepository(db).for_messages([message.id for message in messages])
+    preparation = await AttachmentRepository(db).statuses_for_inputs([input_id])
     for message in messages:
         await db.refresh(message, attribute_names=["tool_calls"])
     return {
@@ -268,7 +285,17 @@ async def get_input_snapshot(*, db: AsyncSession, scope: ActorScope, thread_id: 
         "run_id": input_item.consumed_run_id,
         "received_seq": input_item.received_seq,
         "cutoff_seq": input_item.cutoff_seq,
-        "items": [item for message in messages for item in serialize_public_items(message, None, None)],
+        "items": [
+            item
+            for message in messages
+            for item in serialize_public_items(
+                message,
+                None,
+                None,
+                attachments=[serialize_attachment(item, thread_id=thread_id) for item in attachments[message.id]],
+            )
+        ],
+        **preparation[input_id],
     }
 
 
@@ -289,9 +316,8 @@ async def accept_locked(
     channel: str,
     external_id: str | None,
     origin_metadata: dict | None,
-    binding=None,
     frozen_payload: dict | None = None,
-) -> tuple[AgentInputReceipt, Dispatch | None]:
+) -> AgentInputReceipt:
     """在调用方事务与 Thread 锁内保存回执、消息和 Input。"""
     if agent_session.status != "active":
         raise HTTPException(status_code=409, detail="Thread 已归档")
@@ -326,18 +352,18 @@ async def accept_locked(
         agent_item = await AgentRepository(db).get_visible_by_slug(slug=agent_session.agent_id, user=user)
         if agent_item is None:
             raise HTTPException(status_code=404, detail="智能体不存在")
-        try:
-            backend = get_agent_backend(agent_item.backend_id)
-        except AgentBackendNotFoundError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-        requested_model = model_spec or (agent_session.extra_metadata or {}).get("model_spec")
-        requested_approval = tool_approval_mode or (agent_session.extra_metadata or {}).get("tool_approval_mode")
-        resolved_model, approval_mode = await resolve_agent_run_config(
-            requested_model, requested_approval, agent_item, backend, db
-        )
-        input_payload = {**(frozen_payload or {}), "model_spec": resolved_model, "tool_approval_mode": approval_mode}
-        if agent_session.config_snapshot is not None:
-            input_payload["context_snapshot"] = agent_session.config_snapshot
+        if agent_session.config_snapshot is None:
+            raise ValueError("Session 缺少配置快照")
+        snapshot = deepcopy(agent_session.config_snapshot)
+        if mode == "steer" and active_turn is not None:
+            current = await AgentRunRepository(db).get_run(active_turn.current_run_id)
+            snapshot = deepcopy(current.input_payload["context_snapshot"])
+        else:
+            if model_spec is not None:
+                snapshot["model"] = await resolve_agent_run_model_spec(model_spec, None, db)
+            if tool_approval_mode is not None:
+                snapshot["tool_approval_mode"] = resolve_agent_run_tool_approval_mode(tool_approval_mode, None)
+        input_payload = {**(frozen_payload or {}), "context_snapshot": snapshot}
 
         input_item = await input_repo.create(
             input_id=str(uuid.uuid4()),
@@ -368,7 +394,7 @@ async def accept_locked(
     attachment_ids: list[str] = list(attachment_file_ids)
     for message in messages:
         metadata = {**message.extra_metadata, "raw_message": message.raw_message(), "input_id": input_item.id}
-        attachment_ids.extend(metadata.get("attachment_file_ids") or [])
+        attachment_ids.extend(metadata.pop("attachment_file_ids", []))
         persisted = Message(
             session_record_id=agent_session.id,
             role="user",
@@ -385,25 +411,19 @@ async def accept_locked(
         input_id=input_item.id, receipt_id=receipt.id, message_ids=[message.id for message in persisted_messages]
     )
     if attachment_ids:
-        bound = await SessionRepository(db).bind_attachments_to_input(
-            agent_session.id, input_item.id, list(dict.fromkeys(attachment_ids))
+        await stage_input_attachments(
+            db=db,
+            scope=scope,
+            input_item=input_item,
+            receipt_id=receipt.id,
+            file_ids=list(dict.fromkeys(attachment_ids)),
         )
-        requested_ids = {str(file_id).strip() for file_id in attachment_ids}
-        if not requested_ids.issubset({item.get("file_id") for item in bound}):
-            raise HTTPException(status_code=422, detail="附件不存在或已绑定其他输入")
-        for message in persisted_messages:
-            message.extra_metadata = {**message.extra_metadata, "attachments": bound}
 
-    dispatch = None
-    if active_turn is None and not agent_session.queue_paused:
-        dispatch = await claim_next_input(db=db, agent_session=agent_session, binding=binding)
-        if dispatch is not None:
-            await db.refresh(receipt)
     if source != "cooperation":
         from yuxi.modules.agents.services.cooperation import notify_user_intervention
 
         await notify_user_intervention(db, agent_session, key=receipt.id, action=mode)
-    return receipt, dispatch
+    return receipt
 
 
 def _check_idempotency_key(idempotency_key: str) -> None:

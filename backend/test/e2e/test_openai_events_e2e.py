@@ -28,12 +28,12 @@ async def test_default_message_keeps_batch_across_concurrent_steer_and_retry(e2e
                 headers={**e2e_headers, "Idempotency-Key": f"create-{gate}"},
                 json={
                     "agent_id": slug,
-                    "model_spec": MODEL,
+                    "agent": {"model": MODEL},
                     "title": make_test_session_title("openai-default-mode"),
                 },
             )
-            assert created.status_code == 200, created.text
-            thread_id = created.json()["thread_id"]
+            assert created.status_code == 201, created.text
+            thread_id = created.json()["id"]
             url = f"/api/v1/agents/sessions/{thread_id}/events"
             started = await e2e_client.post(
                 url,
@@ -129,24 +129,28 @@ async def test_default_message_keeps_batch_across_concurrent_steer_and_retry(e2e
             finally:
                 await conn.close()
             # 每个公开 item 独立分页，不能按 Message ID 截断同消息的工具 item。
-            history = (await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/history", headers=e2e_headers)).json()
-            expected = [item for item in history["items"] if item["turn_id"] == turn_id]
+            history = (
+                await e2e_client.get(
+                    f"/api/v1/agents/sessions/{thread_id}/items?order=asc&limit=100", headers=e2e_headers
+                )
+            ).json()
+            expected = [item for item in history["data"] if item["turn_id"] == turn_id]
             page_url = f"/api/v1/agents/sessions/{thread_id}/turns/{turn_id}/items"
             seen, after = [], None
             for _ in range(len(expected) + 1):
                 response = await e2e_client.get(
-                    page_url, headers=e2e_headers, params={"limit": 1, **({"after_id": after} if after else {})}
+                    page_url,
+                    headers=e2e_headers,
+                    params={"limit": 1, "order": "asc", **({"after": after} if after else {})},
                 )
                 assert response.status_code == 200, response.text
-                values = response.json()["items"]
+                values = response.json()["data"]
                 if not values:
                     break
                 seen.extend(values)
                 after = values[-1]["id"]
             assert seen == expected
-            assert (
-                await e2e_client.get(page_url, headers=e2e_headers, params={"after_id": "unknown"})
-            ).status_code == 400
+            assert (await e2e_client.get(page_url, headers=e2e_headers, params={"after": "unknown"})).status_code == 400
         finally:
             await replay.get("/release-blocking", params={"token": gate})
             if thread_id:
@@ -168,13 +172,13 @@ async def test_default_cancel_target_is_fixed_for_idempotent_retry(e2e_client, e
                 headers={**e2e_headers, "Idempotency-Key": f"cancel-create-{gate}"},
                 json={
                     "agent_id": slug,
-                    "model_spec": MODEL,
+                    "agent": {"model": MODEL},
                     "title": make_test_session_title("default-cancel"),
                     "input": [_message(f"{OUTPUT} DETERMINISTIC_BLOCK_BEFORE_RESPONSE:{gate}")],
                 },
             )
-            assert created.status_code == 200, created.text
-            thread_id, turn_id = created.json()["thread_id"], created.json()["turn_id"]
+            assert created.status_code == 201, created.text
+            thread_id, turn_id = created.json()["id"], created.json()["yuxi"]["receipt"]["turn_id"]
             async with asyncio.timeout(30):
                 while not (await replay.get("/blocking-started", params={"token": gate})).json()["started"]:
                     await asyncio.sleep(0.1)
@@ -223,15 +227,15 @@ async def test_cancel_preserves_displayed_partial_text_in_public_history(e2e_cli
                 headers={**e2e_headers, "Idempotency-Key": str(uuid.uuid4())},
                 json={
                     "agent_id": slug,
-                    "model_spec": MODEL,
+                    "agent": {"model": MODEL},
                     "title": make_test_session_title("cancel-partial"),
                     "input": [
                         _message(f"{OUTPUT} DETERMINISTIC_CANCEL_FOLLOWUP DETERMINISTIC_BLOCK_BEFORE_RESPONSE:{gate}")
                     ],
                 },
             )
-            assert created.status_code == 200, created.text
-            thread_id, turn_id = created.json()["thread_id"], created.json()["turn_id"]
+            assert created.status_code == 201, created.text
+            thread_id, turn_id = created.json()["id"], created.json()["yuxi"]["receipt"]["turn_id"]
             async with asyncio.timeout(30):
                 async with e2e_client.stream(
                     "GET", f"/api/v1/agents/sessions/{thread_id}/events", headers=e2e_headers
@@ -249,8 +253,12 @@ async def test_cancel_preserves_displayed_partial_text_in_public_history(e2e_cli
             assert cancelled.status_code == 202, cancelled.text
             await replay.get("/release-blocking", params={"token": gate})
             assert (await _turn(e2e_client, e2e_headers, thread_id, turn_id))["status"] == "cancelled"
-            history = (await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/history", headers=e2e_headers)).json()
-            item = next(item for item in history["items"] if item["id"] == item_id)
+            history = (
+                await e2e_client.get(
+                    f"/api/v1/agents/sessions/{thread_id}/items?order=asc&limit=100", headers=e2e_headers
+                )
+            ).json()
+            item = next(item for item in history["data"] if item["id"] == item_id)
             assert item["status"] == "incomplete"
             assert item["content"] == [{"type": "output_text", "text": shown}]
         finally:

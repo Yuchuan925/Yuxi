@@ -41,7 +41,7 @@ export function useAgentStreamHandler({
     } else if (type === 'yuxi.session.turn.waiting') {
       state.currentTurnId = event.turn_id
       state.activeRunId = event.yuxi.run_id
-      state.turnStatus = 'waiting'
+      state.turnStatus = event.turn.status
       state.replyLoadingVisible = false
       return processApprovalInStream?.(event, threadId, unref(currentAgentId)) || false
     }

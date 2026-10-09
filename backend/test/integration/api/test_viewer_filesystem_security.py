@@ -28,9 +28,8 @@ async def _create_thread_for_user(test_client, headers: dict[str, str]) -> tuple
         },
         headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
     )
-    assert create_resp.status_code == 200, create_resp.text
-    payload = create_resp.json()
-    thread_id = payload.get("thread_id") or payload.get("id")
+    assert create_resp.status_code == 201, create_resp.text
+    thread_id = create_resp.json()["id"]
     assert thread_id
     connection = await asyncpg.connect(os.environ["POSTGRES_URL"].replace("+asyncpg", ""))
     try:

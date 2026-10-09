@@ -17,7 +17,7 @@ flowchart LR
     State --> Result["消息、事件、文件和产物"]
 ```
 
-worker 在取得 lease 并校验输入后，合并 Agent 可配置字段、Run 模型与审批模式、运行身份和 Workdir，准备一个 Context。准备期间持续续租，manifest 从准备结果派生并提交；固化失败时执行不开始。chat/resume 流和 BaseAgent 传递同一个 Context，构图只消费已准备的资源与 Skill 内容。当前 Agent 的专属 Skill 自动加入预加载，系统提示词继续生效；执行边界复查权限，保留本 Run 的专属根文本，中途新增绑定在下一 Run 加载。执行流复查 Agent 可见性，后端发生变化时显式失败。
+worker 在取得 lease 并校验输入后，从 Input 冻结的可配置 Context 装配 Run 模型与审批模式、当前运行身份和 Workdir。准备期间持续续租，manifest 从准备结果派生并提交；固化失败时执行不开始。chat/resume 流和 BaseAgent 传递同一个 Context，构图只消费已准备的资源与 Skill 内容。当前 Agent 的专属 Skill 自动加入预加载，系统提示词继续生效；执行边界复查权限，保留本 Run 的专属根文本，中途新增绑定在下一 Run 加载。执行流复查 Agent 可见性，后端发生变化时显式失败。
 
 执行流要求明确的 Thread、Turn 和 Run 身份，并检查 Thread 及其 Project 属于当前用户、APP 和 Agent 作用域。缺失身份、归属不一致或资源已归档时显式失败。Thread 创建和用户消息写入由接入用例负责；流中的 init 消息用于展示已经保存的输入。
 
@@ -25,24 +25,26 @@ worker 在取得 lease 并校验输入后，合并 Agent 可配置字段、Run �
 
 API/worker 不信任浏览器内存中的完整配置。请求可以提供受限的单次覆盖值，例如模型或工具审批模式；配置快照也不能替代实时授权。
 
-状态查询在 Session 与 Workdir 授权后直接读取 PostgreSQL checkpointer 的根 namespace，返回最近完整快照及同批 pending writes 中的中断，仅在最新 Run 为 interrupted 时展示审批。读取不创建 Context 或模型；业务 pending writes 的合并仍由执行图拥有。HTTP 状态查询返回待办、产物、协作树和用量；Turn SSE 提供执行增量与状态，前端通过 `/api/v1/agents/sessions/{session_id}/cooperation` 轮询完整协作摘要；该入口只读取持久关系，不读取 checkpoint 或结果正文。批量读取全部成员、最新 Turn、执行状态和待处理输入。同一 Thread 在页面与侧栏共享 session runtime 的历史、运行状态、流订阅和恢复请求；最后一个观察视图卸载才释放订阅，视图可见性与浏览器标签可见性共同约束已读和滚动。终态与 resync 请求读取新历史，不复用较早发出的快照。文件由 Workdir/Sandbox 边界持久化，前端文件面板通过文件系统接口读取当前 Workdir。
+状态查询在 Session 与 Workdir 授权后直接读取 PostgreSQL checkpointer 的根 namespace，返回最近完整快照及同批 pending writes 中的中断，仅在最新 Run 为 interrupted 时展示审批。读取不创建 Context 或模型；业务 pending writes 的合并仍由执行图拥有。HTTP 状态查询返回待办、产物、协作树和用量；Turn SSE 提供执行增量与状态，前端通过 `/api/v1/agents/sessions/{thread_id}/cooperation` 轮询完整协作摘要；该入口只读取持久关系，不读取 checkpoint 或结果正文。批量读取全部成员、最新 Turn、执行状态和待处理输入。同一 Thread 在页面与侧栏共享 session runtime 的历史、运行状态、流订阅和恢复请求；最后一个观察视图卸载才释放订阅，视图可见性与浏览器标签可见性共同约束已读和滚动。终态与 resync 请求读取新历史，不复用较早发出的快照。文件由 Workdir/Sandbox 边界持久化，前端文件面板通过文件系统接口读取当前 Workdir。
 
-普通来源调用 `modules/agents/services/inputs.py` 接收用例：作用域校验后保存 Message、Input 与幂等 Receipt，空闲时按优先队头领取并创建 Turn/Run；事务提交后物化 Workdir 并投递 Run。Input 保存来源、优先级、消息成员和接收时冻结的模型/审批配置，消息正文由 Message 拥有，其余 Agent 配置在 worker 准备时读取。调度、引导和控制的完整契约见 [Agent 输入队列与调度](./agent-request-queue.md)。
+普通来源调用 `modules/agents/services/inputs.py` 接收用例：作用域校验后保存 Message、Input 与幂等 Receipt，空闲时按优先队头领取并创建 Turn/Run；事务提交后物化 Workdir 并投递 Run。Input 保存来源、优先级、消息成员和接收时冻结的完整可配置 Context，消息正文由 Message 拥有。worker 为冻结配置装配当前身份、Workdir 与授权资源。调度、引导和控制的完整契约见 [Agent 输入队列与调度](./agent-request-queue.md)。
 
-断线后调用方从 Public Thread、Input、Turn、Run 与 History 查询读取明确的接收、消费和结果归属。排队 Input 尚无 Turn/Run；最终输出只属于 Turn 的 `result_run_id` 所指顶层 Run。HTTP `202`、SSE 中断和 Run `yielded` 都不是整轮成功证明。
+断线后调用方从 Public Session、Input、Turn、Run 与 Items 查询读取明确的接收、消费和结果归属。排队 Input 尚无 Turn/Run；最终输出只属于 Turn 的 `result_run_id` 所指顶层 Run。HTTP `202`、SSE 中断和 Run `yielded` 都不是整轮成功证明。
 
 ## 配置和运行态的区别
 
 | 数据 | 来源 | 生命周期 |
 | --- | --- | --- |
 | `config_json.context` | Agent 管理页面/管理 API | 跨运行保存的配置 |
+| Session `config_snapshot` | 创建时的可配置字段与 Schema 默认值 | 会话配置，显式模型/审批更新后作用于新输入 |
+| Input `context_snapshot` | 接收时复制会话配置并应用单次覆盖 | 对应输入及消费它的 Run |
 | `runtime.context` | 配置 + 用户身份 + 运行身份 + 权限快照 | 当前 Run |
 | LangGraph state | Graph 执行和中间件 | 当前 checkpoint thread |
 | PostgreSQL Input/Receipt/Turn/Run/Message | 接收服务、调度器和 worker 提交 | 业务接收、执行与最终结果 |
 
 `_skill_runtime_snapshot` 中的授权 Skill、依赖和预加载内容在 Context 准备时派生；中间件在运行期间维护 token 等状态。身份与运行标记由 worker 注入，持久 Agent 配置通过 `update_config` 仅装载 configurable 字段。接入和执行使用同一装载规则。运行事件的模型、审批与 Workdir 元数据从准备后的 Context 投影。
 
-普通输入模型依次取显式输入值、Thread 保存值、Agent 配置和系统默认；接收时确定并保存在 Input 的配置快照中，Run 消费该快照。协作会话继承派发方实际模型和能力配置快照，只接收显式描述；模型历史、checkpoint 和附件上下文各自独立。
+会话创建时保存完整可配置 Context，模型依次取创建显式值、Agent 配置和系统默认，空会话也验证有效模型。保存的 Agent 与系统默认值修改不改变已有会话。每个时点以完整 `context_snapshot` 为唯一配置来源；执行拒绝缺失快照，不从 metadata 或最新 Agent 补值。Session 更新与输入接收共用会话锁，后接收的 Input 复制更新后的配置，已接收输入保持原快照。单次 follow-up 覆盖随消息原子持久化；活动 steer 与等待恢复继承当前 Run 的配置。运行身份不进入快照，`all` 或固定列表保存资源选择意图，实际资源授权在准备和执行时解析。协作会话继承派发方实际模型和能力配置，显式选择其他 Agent 时保存目标配置；模型历史、checkpoint 和附件上下文各自独立。
 
 manifest v2 的配置摘要来自准备后的可配置字段，包含模型覆盖、schema 默认值和工作区提示词，排除用户、线程、worker 等运行身份。Skill 条目的来源、版本与哈希来自首次授权解析；预加载内容另保存实际读取字节的摘要，manifest 生成不再次查询 Skill。完整提示词和 Skill 正文不持久化到 manifest。MCP 工具发现、Memory 与文件动态读取发生在后续执行边界，manifest 不承诺冻结其实际可用性或字节。
 
@@ -62,7 +64,7 @@ manifest v2 的配置摘要来自准备后的可配置字段，包含模型覆�
 
 `agents/MEMORY.md` 只有在用户配置 `enable_memory=true`，且该文件存在并包含非空内容时，才由 Memory middleware 读取并提供受限的记忆工具。未保存配置的用户默认启用 Memory，已保存的关闭选择继续生效。用户可在账户设置中切换开关，或点击“查看 Memory”进入个人空间并打开该文件。它是用户主动维护的参考资料，不是系统指令。Memory 读取和更新有独立的用户、Run、worker 和文件大小校验。
 
-Viewer、附件和 artifact API 通过持久化 Workspace/Workdir 读取文件，不连接 Agent execution runtime。沙盒虚拟路径、Viewer scope、对象 URL 和宿主机路径在各自边界中转换，不能互相替代。
+Viewer、正式附件和 artifact API 通过持久化 Workspace/Workdir 读取文件，不连接 Agent execution runtime。附件表拥有文件信息、用户/APP、Input/Receipt 归属、准备状态和存储位置。上传建立隔离的 draft；接收事务通过附件行锁绑定 Input；统一准备函数写入 Workdir 并提交 ready 后清理临时来源。恢复循环调用同一准备与调度流程，回执读取或重放只读事实。Message 通过归属关系读取附件，不复制记录；取消排队保留正式文件。OCR 预解析与图片辅助处理只在产品 JWT 私有入口开放，Agent 的 OCR 工具继续按需读取 Workdir。图片与文件提交契约见[公开 API](../advanced/agents-public-api.md#图片与文件附件)。沙盒虚拟路径、Viewer scope、对象 URL 和宿主机路径在各自边界中转换，不能互相替代。
 
 ## 用户定时 Agent
 
@@ -74,7 +76,7 @@ Viewer、附件和 artifact API 通过持久化 Workspace/Workdir 读取文件�
 
 审批或用户问题中断时，系统把等待点绑定在 Turn 的当前 interrupted Run 和 PostgreSQL checkpoint。结构化回答或审批只消费该等待点一次，在同一 Turn 创建恢复 Run；worker 再为该 Run 准备 Context 并固化 manifest。
 
-新的普通输入按接入时的规则解析模型和审批模式。根会话的其余 Agent 配置与基础工作区提示词在 worker 准备 Context 时读取；关联会话使用创建时配置快照，并在当前 Run 重新准备工作区提示词与授权资源，动态文件与权限仍在各自读取或执行边界生效；输出、事件和消息绑定明确的 `input_id`、`turn_id` 与 `run_id`。
+worker 读取 Input 的完整配置快照，为当前 Run 重新准备工作区提示词与授权资源；动态文件与权限在各自读取或执行边界生效。等待恢复和 steer 接管复制原 Run 的配置；输出、事件和消息绑定明确的 `input_id`、`turn_id` 与 `run_id`。
 
 准备期间收到取消时，worker 使用已提交的取消状态完成取消收尾；manifest 失败不能把取消请求留待 lease 超时。manifest 使用 write-once 指纹，已有旧版 manifest 的 Run 重试若与新准备结果不一致会显式失败；历史 manifest 保留原记录。
 
@@ -93,11 +95,11 @@ Viewer、附件和 artifact API 通过持久化 Workspace/Workdir 读取文件�
 
 ## 线程阅读数据
 
-`GET /api/v1/agents/sessions/{session_id}/history` 返回当前作用域可见的 `thread`、`runs` 和 `items`。`thread` 来自持久 Thread/Turn/队列快照；`runs` 是轻量执行段归属，包含 `run_id`、`turn_id`、`run_type`、父 Run 和状态；`items` 保留用户输入、取消的排队消息和已经进入用户输出链路的正文、工具参数及结果。公开 item 身份与 output_index 保存于 Message 元数据，Turn 锁分配递增索引；实时与历史复用同一 serializer。完整 Model/Tool 审计由独立管理员接口读取。
+公开内容通过 Session 或指定 Turn 的 `/items` 分页读取，数据库按授权作用域、公开身份和稳定顺序执行 limit+1，包含用户输入、取消的排队消息和已经公开的正文、工具参数及结果。页面 `yuxi.runs` 只投影该页引用的执行段身份、状态与耗时。公开 item 身份与 output_index 保存于 Message 元数据，Turn 锁分配递增索引；实时与历史复用同一 serializer。Session 提供当前概览，Turn 列表发现零消息轮次，指定 Turn 的详情按 result_run_id 读取最终输出。完整 Model/Tool 审计由独立管理员接口读取。
 
-History 读取不改变已读标记。页面加载后以 `POST /api/v1/agents/sessions/{session_id}/viewed` 显式标记已查看；未知、跨 APP 或跨用户的 Thread 返回 404。多个查询遵循数据库事务隔离，运行中变化通过 Thread SSE 与持久快照重读收敛。
+History 读取不改变已读标记。页面加载后以 `POST /api/v1/agents/sessions/{thread_id}/viewed` 显式标记已查看；未知、跨 APP 或跨用户的 Thread 返回 404。多个查询遵循数据库事务隔离，运行中变化通过 Thread SSE 与持久快照重读收敛。
 
-接口契约由 `modules/agents/services/messages.py` 装配、`PublicItemRepository` 查询和前端 History consumer 共同拥有；真实 HTTP 测试回读公开 item、Run 归属和 PostgreSQL 已读标记。公开协议取舍见[原生事件与 Agents API 决策](../develop-guides/decisions/implemented/2026-09-30-langgraph-agents-events.md)。
+接口契约由 `modules/agents/services/public_items.py` 装配、`PublicItemRepository` 查询和三端 Items consumer 共同拥有；真实 HTTP 测试回读公开 item、Run 归属和 PostgreSQL 已读标记。公开协议取舍见[原生事件与 Agents API 决策](../develop-guides/decisions/implemented/2026-09-30-langgraph-agents-events.md)。
 
 ## 原生流与公开协议
 
@@ -105,4 +107,4 @@ BaseAgent 保留 LangGraph v3 ProtocolEvent 的通道、顺序、内容块和 na
 
 完成、等待、失败和取消由已提交的 Run/Turn 事实通知。原始推理和业务状态使用明确的 yuxi 扩展；官方 item 与 content 事件保持官方结构。详情见 [Agents Public API](../advanced/agents-public-api.md)。
 
-子 Thread 在委派事务中保存实际模型和审批默认值，各 Input 接收时仍冻结本次配置。直接向子 Thread 提交新的 follow-up 会创建独立的用户 Turn，不继承旧 Turn 的 `created_by_run_id`。Thread 委派关系继续证明其用户、APP 和共享 Project 的授权；本轮 Run 的委派身份只用于本轮父子取消与 tracing，不以 Thread 历史委派推断取消范围。附件绑定在输入事务中写入公开用户 item 快照，回执替换与刷新使用同一已授权记录。
+子 Thread 在委派事务中保存实际模型和审批默认值，各 Input 接收时仍冻结本次配置。直接向子 Thread 提交新的 follow-up 会创建独立的用户 Turn，不继承旧 Turn 的 `created_by_run_id`。Thread 委派关系继续证明其用户、APP 和共享 Project 的授权；本轮 Run 的委派身份只用于本轮父子取消与 tracing，不以 Thread 历史委派推断取消范围。附件来源先随 Input、Receipt 和 Message 提交，再写入授权 Workdir 并提交就绪事实；文件完成准备前不派发。公开用户 item 最初可表达 preparing 引用，完成后回读正式引用。模型附件上下文只包含本次 Input 与此前已消费的来源。

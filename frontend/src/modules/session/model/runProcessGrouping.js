@@ -8,10 +8,10 @@ export const groupRunContinuations = (runGroups) => {
     // 实时续跑尚未刷新 Run 快照时，使用消息明确携带的归属。
     const liveMessage = group.status === 'streaming' && group.messages.find((message) => message.type === 'ai')
     const run = group.run || (liveMessage?.run_id && liveMessage.turn_id
-      ? { run_id: liveMessage.run_id, turn_id: liveMessage.turn_id }
+      ? { id: liveMessage.run_id, turn_id: liveMessage.turn_id }
       : null)
     const isContinuation = run?.run_type === 'resume' || (
-      group.status === 'streaming' && run?.run_id && run.run_id !== previous?.run?.run_id
+      group.status === 'streaming' && run?.id && run.id !== previous?.run?.id
     )
     if (
       !isContinuation ||
@@ -30,7 +30,7 @@ export const groupRunContinuations = (runGroups) => {
     groups[groups.length - 1] = {
       ...group,
       run,
-      displayKey: previous.displayKey || previous.run.run_id,
+      displayKey: previous.displayKey || previous.run.id,
       messages: [
         ...previous.messages.map((message) =>
           message.isLast ? { ...message, isLast: false } : message

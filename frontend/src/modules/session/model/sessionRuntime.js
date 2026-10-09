@@ -8,9 +8,8 @@ import { useAgentRunStream } from './useAgentRunStream'
 import { useAgentInputQueue } from './useAgentInputQueue'
 import { useAgentStreamHandler } from './useAgentStreamHandler'
 import { useStreamSmoother } from './useStreamSmoother'
-import { itemsToMessages, mergeItemSnapshot } from './agentItems'
+import { createItemState, itemsToMessages, mergeItemSnapshot } from './agentItems'
 import { bindMessageInputRun } from './messageDebug'
-import { activityFromTurnEvent } from './sessionActivity'
 import { extractPendingInterrupt, pendingInterruptFromWaitpoint } from './useApproval'
 
 /** 每个 Thread 共享运行数据和订阅，视图仅注册展示回调。 */
@@ -19,6 +18,9 @@ export const useSessionRuntimeStore = defineStore('sessionRuntime', () => {
   const chatState = reactive({ threadStates: {} })
   const threadMessages = ref({})
   const threadRuns = ref({})
+  const historyPages = reactive({})
+  const pendingSends = reactive({})
+  const historyItems = new Map()
   const observers = new Map()
   const requests = new Map()
   const streamSmoother = useStreamSmoother({
@@ -46,7 +48,7 @@ export const useSessionRuntimeStore = defineStore('sessionRuntime', () => {
   }
   const isCurrent = (threadId, state) => chatState.threadStates[threadId] === state
 
-  const fetchThreadMessages = async ({ threadId, fresh = false }) => {
+  const fetchThreadMessages = async ({ threadId, fresh = false, more = false, turnId = null }) => {
     if (!threadId || !observers.has(threadId)) return
     const state = getThreadState(threadId)
     if (fresh && requests.has(`history:${threadId}`)) {
@@ -62,17 +64,52 @@ export const useSessionRuntimeStore = defineStore('sessionRuntime', () => {
       if (!observers.has(threadId)) return
       const state = getThreadState(threadId)
       try {
-        const response = await agentApi.getAgentHistory(threadId)
+        const projection = historyItems.get(threadId) || createItemState()
+        const previousIds = new Set(Object.keys(projection.items))
+        const paging = historyPages[threadId] ||= { after: null, hasMore: false, loading: false }
+        paging.loading = true
+        let after = more ? paging.after : undefined
+        const [session, initialPage] = await Promise.all([
+          agentApi.getPublicThread(threadId),
+          agentApi.getSessionItems(threadId, { after, turnId })
+        ])
         if (!isCurrent(threadId, state)) return
-        mergeItemSnapshot(state.ongoingRunGroup, response.items || [])
+        let page = initialPage
+        const runs = new Map((threadRuns.value[threadId] || []).map((run) => [run.id, run]))
+        while (true) {
+          if (!isCurrent(threadId, state)) return
+          mergeItemSnapshot(projection, page.data)
+          mergeItemSnapshot(state.ongoingRunGroup, page.data)
+          for (const run of page.yuxi.runs) runs.set(run.id, run)
+          after = page.last_id
+          // 恢复目标轮次读取完整页；Session 刷新读到已加载区域即可。
+          const recoverGap = !more && previousIds.size && !page.data.some((item) => previousIds.has(item.id))
+          if (!page.has_more || (!turnId && !recoverGap)) break
+          page = await agentApi.getSessionItems(threadId, { after, turnId })
+        }
+        const target = turnId || session.yuxi.current_turn?.id
+        if (target && !more) {
+          const turn = await agentApi.getThreadTurn(threadId, target)
+          if (!isCurrent(threadId, state)) return
+          mergeItemSnapshot(projection, turn.yuxi.output)
+          mergeItemSnapshot(state.ongoingRunGroup, turn.yuxi.output)
+          for (const run of turn.yuxi.runs || []) runs.set(run.id, run)
+        }
+        if (!turnId && (more || !paging.after || !page.has_more)) {
+          paging.after = page.last_id
+          paging.hasMore = page.has_more
+        }
+        historyItems.set(threadId, projection)
         streamSmoother.flushThread(threadId)
-        threadMessages.value[threadId] = itemsToMessages(response.items || [])
-        threadRuns.value[threadId] = response.runs
-        if (!state.isStreaming) state.turnStatus = response.thread?.current_turn?.status || null
-        chatThreads.upsertThread(response.thread)
+        threadMessages.value[threadId] = itemsToMessages(Object.values(projection.items))
+        threadRuns.value[threadId] = [...runs.values()]
+        if (!state.isStreaming) state.turnStatus = session.yuxi.current_turn?.status || null
+        chatThreads.upsertThread(session)
       } catch (error) {
         handleChatError(error, 'load')
         throw error
+      } finally {
+        if (isCurrent(threadId, state) && historyPages[threadId]) historyPages[threadId].loading = false
       }
     })
   }
@@ -131,9 +168,8 @@ export const useSessionRuntimeStore = defineStore('sessionRuntime', () => {
     isThreadActive: (threadId) => observers.has(threadId),
     handlePublicEvent: (event, threadId) => {
       const result = handlePublicEvent(event, threadId)
-      const activity = activityFromTurnEvent(event)
-      if (activity && event.session_id === threadId) {
-        chatThreads.upsertThread({ id: threadId, activity_status: activity })
+      if (event.turn && event.session_id === threadId) {
+        chatThreads.upsertThread({ id: threadId, status: event.turn.status === 'queued' ? 'in_progress' : event.turn.status })
       }
       return result
     },
@@ -152,10 +188,10 @@ export const useSessionRuntimeStore = defineStore('sessionRuntime', () => {
           !isCurrent(threadId, state) ||
           state.currentTurnId !== turnId ||
           state.runStateVersion !== version ||
-          waiting?.status !== 'waiting'
+          waiting?.status !== 'requires_action'
         )
           return
-        state.pendingInterrupt = pendingInterruptFromWaitpoint(waiting.waitpoint, threadId)
+        state.pendingInterrupt = pendingInterruptFromWaitpoint(waiting.yuxi.waitpoint, threadId)
         notify('onInterruptDetected', { threadId })
       })().catch((error) => console.warn('Failed to restore Turn waitpoint:', error))
       void resumeQueuedInputs(threadId)
@@ -168,7 +204,7 @@ export const useSessionRuntimeStore = defineStore('sessionRuntime', () => {
       const chunks = getThreadState(threadId)?.ongoingRunGroup?.optimisticMessages || {}
       bindMessageInputRun(Object.values(chunks).flat(), inputId, runId)
       bindMessageInputRun(threadMessages.value[threadId], inputId, runId)
-      chatThreads.setThreadStatus(threadId, 'loading')
+      chatThreads.upsertThread({ id: threadId, status: 'in_progress' })
     }
   })
   const queue = useAgentInputQueue({
@@ -196,6 +232,8 @@ export const useSessionRuntimeStore = defineStore('sessionRuntime', () => {
       cleanupThreadState(threadId)
       delete threadMessages.value[threadId]
       delete threadRuns.value[threadId]
+      delete historyPages[threadId]
+      historyItems.delete(threadId)
       for (const key of requests.keys()) {
         if (key.endsWith(`:${threadId}`)) requests.delete(key)
       }
@@ -209,6 +247,8 @@ export const useSessionRuntimeStore = defineStore('sessionRuntime', () => {
   return {
     threadMessages,
     threadRuns,
+    historyPages,
+    pendingSends,
     getThreadState,
     resetOngoingRunGroup,
     fetchThreadMessages,

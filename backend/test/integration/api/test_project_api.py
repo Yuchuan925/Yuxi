@@ -141,17 +141,17 @@ async def test_default_thread_creates_implicit_project_with_exclusive_binding(te
             "title": make_test_session_title("implicit-project"),
         },
     )
-    assert response.status_code == 200, response.text
-    snapshot = await test_client.get(f"/api/v1/agents/sessions/{response.json()['thread_id']}", headers=admin_headers)
+    assert response.status_code == 201, response.text
+    snapshot = await test_client.get(f"/api/v1/agents/sessions/{response.json()['id']}", headers=admin_headers)
     assert snapshot.status_code == 200, snapshot.text
-    payload = snapshot.json()
+    payload = snapshot.json()["yuxi"]
     assert payload["project_id"]
     async with _database_connection() as db:
         row = await db.fetchrow(
             "SELECT c.uid, c.project_id, p.selection_status, p.directory_mode, p.workdir_path "
             "FROM sessions c JOIN projects p ON p.id = c.project_id AND p.uid = c.uid "
             "WHERE c.thread_id = $1",
-            payload["id"],
+            snapshot.json()["id"],
         )
     assert row["project_id"] == payload["project_id"]
     assert row["selection_status"] == "implicit"
@@ -191,19 +191,17 @@ async def test_linked_project_and_thread_selection_keep_directory_bytes(
             "title": title,
         },
     )
-    assert thread_response.status_code == 200, thread_response.text
-    assert thread_response.json()["title"] == title
-    assert thread_response.json()["project_id"] == project["id"]
-    snapshot = await test_client.get(
-        f"/api/v1/agents/sessions/{thread_response.json()['thread_id']}", headers=admin_headers
-    )
+    assert thread_response.status_code == 201, thread_response.text
+    assert thread_response.json()["yuxi"]["title"] == title
+    assert thread_response.json()["yuxi"]["project_id"] == project["id"]
+    snapshot = await test_client.get(f"/api/v1/agents/sessions/{thread_response.json()['id']}", headers=admin_headers)
     assert snapshot.status_code == 200, snapshot.text
-    thread = snapshot.json()
+    thread = snapshot.json()["yuxi"]
     assert thread["project_id"] == project["id"]
     assert project["workdir_path"] == directory_name
 
-    rebind = await test_client.patch(
-        f"/api/v1/agents/sessions/{thread['id']}",
+    rebind = await test_client.post(
+        f"/api/v1/agents/sessions/{snapshot.json()['id']}",
         headers=admin_headers,
         json={"project_id": str(uuid.uuid4())},
     )
@@ -283,7 +281,7 @@ async def test_project_rename_and_delete_soft_delete_sessions_but_keep_workdir(
                 "title": make_test_session_title(f"project-delete-{suffix}"),
             },
         )
-        assert thread_response.status_code == 200, thread_response.text
+        assert thread_response.status_code == 201, thread_response.text
         thread_ids.append(thread_response.json()["id"])
 
     cross_user_rename = await test_client.put(
@@ -320,7 +318,7 @@ async def test_project_rename_and_delete_soft_delete_sessions_but_keep_workdir(
 
     threads_response = await test_client.get("/api/v1/agents/sessions", headers=admin_headers)
     assert threads_response.status_code == 200, threads_response.text
-    assert set(thread_ids).isdisjoint({item["id"] for item in threads_response.json()})
+    assert set(thread_ids).isdisjoint({item["id"] for item in threads_response.json()["data"]})
 
     marker_read = await test_client.get(
         "/api/workspace/tree",
@@ -347,7 +345,7 @@ async def test_project_rename_and_delete_soft_delete_sessions_but_keep_workdir(
     for thread_id in thread_ids:
         history = await test_client.get(f"/api/v1/agents/sessions/{thread_id}", headers=admin_headers)
         assert history.status_code == 200, history.text
-        assert history.json()["status"] == "archived"
+        assert history.json()["yuxi"]["archived"] is True
 
     repeated_delete = await test_client.delete(
         f"/api/projects/{project['id']}",

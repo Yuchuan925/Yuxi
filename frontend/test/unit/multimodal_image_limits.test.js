@@ -15,7 +15,7 @@ import {
 
 const image = (name = 'a.png', type = 'image/png') => ({ name, type })
 const doc = (name = 'a.pdf', type = 'application/pdf') => ({ name, type })
-const withBytes = (length) => ({ imageContent: 'x'.repeat(length) })
+const withBytes = (length) => ({ imageUrl: 'x'.repeat(length) })
 
 test('拖拽分流：图片进图片通道、其余进附件通道', () => {
   const { images, others } = splitDroppedFiles([image(), doc(), image('b.jpg', 'image/jpeg')])
@@ -43,7 +43,7 @@ test('拖拽分流：缺 type 的文件按非图片处理，不误判成图片',
   assert.equal(others.length, 1)
 })
 
-test('base64 总量按 imageContent 长度累加', () => {
+test('base64 总量按 imageUrl 长度累加', () => {
   assert.equal(sumBase64Bytes([]), 0)
   assert.equal(sumBase64Bytes([withBytes(10), withBytes(5)]), 15)
   // 缺字段的项记为 0，不抛错
@@ -102,24 +102,24 @@ test('选图占位：上传中的占位计入名额，两批并发选图不会�
 
 test('上传回填：按 localId 原位更新，位置不变', () => {
   const current = [
-    { localId: 'a', status: 'done', imageContent: 'AAA' },
+    { localId: 'a', status: 'done', imageUrl: 'AAA' },
     { localId: 'b', status: 'uploading' },
-    { localId: 'c', status: 'done', imageContent: 'CCC' }
+    { localId: 'c', status: 'done', imageUrl: 'CCC' }
   ]
 
-  const settled = settleUploadedImage(current, 'b', { success: true, imageContent: 'BBB' })
+  const settled = settleUploadedImage(current, 'b', { success: true, imageUrl: 'BBB' })
 
   assert.equal(settled.status, 'done')
-  assert.equal(settled.imageContent, 'BBB')
+  assert.equal(settled.imageUrl, 'BBB')
   // 回填发生在原位：乱序完成的多次回填不会改变列表顺序
   assert.deepEqual(current.map((item) => item.localId), ['a', 'b', 'c'])
-  assert.deepEqual(current.map((item) => item.imageContent), ['AAA', 'BBB', 'CCC'])
+  assert.deepEqual(current.map((item) => item.imageUrl), ['AAA', 'BBB', 'CCC'])
 })
 
 test('上传回填：等待期间占位已被移除时返回 null，结果丢弃', () => {
   const current = [{ localId: 'a', status: 'uploading' }]
 
-  assert.equal(settleUploadedImage(current, 'removed-id', { success: true, imageContent: 'X' }), null)
+  assert.equal(settleUploadedImage(current, 'removed-id', { success: true, imageUrl: 'X' }), null)
   // 被移除的占位不因迟到的上传结果复活
   assert.deepEqual(current, [{ localId: 'a', status: 'uploading' }])
 })

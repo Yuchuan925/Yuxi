@@ -43,9 +43,30 @@ def validate_request(authorization: str | None, request: dict) -> str | None:
         return "expected_input_missing"
     if EXPECTED_PRELOADED_SKILL_MARKER not in serialized_messages:
         return "preloaded_skill_missing"
+    if "DETERMINISTIC_FROZEN_CONFIG" in serialized_messages:
+        system_messages = " ".join(
+            str(message.get("content", "")) for message in messages if message.get("role") == "system"
+        )
+        if "FROZEN_SESSION_PROMPT" not in system_messages or "CHANGED_DEFINITION_PROMPT" in system_messages:
+            return "session_config_snapshot_mismatch"
     bound_roots = re.findall(r"DETERMINISTIC_BOUND_ROOT:([0-9a-f]+)", serialized_messages)
     if bound_roots and f"BOUND_SKILL_{bound_roots[-1]}" not in serialized_messages:
         return "bound_root_snapshot_mismatch"
+    user_messages = [message for message in messages if message.get("role") == "user"]
+    current_content = json.dumps(user_messages[-1].get("content"), ensure_ascii=False)
+    forbidden = re.findall(r"DETERMINISTIC_ATTACHMENT_ABSENT:([a-z0-9.-]+)", current_content)
+    contexts = re.findall(r"<attachment_context>(.*?)</attachment_context>", current_content, re.DOTALL)
+    if forbidden and (not contexts or any(name in contexts[-1] for name in forbidden)):
+        return "future_attachment_in_current_input"
+    if "DETERMINISTIC_PNG_INPUT" in serialized_messages:
+        image_urls = [
+            part.get("image_url", {}).get("url", "")
+            for message in user_messages
+            for part in message.get("content", [])
+            if isinstance(message.get("content"), list) and isinstance(part, dict) and part.get("type") == "image_url"
+        ]
+        if not any(url.startswith("data:image/png;base64,") for url in image_urls):
+            return "png_input_mime_changed"
     tools = request.get("tools")
     tool_names = {
         item.get("function", {}).get("name")

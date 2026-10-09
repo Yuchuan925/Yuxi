@@ -153,8 +153,7 @@ async def test_checkpoint_cleanup_preserves_original_tasks_and_state(monkeypatch
     from langchain_core.messages import AIMessage
     from langgraph.checkpoint.memory import InMemorySaver
 
-    from yuxi.modules.agents.runtime.checkpoint_cleanup import CheckpointCleanupModel
-    from yuxi.modules.agents.services.turns import _drain_waitpoint_checkpoint
+    from yuxi.modules.agents.runtime.checkpoint_cleanup import CheckpointCleanupModel, cancel_waitpoint_checkpoint
 
     context = _context()
     context.thread_id, context.uid = "cleanup-thread", "deleted-user"
@@ -195,9 +194,9 @@ async def test_checkpoint_cleanup_preserves_original_tasks_and_state(monkeypatch
     cleanup = await agent_class().get_graph(context=context, checkpoint_only=True)
     assert set(cleanup.nodes) == set(original.nodes)
     assert set(cleanup.channels) == set(original.channels)
-    await _drain_waitpoint_checkpoint(cleanup, config)
+    await cancel_waitpoint_checkpoint(cleanup, config)
     saved = await original.aget_state(config)
     assert saved.next == () and saved.interrupts == ()
     assert saved.values["messages"][-1].content == "[已取消]"
-    assert saved.values["messages"][-1].tool_calls == []
+    assert saved.values["messages"][-1].tool_call_id == "one"
     assert saved.values["activated_skills"] == ["retained"]

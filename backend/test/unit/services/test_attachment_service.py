@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock
 import io
 import os
 import tempfile
-from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 import pytest
@@ -16,55 +16,9 @@ os.environ.setdefault(
 
 from yuxi.modules.agents.runtime.sandbox.paths import workdir_scope_from_runtime_path
 import yuxi.modules.agents.services.attachments as service
-import yuxi.modules.workspace.services.bindings as workdir_service
+from yuxi.modules.agents.models.attachments import AgentAttachment
 
 pytestmark = pytest.mark.unit
-
-
-@pytest.mark.asyncio
-async def test_tmp_attachment_parse_preserves_http_exception(monkeypatch):
-    """服务层保留解析链路抛出的 HTTP 状态、详情和响应头。"""
-    from fastapi import HTTPException
-
-    error = HTTPException(503, "parser unavailable", headers={"Retry-After": "30"})
-    minio_client = FakeMinioClient()
-
-    async def parse(*args, **kwargs):
-        """模拟解析服务暂时不可用。"""
-        raise error
-
-    monkeypatch.setattr(service, "get_minio_client", lambda: minio_client)
-    monkeypatch.setattr("yuxi.modules.documents.service.parse", parse)
-
-    with pytest.raises(HTTPException) as caught:
-        await service.parse_tmp_attachment_view(
-            object_name="tmp/chat_attachments/user-1/file-1/original/report.pdf",
-            parse_method="disable",
-            current_uid="user-1",
-        )
-
-    assert caught.value is error
-    assert minio_client.uploads == []
-
-
-@pytest.mark.asyncio
-async def test_tmp_attachment_rejects_same_user_from_other_app(monkeypatch):
-    """同一 UID 的不同 APP 无法解析彼此临时对象。"""
-    from fastapi import HTTPException
-
-    monkeypatch.setattr(service, "get_minio_client", FakeMinioClient)
-    uploaded = await service.upload_tmp_attachment_view(
-        file_content=b"content",
-        filename="report.pdf",
-        content_type="application/pdf",
-        current_uid="user-1",
-        app_id="app-a",
-    )
-    with pytest.raises(HTTPException) as exc:
-        await service.parse_tmp_attachment_view(
-            object_name=uploaded["object_name"], parse_method="disable", current_uid="user-1", app_id="app-b"
-        )
-    assert exc.value.status_code == 403
 
 
 class FakeMinioClient:
@@ -93,7 +47,7 @@ class FakeMinioClient:
             url=f"http://minio:9000/{bucket_name}/{object_name}",
         )
 
-    async def adownload_file(self, bucket_name: str, object_name: str) -> bytes:
+    async def adownload_file(self, bucket_name: str, object_name: str, *, max_bytes=None) -> bytes:
         try:
             return self.objects[(bucket_name, object_name)]
         except KeyError as exc:
@@ -132,102 +86,9 @@ class FakeMinioClient:
         self.deleted_prefixes.append((bucket_name, prefix))
         return len(keys)
 
-    async def alist_object_metadata(self, bucket_name: str, prefix: str) -> list[dict]:
-        del bucket_name, prefix
-        return list(self.object_metadata)
-
-
-@dataclass
-class FakeSession:
-    id: int = 1
-    uid: str = "user-1"
-    agent_id: str = "agent-1"
-    status: str = "active"
-    app_id: str | None = None
-    extra_metadata: dict | None = None
-
-
-class FakeSessionRepository:
-    def __init__(self, db):
-        self.agent_session = FakeSession()
-        self.attachments: list[dict] = []
-
-    async def get_session_by_thread_id(self, thread_id: str):
-        return self.agent_session
-
-    async def add_attachment(self, session_record_id: int, attachment_info: dict):
-        self.attachments.append(attachment_info)
-        return attachment_info
-
-    async def add_attachments(self, session_record_id: int, attachment_infos: list[dict]):
-        self.attachments.extend(attachment_infos)
-        return attachment_infos
-
-    async def get_attachments(self, session_record_id: int):
-        return list(self.attachments)
-
-    async def lock_attachments(self, session_record_id: int):
-        return list(self.attachments)
-
-    async def remove_attachment(self, session_record_id: int, file_id: str):
-        before = len(self.attachments)
-        self.attachments = [item for item in self.attachments if item.get("file_id") != file_id]
-        return len(self.attachments) != before
-
-
-@pytest.mark.asyncio
-async def test_thread_attachment_rejects_same_user_from_other_app(monkeypatch):
-    """附件读取在 service 边界拒绝同 UID 的跨 APP Thread。"""
-    repo = FakeSessionRepository(None)
-    repo.agent_session.app_id = "app-a"
-    monkeypatch.setattr(service, "SessionRepository", lambda _db: repo)
-    with pytest.raises(service.HTTPException) as exc:
-        await service.list_thread_attachments_view(
-            thread_id="thread-1", db=FakeDB(), current_uid="user-1", app_id="app-b"
-        )
-    assert exc.value.status_code == 404
-
-
-class FakeDB:
-    def __init__(self):
-        self.commit_count = 0
-        self.rollback_count = 0
-
-    async def commit(self):
-        self.commit_count += 1
-
-    async def rollback(self):
-        self.rollback_count += 1
-
-
-class FailingCommitDB(FakeDB):
-    async def commit(self):
-        self.commit_count += 1
-        raise RuntimeError("commit failed")
-
-
-class EmptyAgentInputRepository:
-    def __init__(self, db):
-        del db
-
-    async def get_for_scope(self, **kwargs):
-        del kwargs
-        return None
-
-
-class EmptyAgentRunRepository:
-    def __init__(self, db):
-        del db
-
-    async def get_active_run_by_thread_for_user(self, **kwargs):
-        del kwargs
-        return None
-
-
-@pytest.fixture(autouse=True)
-def stub_attachment_usage_checks(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(service, "AgentInputRepository", EmptyAgentInputRepository)
-    monkeypatch.setattr(service, "AgentRunRepository", EmptyAgentRunRepository)
+    async def astat_file(self, bucket_name, object_name):
+        data = self.objects.get((bucket_name, object_name))
+        return len(data) if data is not None else None
 
 
 WORKDIR_RELATIVE_PATH = "projects/11111111-1111-4111-8111-111111111111"
@@ -269,329 +130,6 @@ class FakeWorkdir:
                 )
 
 
-class PendingAgentInputRepository(EmptyAgentInputRepository):
-    async def get_for_scope(self, **kwargs):
-        del kwargs
-        return SimpleNamespace(status="pending")
-
-
-class ActiveAgentRunRepository(EmptyAgentRunRepository):
-    async def get_active_run_by_thread_for_user(self, **kwargs):
-        del kwargs
-        return SimpleNamespace(id="active-run")
-
-
-@pytest.mark.asyncio
-async def test_upload_tmp_attachment_rejects_oversize_before_storage(monkeypatch):
-    """直接调用服务也不能绕过附件大小限制。"""
-    fake_minio = FakeMinioClient()
-    monkeypatch.setattr(service, "get_minio_client", lambda: fake_minio)
-    monkeypatch.setattr(service, "MAX_ATTACHMENT_SIZE_BYTES", 5)
-    with pytest.raises(service.HTTPException) as caught:
-        await service.upload_tmp_attachment_view(
-            file_content=b"123456", filename="file.txt", content_type="text/plain", current_uid="user-1"
-        )
-    assert caught.value.status_code == 400
-    assert fake_minio.objects == {}
-
-
-@pytest.mark.asyncio
-async def test_upload_tmp_attachment_writes_user_scoped_minio_object(monkeypatch):
-    fake_minio = FakeMinioClient()
-    monkeypatch.setattr(service, "get_minio_client", lambda: fake_minio)
-
-    response = await service.upload_tmp_attachment_view(
-        file_content=b"pdf-bytes",
-        filename="demo.pdf",
-        content_type="application/pdf",
-        current_uid="user-1",
-    )
-
-    assert response["object_name"].startswith("tmp/chat_attachments/user-1/")
-    assert response["parse_methods"][0] == "disable"
-    assert fake_minio.objects[("knowledgebases", response["object_name"])] == b"pdf-bytes"
-    assert response["file_name"] == "demo.pdf"
-    assert response["file_type"] == "application/pdf"
-    assert response["file_size"] == len(b"pdf-bytes")
-
-
-@pytest.mark.asyncio
-async def test_upload_tmp_attachment_cleans_only_expired_user_tmp_groups(monkeypatch):
-    fake_minio = FakeMinioClient()
-    now = datetime.now(UTC)
-    fake_minio.object_metadata = [
-        {
-            "object_name": "tmp/chat_attachments/user-1/expired/original/old.pdf",
-            "last_modified": now - service.TMP_ATTACHMENT_TTL - timedelta(seconds=1),
-        },
-        {
-            "object_name": "tmp/chat_attachments/user-1/recent/original/new.pdf",
-            "last_modified": now,
-        },
-        {
-            "object_name": "tmp/chat_attachments/user-2/foreign/original/no.pdf",
-            "last_modified": now - service.TMP_ATTACHMENT_TTL - timedelta(seconds=1),
-        },
-    ]
-    monkeypatch.setattr(service, "get_minio_client", lambda: fake_minio)
-
-    await service.upload_tmp_attachment_view(
-        file_content=b"text",
-        filename="demo.txt",
-        content_type="text/plain",
-        current_uid="user-1",
-    )
-
-    assert fake_minio.deleted_prefixes == [("knowledgebases", "tmp/chat_attachments/user-1/expired/")]
-
-
-def test_webp_attachment_requires_an_explicit_capable_ocr_engine():
-    with pytest.raises(service.HTTPException, match="deepseek_ocr"):
-        service._normalize_parse_method("scan.webp", None, "disable")
-
-    assert service._normalize_parse_method("scan.webp", "deepseek_ocr", "disable") == "deepseek_ocr"
-
-
-@pytest.mark.asyncio
-async def test_parse_tmp_attachment_uses_selected_method_and_uploads_markdown(monkeypatch):
-    fake_minio = FakeMinioClient()
-    object_name = "tmp/chat_attachments/user-1/tmp-1/original/demo.pdf"
-    fake_minio.objects[("knowledgebases", object_name)] = b"pdf-bytes"
-    monkeypatch.setattr(service, "get_minio_client", lambda: fake_minio)
-
-    parse_calls = []
-
-    async def fake_parse(source: str, output_dir: Path, params: dict | None = None) -> str:
-        parse_calls.append({"source": source, "params": params})
-        return _write_parse_result(output_dir, "# parsed")
-
-    import yuxi.modules.documents.service as ocr_service
-
-    monkeypatch.setattr(ocr_service, "parse", fake_parse)
-
-    response = await service.parse_tmp_attachment_view(
-        object_name=object_name,
-        parse_method="disable",
-        current_uid="user-1",
-    )
-
-    assert parse_calls == [
-        {
-            "source": f"minio://knowledgebases/{object_name}",
-            "params": {"ocr_engine": "disable"},
-        }
-    ]
-    assert response["parsed_object_name"].endswith("/document.md")
-    assert service.Workspace("user-1").read_authorized_file("/" + response["parsed_object_name"], 1024) == b"# parsed"
-    assert fake_minio.uploads == []
-
-
-@pytest.fixture
-def confirm_attachment_env(monkeypatch: pytest.MonkeyPatch):
-    """构造 confirm 流程所需的 MinIO 与仓库假实现，并挂载到 service 模块。"""
-    fake_minio = FakeMinioClient()
-    fake_repo = FakeSessionRepository(db=None)
-    backend = FakeWorkdirStorage()
-
-    monkeypatch.setattr(service, "get_minio_client", lambda: fake_minio)
-    monkeypatch.setattr(service, "SessionRepository", lambda db: fake_repo)
-
-    async def resolve_binding(**kwargs):
-        del kwargs
-        return SimpleNamespace(workdir=FakeWorkdir(backend))
-
-    monkeypatch.setattr(workdir_service, "resolve_authorized_session_workdir", resolve_binding)
-    fake_repo.workdir_backend = backend
-
-    return fake_minio, fake_repo
-
-
-@pytest.mark.asyncio
-async def test_confirm_tmp_thread_attachments_writes_realtime_workdir(confirm_attachment_env):
-    fake_minio, fake_repo = confirm_attachment_env
-    original_object = "tmp/chat_attachments/user-1/tmp-1/original/demo.pdf"
-    parsed_object = "tmp/chat_attachments/user-1/tmp-1/parsed/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/document.md"
-    fake_minio.objects[("knowledgebases", original_object)] = b"pdf-bytes"
-    _write_local_parsed_object(parsed_object, b"# parsed")
-
-    response = await service.confirm_tmp_thread_attachments_view(
-        thread_id="thread-1",
-        attachments=[
-            {
-                "file_type": "application/pdf",
-                "object_name": original_object,
-                "parsed_object_name": parsed_object,
-            }
-        ],
-        db=FakeDB(),
-        current_uid="user-1",
-    )
-
-    [attachment] = response["attachments"]
-    assert attachment["status"] == "parsed"
-    stored = fake_repo.attachments[0]
-    assert set(stored) == {
-        "file_id",
-        "file_name",
-        "file_type",
-        "file_size",
-        "status",
-        "uploaded_at",
-        "path",
-        "original_path",
-        "parsed_directory",
-    }
-    assert stored["original_path"].startswith(
-        "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/uploads/"
-    )
-    assert stored["path"].startswith(
-        "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/uploads/attachments/"
-    )
-    assert fake_repo.workdir_backend.files[_scope_path(stored["original_path"])] == b"pdf-bytes"
-    assert fake_repo.workdir_backend.files[_scope_path(stored["path"])] == b"# parsed"
-    assert fake_minio.deleted_prefixes == [("knowledgebases", "tmp/chat_attachments/user-1/tmp-1/")]
-
-
-@pytest.mark.asyncio
-async def test_parse_tmp_attachment_uses_object_name_for_type_validation(monkeypatch):
-    fake_minio = FakeMinioClient()
-    object_name = "tmp/chat_attachments/user-1/tmp-1/original/demo.docx"
-    fake_minio.objects[("knowledgebases", object_name)] = b"docx-bytes"
-    monkeypatch.setattr(service, "get_minio_client", lambda: fake_minio)
-
-    with pytest.raises(service.HTTPException) as exc_info:
-        await service.parse_tmp_attachment_view(
-            object_name=object_name,
-            parse_method="disable",
-            current_uid="user-1",
-        )
-
-    assert exc_info.value.status_code == 400
-    assert "PDF 和图片" in exc_info.value.detail
-
-
-@pytest.mark.asyncio
-async def test_parse_tmp_attachment_handles_url_metacharacters(monkeypatch):
-    fake_minio = FakeMinioClient()
-    object_name = "tmp/chat_attachments/user-1/tmp-1/original/q1?.pdf"
-    fake_minio.objects[("knowledgebases", object_name)] = b"pdf-bytes"
-    monkeypatch.setattr(service, "get_minio_client", lambda: fake_minio)
-
-    parse_calls = []
-
-    async def fake_parse(source: str, output_dir: Path, params: dict | None = None) -> str:
-        parse_calls.append(source)
-        return _write_parse_result(output_dir, "# parsed")
-
-    import yuxi.modules.documents.service as ocr_service
-
-    monkeypatch.setattr(ocr_service, "parse", fake_parse)
-
-    response = await service.parse_tmp_attachment_view(
-        object_name=object_name,
-        parse_method="disable",
-        current_uid="user-1",
-    )
-
-    assert parse_calls == ["minio://knowledgebases/tmp/chat_attachments/user-1/tmp-1/original/q1%3F.pdf"]
-    assert response["parsed_object_name"].endswith("/document.md")
-
-
-@pytest.mark.asyncio
-async def test_confirm_tmp_thread_attachments_rejects_non_parsed_object(confirm_attachment_env):
-    fake_minio, fake_repo = confirm_attachment_env
-    original_object = "tmp/chat_attachments/user-1/tmp-1/original/demo.pdf"
-    fake_minio.objects[("knowledgebases", original_object)] = b"pdf-bytes"
-
-    with pytest.raises(service.HTTPException) as exc_info:
-        await service.confirm_tmp_thread_attachments_view(
-            thread_id="thread-1",
-            attachments=[
-                {
-                    "file_type": "application/pdf",
-                    "object_name": original_object,
-                    "parsed_object_name": original_object,
-                }
-            ],
-            db=None,
-            current_uid="user-1",
-        )
-
-    assert exc_info.value.status_code == 400
-    assert fake_repo.attachments == []
-    assert fake_repo.workdir_backend.files == {}
-
-
-@pytest.mark.asyncio
-async def test_confirm_tmp_thread_attachments_rolls_back_workdir_on_commit_failure(confirm_attachment_env):
-    fake_minio, fake_repo = confirm_attachment_env
-    original_object = "tmp/chat_attachments/user-1/tmp-1/original/demo.pdf"
-    parsed_object = "tmp/chat_attachments/user-1/tmp-1/parsed/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/document.md"
-    fake_minio.objects[("knowledgebases", original_object)] = b"pdf-bytes"
-    _write_local_parsed_object(parsed_object, b"# parsed")
-    db = FailingCommitDB()
-
-    with pytest.raises(RuntimeError, match="commit failed"):
-        await service.confirm_tmp_thread_attachments_view(
-            thread_id="thread-1",
-            attachments=[{"object_name": original_object, "parsed_object_name": parsed_object}],
-            db=db,
-            current_uid="user-1",
-        )
-
-    assert db.commit_count == 1
-    assert db.rollback_count == 1
-    assert fake_repo.workdir_backend.files == {}
-    assert fake_minio.deleted_prefixes == []
-
-
-@pytest.mark.asyncio
-async def test_confirm_tmp_thread_attachments_validates_batch_before_commit(confirm_attachment_env):
-    fake_minio, fake_repo = confirm_attachment_env
-    valid_object = "tmp/chat_attachments/user-1/tmp-1/original/valid.pdf"
-    missing_object = "tmp/chat_attachments/user-1/tmp-2/original/missing.pdf"
-    fake_minio.objects[("knowledgebases", valid_object)] = b"pdf-bytes"
-
-    with pytest.raises(service.HTTPException) as exc_info:
-        await service.confirm_tmp_thread_attachments_view(
-            thread_id="thread-1",
-            attachments=[
-                {"object_name": valid_object},
-                {"object_name": missing_object},
-            ],
-            db=None,
-            current_uid="user-1",
-        )
-
-    assert exc_info.value.status_code == 400
-    assert fake_repo.attachments == []
-
-
-@pytest.mark.asyncio
-async def test_confirm_tmp_thread_attachments_keeps_duplicate_names_separate(confirm_attachment_env):
-    fake_minio, fake_repo = confirm_attachment_env
-    first_object = "tmp/chat_attachments/user-1/tmp-1/original/report.pdf"
-    second_object = "tmp/chat_attachments/user-1/tmp-2/original/report.pdf"
-    fake_minio.objects[("knowledgebases", first_object)] = b"first"
-    fake_minio.objects[("knowledgebases", second_object)] = b"second"
-
-    response = await service.confirm_tmp_thread_attachments_view(
-        thread_id="thread-1",
-        attachments=[
-            {"object_name": first_object},
-            {"object_name": second_object},
-        ],
-        db=FakeDB(),
-        current_uid="user-1",
-    )
-
-    first, second = response["attachments"]
-    assert first["original_path"] != second["original_path"]
-    first_record, second_record = fake_repo.attachments
-    assert fake_repo.workdir_backend.files[_scope_path(first_record["original_path"])] == b"first"
-    assert fake_repo.workdir_backend.files[_scope_path(second_record["original_path"])] == b"second"
-
-
 @pytest.mark.asyncio
 async def test_store_attachment_normalizes_persisted_file_name(monkeypatch):
     del monkeypatch
@@ -601,133 +139,15 @@ async def test_store_attachment_normalizes_persisted_file_name(monkeypatch):
         workdir=FakeWorkdir(backend),
         file_id="file-1",
         file_name=" report.txt",
-        file_type="text/plain",
         file_content=b"content",
     )
 
-    assert record["file_name"] == "report.txt"
+    assert backend.files["/uploads/file-1_report.txt"] == b"content"
     assert (
         record["original_path"]
         == "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/uploads/file-1_report.txt"
     )
     assert backend.files[_scope_path(record["original_path"])] == b"content"
-
-
-@pytest.mark.asyncio
-async def test_delete_thread_attachment_updates_live_workdir_even_during_runtime(monkeypatch):
-    fake_repo = FakeSessionRepository(db=None)
-    backend = FakeWorkdirStorage()
-    original = "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/uploads/file-1_demo.pdf"
-    parsed = "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/uploads/attachments/file-1_demo.md"
-    backend.files = {_scope_path(original): b"pdf", _scope_path(parsed): b"markdown"}
-    fake_repo.attachments = [{"file_id": "file-1", "file_name": "demo.pdf", "original_path": original, "path": parsed}]
-
-    async def resolve_binding(**kwargs):
-        del kwargs
-        return SimpleNamespace(workdir=FakeWorkdir(backend))
-
-    monkeypatch.setattr(service, "SessionRepository", lambda _db: fake_repo)
-    monkeypatch.setattr(workdir_service, "resolve_authorized_session_workdir", resolve_binding)
-    result = await service.delete_thread_attachment_view(
-        thread_id="thread-1", file_id="file-1", db=FakeDB(), current_uid="user-1"
-    )
-
-    assert result == {"message": "附件已删除"}
-    assert fake_repo.attachments == []
-    assert backend.files == {}
-
-
-@pytest.mark.asyncio
-async def test_delete_thread_attachment_rejects_pending_input_use(monkeypatch):
-    fake_repo = FakeSessionRepository(db=None)
-    backend = FakeWorkdirStorage()
-    original = "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/uploads/file-1_demo.pdf"
-    backend.files = {_scope_path(original): b"pdf"}
-    attachment = {
-        "file_id": "file-1",
-        "file_name": "demo.pdf",
-        "original_path": original,
-        "path": original,
-        "input_id": "input-1",
-    }
-    fake_repo.attachments = [attachment]
-
-    async def resolve_binding(**kwargs):
-        del kwargs
-        return SimpleNamespace(workdir=FakeWorkdir(backend))
-
-    monkeypatch.setattr(service, "SessionRepository", lambda _db: fake_repo)
-    monkeypatch.setattr(workdir_service, "resolve_authorized_session_workdir", resolve_binding)
-    monkeypatch.setattr(service, "AgentInputRepository", PendingAgentInputRepository)
-
-    with pytest.raises(service.HTTPException) as exc_info:
-        await service.delete_thread_attachment_view(
-            thread_id="thread-1", file_id="file-1", db=FakeDB(), current_uid="user-1"
-        )
-
-    assert exc_info.value.status_code == 409
-    assert fake_repo.attachments == [attachment]
-    assert backend.files == {_scope_path(original): b"pdf"}
-
-
-@pytest.mark.asyncio
-async def test_delete_thread_attachment_rejects_active_thread_run(monkeypatch):
-    fake_repo = FakeSessionRepository(db=None)
-    backend = FakeWorkdirStorage()
-    original = "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/uploads/file-1_demo.pdf"
-    backend.files = {_scope_path(original): b"pdf"}
-    attachment = {"file_id": "file-1", "file_name": "demo.pdf", "original_path": original, "path": original}
-    fake_repo.attachments = [attachment]
-
-    async def resolve_binding(**kwargs):
-        del kwargs
-        return SimpleNamespace(workdir=FakeWorkdir(backend))
-
-    monkeypatch.setattr(service, "SessionRepository", lambda _db: fake_repo)
-    monkeypatch.setattr(workdir_service, "resolve_authorized_session_workdir", resolve_binding)
-    monkeypatch.setattr(service, "AgentRunRepository", ActiveAgentRunRepository)
-
-    with pytest.raises(service.HTTPException) as exc_info:
-        await service.delete_thread_attachment_view(
-            thread_id="thread-1", file_id="file-1", db=FakeDB(), current_uid="user-1"
-        )
-
-    assert exc_info.value.status_code == 409
-    assert fake_repo.attachments == [attachment]
-    assert backend.files == {_scope_path(original): b"pdf"}
-
-
-@pytest.mark.asyncio
-async def test_delete_thread_attachment_does_not_delete_bytes_before_metadata_commit(monkeypatch):
-    fake_repo = FakeSessionRepository(db=None)
-    backend = FakeWorkdirStorage()
-    original = "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/uploads/file-1_demo.pdf"
-    backend.files = {_scope_path(original): b"pdf"}
-    fake_repo.attachments = [
-        {"file_id": "file-1", "file_name": "demo.pdf", "original_path": original, "path": original}
-    ]
-
-    async def fail_remove(_session_record_id: int, _file_id: str):
-        raise RuntimeError("database unavailable")
-
-    fake_repo.remove_attachment = fail_remove
-
-    async def resolve_binding(**kwargs):
-        del kwargs
-        return SimpleNamespace(workdir=FakeWorkdir(backend))
-
-    monkeypatch.setattr(service, "SessionRepository", lambda _db: fake_repo)
-    monkeypatch.setattr(workdir_service, "resolve_authorized_session_workdir", resolve_binding)
-
-    with pytest.raises(RuntimeError, match="database unavailable"):
-        await service.delete_thread_attachment_view(
-            thread_id="thread-1",
-            file_id="file-1",
-            db=FakeDB(),
-            current_uid="user-1",
-        )
-
-    assert backend.files == {_scope_path(original): b"pdf"}
 
 
 @pytest.fixture(autouse=True)
@@ -777,9 +197,7 @@ async def test_cancelled_attachment_write_reclaims_uncommitted_original(tmp_path
 
     monkeypatch.setattr(Workdir, "copy_file_from_path", copy)
     task = asyncio.create_task(
-        service._store_attachment(
-            workdir=workdir, file_id="file-id", file_name="input.txt", file_type="text/plain", file_content=b"original"
-        )
+        service._store_attachment(workdir=workdir, file_id="file-id", file_name="input.txt", file_content=b"original")
     )
     assert await asyncio.to_thread(started.wait, 5)
     task.cancel()
@@ -789,3 +207,178 @@ async def test_cancelled_attachment_write_reclaims_uncommitted_original(tmp_path
         await task
     with pytest.raises(FileNotFoundError):
         workdir.read_file("/uploads/file-id_input.txt", 1024)
+
+
+class FakeAttachmentRepository:
+    """只隔离持久化；文件内容经过真实存储用例回读。"""
+
+    def __init__(self, db):
+        self.db = db
+
+    async def create(self, **values):
+        record = AgentAttachment(**values)
+        self.db.records[record.id] = record
+        return record
+
+    async def get_for_scope(self, file_id, uid, app_id, *, lock=False):
+        record = self.db.records.get(file_id)
+        return record if record and (record.uid, record.app_id) == (uid, app_id) else None
+
+    async def expired_drafts(self, uid, app_id):
+        return []
+
+
+@pytest.fixture
+def draft_env(monkeypatch):
+    """附件记录与内容分开回读；锁的并发语义由真实 PG 验证。"""
+    client = FakeMinioClient()
+    db = SimpleNamespace(records={}, commit=AsyncMock(), rollback=AsyncMock())
+    monkeypatch.setattr(service, "get_minio_client", lambda: client)
+    monkeypatch.setattr(service, "AttachmentRepository", FakeAttachmentRepository)
+    return client, db
+
+
+@pytest.mark.asyncio
+async def test_draft_upload_has_one_record_and_content_without_manifest(draft_env):
+    """上传只保存一份二进制，文件信息由附件行独占。"""
+    client, db = draft_env
+    result = await service.upload_draft_file(
+        file_content=b"hello",
+        filename="report.txt",
+        content_type="text/plain",
+        scope=service.ActorScope("user-1", None),
+        db=db,
+    )
+    assert result["status"] == "draft" and result["bytes"] == 5
+    assert result["expires_at"] - result["created_at"] == 24 * 3600
+    assert not {"object_name", "parsed_source", "path", "session_id"} & result.keys()
+    [record] = db.records.values()
+    assert (record.uid, record.app_id, record.input_id) == ("user-1", None, None)
+    assert list(client.objects.values()) == [b"hello"]
+    assert client.objects["knowledgebases", record.object_name] == b"hello"
+    assert not any(name.endswith("manifest.json") for _, name in client.objects)
+
+
+@pytest.mark.asyncio
+async def test_draft_oversize_has_no_record_or_content(draft_env):
+    """超限在真实上传边界失败，没有持久副作用。"""
+    client, db = draft_env
+    with pytest.raises(service.HTTPException, match="附件过大"):
+        await service.upload_draft_file(
+            file_content=b"x" * (service.MAX_ATTACHMENT_SIZE_BYTES + 1),
+            filename="large.bin",
+            content_type=None,
+            scope=service.ActorScope("user-1", None),
+            db=db,
+        )
+    assert not db.records and not client.objects
+
+
+@pytest.mark.asyncio
+async def test_draft_database_failure_removes_unowned_content(draft_env):
+    """行提交失败时撤回上传内容，不能留下没有 Owner 的文件。"""
+    client, db = draft_env
+    db.commit.side_effect = RuntimeError("commit failed")
+    with pytest.raises(RuntimeError, match="commit failed"):
+        await service.upload_draft_file(
+            file_content=b"hello",
+            filename="report.txt",
+            content_type="text/plain",
+            scope=service.ActorScope("user-1", None),
+            db=db,
+        )
+    assert client.objects == {}
+
+
+@pytest.mark.asyncio
+async def test_draft_isolated_by_user_and_app_and_rejects_expiry(draft_env):
+    """拒绝其他作用域和过期草稿，不依赖对象路径猜测归属。"""
+    _, db = draft_env
+    scope = service.ActorScope("user-1", "app-a")
+    result = await service.upload_draft_file(
+        file_content=b"pdf", filename="report.pdf", content_type="application/pdf", scope=scope, db=db
+    )
+    for other in (
+        service.ActorScope("user-2", "app-a"),
+        service.ActorScope("user-1", "app-b"),
+        service.ActorScope("user-1", None),
+    ):
+        with pytest.raises(service.HTTPException) as error:
+            await service.get_draft_file(file_id=result["id"], scope=other, db=db)
+        assert error.value.status_code == 404
+    db.records[result["id"]].expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    with pytest.raises(service.HTTPException) as error:
+        await service.get_draft_file(file_id=result["id"], scope=scope, db=db)
+    assert error.value.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_bound_draft_cannot_be_deleted_or_reparsed(draft_env):
+    """绑定后的来源只能由统一准备链路消费。"""
+    client, db = draft_env
+    scope = service.ActorScope("user-1", None)
+    result = await service.upload_draft_file(
+        file_content=b"pdf", filename="report.pdf", content_type="application/pdf", scope=scope, db=db
+    )
+    db.records[result["id"]].status = "preparing"
+    before = dict(client.objects)
+    for operation in (
+        service.delete_draft_file(file_id=result["id"], scope=scope, db=db),
+        service.parse_draft_file(file_id=result["id"], parse_method="disable", scope=scope, db=db),
+    ):
+        with pytest.raises(service.HTTPException) as error:
+            await operation
+        assert error.value.status_code == 409
+    assert client.objects == before
+
+
+@pytest.mark.asyncio
+async def test_private_parse_records_complete_directory_and_preserves_failure(draft_env, monkeypatch):
+    """解析只更新附件行；失败保留原件与上一份成功解析内容。"""
+    _, db = draft_env
+    scope = service.ActorScope("user-1", None)
+    uploaded = await service.upload_draft_file(
+        file_content=b"pdf", filename="q1?.pdf", content_type="application/pdf", scope=scope, db=db
+    )
+    sources = []
+
+    async def parse(source, output, params):
+        sources.append(source)
+        return _write_parse_result(output, "完整文档")
+
+    monkeypatch.setattr("yuxi.modules.documents.service.parse", parse)
+    result = await service.parse_draft_file(file_id=uploaded["id"], parse_method="disable", scope=scope, db=db)
+    assert result["status"] == "parsed" and sources[0].endswith("/original/q1%3F.pdf")
+    record = db.records[uploaded["id"]]
+    source_path = record.parsed_source
+    assert service.Workspace(scope.uid).read_authorized_file("/" + source_path, 1024).decode() == "完整文档"
+    unavailable = service.HTTPException(503, "parser unavailable", headers={"Retry-After": "30"})
+
+    async def fail(*args, **kwargs):
+        raise unavailable
+
+    monkeypatch.setattr("yuxi.modules.documents.service.parse", fail)
+    with pytest.raises(service.HTTPException) as error:
+        await service.parse_draft_file(file_id=uploaded["id"], parse_method="disable", scope=scope, db=db)
+    assert error.value is unavailable and record.parsed_source == source_path
+
+
+def test_webp_requires_explicit_capable_engine():
+    """WebP 不静默使用不支持该格式的默认解析器。"""
+    with pytest.raises(service.HTTPException):
+        service._normalize_parse_method("image.webp", "rapid_ocr", "rapid_ocr")
+
+
+@pytest.mark.asyncio
+async def test_binding_rejects_input_owned_by_other_scope():
+    """替代调用不能把同用户其他 APP 的 Input 用作绑定目标。"""
+    from yuxi.modules.agents.services.scope import ActorScope
+
+    with pytest.raises(ValueError, match="身份不一致"):
+        await service.stage_input_attachments(
+            db=object(),
+            scope=ActorScope(uid="user", app_id="app-a"),
+            input_item=SimpleNamespace(uid="user", app_id="app-b"),
+            receipt_id="receipt",
+            file_ids=["file"],
+        )

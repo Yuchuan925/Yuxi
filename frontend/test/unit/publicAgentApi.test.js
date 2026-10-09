@@ -15,9 +15,9 @@ test('产品创建、消息、等待恢复和队列控制仅使用 Public Thread
     calls.push({ url: String(url), options })
     const body = String(url).endsWith('/sessions')
       ? {
-          object: 'agent.session', id: 'thread-1', thread_id: 'thread-1',
-          event_id: 'create-event', input_id: null, turn_id: null, run_id: null,
-          status: 'accepted', title: '新对话', project_id: 'project-1'
+          object: 'agent.session', id: 'thread-1', status: 'idle', agent: { id: 'agent-1', model: null },
+          yuxi: { title: '新对话', project_id: 'project-1', archived: false,
+          receipt: { event_id: 'create-event', input_id: null, turn_id: null, run_id: null, status: 'accepted' } }
         }
       : { status: 'accepted', event_id: 'event-1', input_id: 'input-1' }
     return new Response(JSON.stringify(body), {
@@ -39,8 +39,11 @@ test('产品创建、消息、等待恢复和队列控制仅使用 Public Thread
       { requestId: 'create-key', projectId: 'project-1' }
     )
     assert.equal(thread.id, 'thread-1')
-    assert.equal(thread.title, '新对话')
-    assert.equal(thread.project_id, 'project-1')
+    assert.equal(thread.yuxi.title, '新对话')
+    assert.equal(thread.yuxi.project_id, 'project-1')
+    assert.equal(thread.object, 'agent.session')
+    assert.equal(thread.status, 'idle')
+    assert.ok(!('thread_id' in thread.yuxi))
     assert.equal(calls[0].url, '/api/v1/agents/sessions')
     assert.equal(calls[0].options.headers['Idempotency-Key'], 'create-key')
     assert.equal(JSON.parse(calls[0].options.body).agent_id, 'agent-1')
@@ -48,7 +51,7 @@ test('产品创建、消息、等待恢复和队列控制仅使用 Public Thread
     await agentApi.sendThreadMessage('thread-1', {
       idempotency_key: 'message-key',
       query: '继续',
-      image_content: ['abc'],
+      image_content: ['data:image/png;base64,iVBORw0KGgo='],
       mode: 'follow_up',
       attachment_file_ids: ['file-1']
     })
@@ -57,7 +60,7 @@ test('产品创建、消息、等待恢复和队列控制仅使用 Public Thread
     const message = JSON.parse(calls[1].options.body).events[0]
     assert.equal(message.type, 'agent.session.input.message')
     assert.equal(message.yuxi.mode, 'follow_up')
-    assert.equal(message.input[0].content[1].image_url, 'data:image/jpeg;base64,abc')
+    assert.equal(message.input[0].content[1].image_url, 'data:image/png;base64,iVBORw0KGgo=')
 
     await agentApi.sendThreadMessage('thread-1', {
       idempotency_key: 'steer-key', query: '改成英文',
@@ -99,8 +102,9 @@ test('产品创建、消息、等待恢复和队列控制仅使用 Public Thread
 
     await threadApi.updateThread('thread-1', null, undefined, 'default', 'model-a')
     assert.equal(calls[8].url, '/api/v1/agents/sessions/thread-1')
+    assert.equal(calls[8].options.method, 'POST')
     assert.deepEqual(JSON.parse(calls[8].options.body), {
-      title: null, tool_approval_mode: 'default', model_spec: 'model-a'
+      yuxi: { title: null, tool_approval_mode: 'default' }, agent: { model: 'model-a' }
     })
     await threadApi.archiveThread('thread-1')
     assert.equal(calls[9].url, '/api/v1/agents/sessions/thread-1/archive')

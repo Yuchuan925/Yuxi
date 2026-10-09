@@ -4,6 +4,8 @@
 
 ## 新增预置角色
 
+内置“知识库问答”（`knowledge-base-qa`）复用 `ChatbotAgent`，启用并预加载 `knowledge-base` Skill，使用默认提示词和现有知识库访问范围。可在智能体配置中查看其技能与预加载选择。
+
 仅改变提示词、模型或能力选择时，在 `backend/yuxi/modules/agents/presets/` 新增一个 Python 文件并导出 `PRESET`。发现逻辑递归读取文件，角色类型仍由 `backend_id` 决定：
 
 ```python

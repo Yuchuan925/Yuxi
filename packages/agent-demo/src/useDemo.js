@@ -47,6 +47,7 @@ export function useDemo() {
     threadId: "",
     snapshot: null,
     projection: createItems(),
+    itemPage: { after: null, hasMore: false, loading: false },
     artifacts: [],
     stream: "idle",
     error: loaded.error,
@@ -55,6 +56,9 @@ export function useDemo() {
     sending: false,
     pending: null,
     draft: "",
+    draftFiles: [],
+    draftImages: [],
+    uploading: false,
     logs: [],
     downloading: "",
     answers: {},
@@ -71,15 +75,15 @@ export function useDemo() {
   let api;
   let threadApi;
   const items = computed(() => orderedItems(state.projection));
-  const turn = computed(() => state.snapshot?.current_turn);
+  const turn = computed(() => state.snapshot?.yuxi.current_turn);
   const waitpoint = computed(() =>
-    turn.value?.status === "waiting" ? turn.value.waitpoint : null,
+    turn.value?.status === "requires_action" ? turn.value.waitpoint : null,
   );
   const waitingForUser = computed(() =>
     ["answer", "approval"].includes(waitpoint.value?.kind),
   );
   const running = computed(() =>
-    ["pending", "running", "waiting", "cancelling"].includes(
+    ["queued", "in_progress"].includes(
       turn.value?.status,
     ),
   );
@@ -129,12 +133,16 @@ export function useDemo() {
     state.snapshot = null;
     state.runError = "";
     state.projection = createItems();
+    state.itemPage = { after: null, hasMore: false, loading: false };
     state.artifacts = [];
     state.downloading = "";
     state.stream = "idle";
     state.pending = null;
     state.sending = false;
     state.draft = "";
+    state.draftFiles = [];
+    state.draftImages = [];
+    state.uploading = false;
     state.answers = {};
     state.decisions = {};
     state.followScroll = true;
@@ -186,13 +194,13 @@ export function useDemo() {
       ownerScope === scope &&
       agentId === state.agentId &&
       request === listRequest;
-    const offset = more ? state.threads.length : 0;
+    const after = more ? state.threads.at(-1)?.id : undefined;
     state.loadingThreads = true;
     try {
-      const result = await api.listThreads(agentId, offset);
+      const result = await api.listThreads(agentId, after);
       if (!stillSelected()) return;
-      state.threads = more ? [...state.threads, ...result] : result;
-      state.hasMore = result.length === 50;
+      state.threads = more ? [...state.threads, ...result.data] : result.data;
+      state.hasMore = result.has_more;
     } catch (error) {
       if (stillSelected() && error.name !== "AbortError")
         state.error = error.message;
@@ -221,24 +229,49 @@ export function useDemo() {
     );
   }
 
-  async function refreshHistory(owner = token()) {
+  async function refreshHistory(owner = token(), { more = false, turnId } = {}) {
     if (!current(owner)) return;
     const request = ++historyRequest;
-    const result = await threadApi.history(state.threadId);
+    const previousIds = new Set(Object.keys(state.projection.items));
+    const previousTurnId = turnId || state.snapshot?.yuxi.current_turn?.id;
+    const session = await threadApi.session(state.threadId);
     if (!current(owner) || request !== historyRequest) return;
     const previous = waitpoint.value?.id;
-    mergeSnapshot(state.projection, result.items);
-    state.snapshot = result.thread;
-    state.runError =
-      result.runs.find(
-        (run) => run.run_id === result.thread.current_turn?.run_id,
-      )?.error_message || "";
+    let after = more ? state.itemPage.after : undefined;
+    let page;
+    do {
+      page = await threadApi.items(state.threadId, after);
+      if (!current(owner) || request !== historyRequest) return;
+      mergeSnapshot(state.projection, page.data);
+      after = page.last_id;
+    } while (page.has_more && !more && previousIds.size && !page.data.some((item) => previousIds.has(item.id)));
+    if (more || !previousIds.size || !page.has_more) {
+      state.itemPage.after = page.last_id;
+      state.itemPage.hasMore = page.has_more;
+    }
+    const id = previousTurnId || session.yuxi.current_turn?.id;
+    if (id && !more) {
+      const target = await threadApi.turn(state.threadId, id);
+      if (!current(owner) || request !== historyRequest) return;
+      mergeSnapshot(state.projection, target.yuxi.output);
+      state.runError = target.error?.message || "";
+      if (turnId || ["queued", "in_progress", "requires_action"].includes(target.status)) {
+        let cursor;
+        do {
+          const page = await threadApi.items(state.threadId, cursor, id);
+          if (!current(owner) || request !== historyRequest) return;
+          mergeSnapshot(state.projection, page.data);
+          cursor = page.has_more ? page.last_id : null;
+        } while (cursor);
+      }
+    }
+    state.snapshot = session;
     syncWaitpoint(previous);
     const existing = state.threads.findIndex(
-      (thread) => thread.thread_id === state.threadId,
+      (thread) => thread.id === state.threadId,
     );
-    if (existing >= 0) state.threads[existing] = result.thread;
-    else state.threads.unshift(result.thread);
+    if (existing >= 0) state.threads[existing] = session;
+    else state.threads.unshift(session);
   }
 
   async function refreshArtifacts(owner = token()) {
@@ -287,7 +320,7 @@ export function useDemo() {
                 event.type,
               )
             ) {
-              await refreshHistory(owner);
+              await refreshHistory(owner, { turnId: event.turn_id });
               await refreshArtifacts(owner);
             }
           }
@@ -340,16 +373,23 @@ export function useDemo() {
     state.error = "";
     state.pending = command;
     try {
-      const result = await client.request(command.path, {
-        method: "POST",
-        body: command.body,
-        idempotencyKey: command.key,
+      let result;
+      // 同一命令重试先查原回执；创建回执通过重放相同创建请求恢复。
+      if (command.attempted && command.path !== "/sessions") {
+        try { result = await client.receipt(state.threadId, command.key); }
+        catch (error) { if (error.status !== 404) throw error; }
+      }
+      command.attempted = true;
+      result ||= await client.request(command.path, {
+        method: "POST", body: command.body, idempotencyKey: command.key,
       });
       if (!current(owner)) return;
       state.pending = null;
+      if (command.fileIds) state.draftFiles = state.draftFiles.filter((file) => !command.fileIds.includes(file.id));
+      if (command.images) state.draftImages = state.draftImages.filter((image) => !command.images.includes(image));
       if (command.text && state.draft === command.text) state.draft = "";
       if (command.path === "/sessions") {
-        await selectThread(result.thread_id);
+        await selectThread(result.id);
       } else {
         await refreshHistory(owner);
         await refreshArtifacts(owner);
@@ -376,18 +416,21 @@ export function useDemo() {
   function send() {
     const text = state.draft.trim();
     if (
-      !text ||
+      (!text && !state.draftImages.length) ||
+      state.uploading ||
       !state.connected ||
       !state.agentId ||
       waitingForUser.value ||
       state.pending ||
       state.sending ||
-      turn.value?.status === "cancelling" ||
-      state.snapshot?.queue_paused
+      state.snapshot?.yuxi.queue_paused
     )
       return;
-    const input = [{ role: "user", content: [{ type: "input_text", text }] }];
-    const command = { text: state.draft, key: newId() };
+    const images = [...state.draftImages];
+    const fileIds = state.draftFiles.map((file) => file.id);
+    const content = [...(text ? [{ type: "input_text", text }] : []), ...images.map((image) => ({ type: "input_image", image_url: image.url }))];
+    const input = [{ role: "user", content }];
+    const command = { text: state.draft, key: newId(), fileIds, images };
     if (state.threadId) {
       command.path = `/sessions/${encodeURIComponent(state.threadId)}/events`;
       command.body = {
@@ -395,7 +438,7 @@ export function useDemo() {
           {
             type: "agent.session.input.message",
             input,
-            yuxi: { mode: "follow_up" },
+            yuxi: { mode: "follow_up", attachment_file_ids: fileIds },
           },
         ],
       };
@@ -405,9 +448,47 @@ export function useDemo() {
         agent_id: state.agentId,
         title: text.slice(0, 40),
         input,
+        attachment_file_ids: fileIds,
       };
     }
     return runCommand(command);
+  }
+
+  async function addFiles(files, imageInput = false) {
+    if (!api || state.uploading || state.sending || state.pending) return;
+    const owner = token();
+    state.uploading = true;
+    state.error = "";
+    try {
+      for (const file of files) {
+        if (imageInput) {
+          const url = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = () => reject(new Error("图片读取失败"));
+            reader.readAsDataURL(file);
+          });
+          if (current(owner)) state.draftImages.push({ name: file.name, url });
+        } else {
+          const draft = await api.uploadFile(file);
+          if (current(owner)) state.draftFiles.push(draft);
+        }
+      }
+    } catch (error) {
+      showError(error, owner);
+    } finally {
+      if (current(owner)) state.uploading = false;
+    }
+  }
+
+  async function removeFile(file) {
+    const owner = token();
+    try {
+      await api.deleteFile(file.id);
+      if (current(owner)) state.draftFiles = state.draftFiles.filter((item) => item.id !== file.id);
+    } catch (error) {
+      showError(error, owner);
+    }
   }
 
   function resume() {
@@ -431,7 +512,7 @@ export function useDemo() {
     } else return;
     return submitEvent({
       type: "yuxi.session.input.resume",
-      turn_id: turn.value.turn_id,
+      turn_id: turn.value.id,
       waitpoint_id: point.id,
       response,
     });
@@ -514,6 +595,8 @@ export function useDemo() {
   });
 
   return {
+    addFiles,
+    removeFile,
     config,
     activeApp,
     state,
@@ -527,6 +610,14 @@ export function useDemo() {
     addApp,
     addUser,
     loadThreads,
+    loadEarlier: async () => {
+      if (state.itemPage.loading) return;
+      const owner = token();
+      state.itemPage.loading = true;
+      try { await refreshHistory(owner, { more: true }); }
+      catch (error) { showError(error, owner); }
+      finally { if (current(owner)) state.itemPage.loading = false; }
+    },
     selectAgent,
     selectThread,
     newThread: resetThread,
@@ -538,8 +629,8 @@ export function useDemo() {
       submitEvent({
         type: "agent.session.input.cancel",
         yuxi: {
-          turn_id: turn.value.turn_id,
-          expected_run_id: turn.value.run_id,
+          turn_id: turn.value.id,
+          expected_run_id: turn.value.current_run_id,
         },
       }),
     continueQueue: () => submitEvent({ type: "yuxi.session.input.continue" }),

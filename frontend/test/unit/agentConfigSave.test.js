@@ -158,7 +158,7 @@ test('会话导出按稳定 Agent 身份读取列表元数据', () => {
   const state = {
     currentAgentId: { value: 'export-agent' },
     agents: { value: [{ id: 301, agent_id: 'export-agent', description: '导出说明' }] },
-    currentThread: { value: { title: '导出会话' } },
+    currentThread: { value: { yuxi: { title: '导出会话' } } },
     currentAgentName: { value: '导出智能体' },
     currentAgent: { value: null },
     runGroups: { value: [{ text: '正文' }] },

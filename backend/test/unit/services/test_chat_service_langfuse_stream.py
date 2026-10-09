@@ -45,14 +45,14 @@ def _patch_stream_scaffolding(monkeypatch, *, agent, supply_checkpoint=True, **_
             SimpleNamespace(slug="test-agent", name="测试", backend_id="ChatbotAgent"),
             agent,
             prepared_execution().context,
-            SimpleNamespace(id=1),
+            SimpleNamespace(id=1, uid="user-1", app_id=None),
         )
 
     class ConvRepo:
         def __init__(self, db):
             self.db = db
 
-        async def get_attachments(self, _id):
+        async def list_for_thread(self, *_args, **_kwargs):
             return []
 
     async def save(**kwargs):
@@ -71,7 +71,7 @@ def _patch_stream_scaffolding(monkeypatch, *, agent, supply_checkpoint=True, **_
         yield _FakeSession()
 
     monkeypatch.setattr(svc, "_resolve_agent_runtime", resolve)
-    monkeypatch.setattr(svc, "SessionRepository", ConvRepo)
+    monkeypatch.setattr(svc, "AttachmentRepository", ConvRepo)
     monkeypatch.setattr(svc, "AgentRunRepository", lambda db: SimpleNamespace(get_run=AsyncMock(return_value=None)))
     monkeypatch.setattr(svc, "_persist_agent_run_langfuse_trace", AsyncMock())
     monkeypatch.setattr(svc, "_build_langfuse_run_context", lambda **kw: LangfuseRunContext())
@@ -115,7 +115,7 @@ def execute(mode="chat", *, db=None, on_prepared=None, image=None):
     kwargs = dict(
         prepared_execution=prepared_execution(),
         thread_id="thread-1",
-        meta={"turn_id": "turn-1", "run_id": "run-1", "worker_id": "worker-1"},
+        meta={"turn_id": "turn-1", "run_id": "run-1", "worker_id": "worker-1", "input_id": "input-1"},
         current_user=SimpleNamespace(uid="user-1"),
         db=db or _FakeSession(),
         on_prepared=on_prepared,
@@ -554,7 +554,7 @@ async def test_service_consumer_cancel_closes_real_graph(monkeypatch, mode):
     _patch_stream_scaffolding(monkeypatch, agent=Agent(), supply_checkpoint=False)
     kwargs = dict(
         thread_id="thread-1",
-        meta={"turn_id": "turn-1", "run_id": "run-1", "worker_id": "worker-1"},
+        meta={"turn_id": "turn-1", "run_id": "run-1", "worker_id": "worker-1", "input_id": "input-1"},
         current_user=SimpleNamespace(uid="user-1"),
         db=_FakeSession(),
     )
@@ -654,7 +654,7 @@ def test_execution_requires_worker_snapshot(mode):
     """调用方必须显式提供执行快照，不能启用重新读取配置的旧路径。"""
     kwargs = dict(
         thread_id="thread-1",
-        meta={"turn_id": "turn-1", "run_id": "run-1", "worker_id": "worker-1"},
+        meta={"turn_id": "turn-1", "run_id": "run-1", "worker_id": "worker-1", "input_id": "input-1"},
         current_user=SimpleNamespace(uid="user-1"),
         db=object(),
     )

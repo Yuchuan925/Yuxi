@@ -15,11 +15,11 @@ Yuxi 是一个面向 RAG、知识图谱和多智能体工作流的知识库平�
 - `frontend`：Vue 3 / Vite 前端，挂载 `frontend/src` 并热重载。
 - `api`：FastAPI API 服务，挂载 `backend/yuxi` 和测试目录并热重载。
 - `worker`：ARQ worker，执行已经派发的 AgentRun 与注册的 后台作业，并周期触发用户自建 Agent 定时任务；三者分别使用 PostgreSQL 中的运行租约、任务租约和调度锁闭合并发与恢复。
-- `schema-init`：Compose 中唯一修改 Yuxi 数据库 Schema 的一次性初始化进程，只为全新部署建立当前 Schema；API 与 worker 等待其成功后只校验 Schema 版本。
+- `schema-init`：Compose 中唯一修改 Yuxi 数据库 Schema 的一次性初始化进程，为全新部署建立当前 Schema，并拥有显式支持的结构升级；当前支持 business 5→6 添加附件表。API 与 worker 等待其成功后只校验 Schema 版本。
 - `sandbox-provisioner`：为智能体工具执行提供隔离沙盒。
 - `postgres`：业务数据、知识库元数据、持久 Input 队列、Turn/Run 与 LangGraph checkpoint。
 - `redis`：ARQ 投递、运行事件、取消信号以及跨进程配置和模型缓存。
-- `minio`：附件、知识库原始文件和其他对象数据。
+- `minio`：附件草稿内容、知识库原始文件和其他对象数据；正式 Agent 附件归 Workdir，附件事实归 PostgreSQL。
 - `milvus`、`etcd`：向量检索及其元数据协调。
 - `graph`：Neo4j 知识图谱。
 - `mineru-api`、`paddlex`：通过 `all` profile 可选启动的文档解析和 OCR 服务。
@@ -78,7 +78,7 @@ Yuxi 始终交付完整知识能力。API 注册知识库、图谱、评估、Da
 
 一次普通智能体输入经过以下边界：
 
-1. `AgentView` 装配 `SessionWorkspace`，后者收集文本、图片、附件、模型与审批配置，`frontend/src/apis/agent_api.js` 调用 Public Thread API。Session 路径只是同一 Thread 用例的协议命名适配。
+1. `AgentView` 装配 `SessionWorkspace`，后者收集文本、图片、附件、模型与审批配置，`frontend/src/apis/agent_api.js` 调用 Public Session API。Repository 批量读取事实，由唯一 Session 投影生成详情、列表、搜索和更新响应。
 2. `api/routers/public_v1/agents` 将 JWT 或 API Key 身份转为完整 ActorScope，并把有序消息和配置交给 `modules/agents/services/inputs.py`。接入事务锁定 Thread，验证作用域与幂等回执，保存 Input、Message 和 Receipt；配置在接收时冻结。
 3. `modules/agents/services/scheduler.py` 在线程锁下领取未暂停队列的优先队头，原子创建 Turn 与首个 pending Run。follow-up 彼此 FIFO；每个 Thread 的 pending steer 聚合为唯一优先批次。排队 Input 不绑定 Turn，消费时固定 Turn/Run 归属；等待回答或审批时拒绝普通消息。
 4. owning transaction 提交后才向 ARQ 投递 pending Run。恢复扫描可补投未成功投递的同一个 Run，不自动重试已经失败的工作。
@@ -116,5 +116,5 @@ Yuxi 始终交付完整知识能力。API 注册知识库、图谱、评估、Da
 - **配置**：Compose 和 `.env` 提供部署配置；管理员系统配置、用户配置与模型供应商以 PostgreSQL 为持久化 Owner，Redis 只提供可失效缓存。
 - **权限**：前端路由和页面标签提供体验级约束，FastAPI 认证依赖和 repository 可见性查询提供最终授权。
 - **状态与存储**：PostgreSQL 保存 Thread、Input、Receipt、Turn、Run、Message、Project 的 `workdir_path`、业务和知识库元数据，也是 LangGraph checkpoint 的唯一 Owner。Redis 保存短期事件、取消信号、ARQ 和跨进程缓存；每个用户的 UserWorkspace 拥有 Workdir 与个人 Skill 字节，MinIO 继续拥有知识库与临时上传对象。
-- **文档处理**：Agent 附件确认后进入实时 Project Workdir；知识库上传仍先进入对象存储和文件元数据边界，再经过解析、分块和知识库实现。解析器、分块策略和知识库连接器保持可替换。
+- **文档处理**：Agent 附件在接收时绑定 Input，经统一准备进入实时 Project Workdir；知识库上传仍先进入对象存储和文件元数据边界，再经过解析、分块和知识库实现。解析器、分块策略和知识库连接器保持可替换。
 - **观测与调试**：优先通过 Compose service 查看 `api`、`worker` 和相关依赖日志；Langfuse 集中在服务层和 AgentRun 上下文；SSE 问题同时检查 Redis 事件与 PostgreSQL 终态。

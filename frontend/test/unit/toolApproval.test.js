@@ -11,8 +11,8 @@ import {
 } from '../../src/modules/session/model/toolApproval.js'
 
 test('协作等待继续观察和排队输入，审批等待仍要求用户操作', () => {
-  assert.equal(isThreadWaitingForUserAction({ turnStatus: 'waiting', cooperationWaiting: true }), false)
-  assert.equal(isThreadWaitingForUserAction({ turnStatus: 'waiting', cooperationWaiting: false }), true)
+  assert.equal(isThreadWaitingForUserAction({ turnStatus: 'in_progress', cooperationWaiting: true }), false)
+  assert.equal(isThreadWaitingForUserAction({ turnStatus: 'requires_action', cooperationWaiting: false }), true)
 })
 
 test('tool approval modes and interrupt payloads follow their state contracts', () => {
@@ -66,8 +66,8 @@ test('tool approval modes and interrupt payloads follow their state contracts', 
     true
   )
   assert.equal(isThreadWaitingForUserAction({ queueSnapshot: { status: 'running' } }), false)
-  assert.equal(isThreadWaitingForUserAction({ turnStatus: 'waiting', pendingInterrupt: null }), true)
-  assert.equal(isThreadWaitingForUserAction({ turnStatus: 'running', pendingInterrupt: null }), false)
+  assert.equal(isThreadWaitingForUserAction({ turnStatus: 'requires_action', pendingInterrupt: null }), true)
+  assert.equal(isThreadWaitingForUserAction({ turnStatus: 'in_progress', pendingInterrupt: null }), false)
   assert.equal(
     isThreadWaitingForUserAction({
       pendingInterrupt: null,

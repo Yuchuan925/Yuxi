@@ -5,30 +5,34 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.api.dependencies.auth import get_db
-from yuxi.api.routers.public_v1.agents.responses import PUBLIC_ERRORS, SSE_RESPONSE
 from yuxi.api.routers.public_v1.agents.auth import PublicAgentContext, require_public_context
+from yuxi.api.routers.public_v1.agents.responses import PUBLIC_ERRORS, SSE_RESPONSE
 from yuxi.api.routers.public_v1.agents.schemas import (
     CancelEvent,
     CancelInputEvent,
     ContinueEvent,
+    EventAccepted,
     MessageEvent,
     ResumeEvent,
-    ThreadEvent,
     SessionEventCreate,
+    ThreadEvent,
     TreeControlEvent,
     input_messages_to_domain,
 )
 from yuxi.api.sse import format_sse
 from yuxi.modules.agents.services.events import stream_thread_events, validate_event_cursor
 from yuxi.modules.agents.services.inputs import accept_message
+from yuxi.modules.agents.services.public_resources import event_receipt
 from yuxi.modules.agents.services.scope import ActorScope
-from yuxi.modules.agents.services.threads import cancel_input, continue_queue, get_thread_snapshot
+from yuxi.modules.agents.services.threads import cancel_input, continue_queue, require_thread
 from yuxi.modules.agents.services.turns import cancel_turn, resume_turn
 
 router = APIRouter(dependencies=[Depends(require_public_context)], responses=PUBLIC_ERRORS)
 
 
-@router.post("/sessions/{session_id}/events", status_code=202, summary="提交消息或控制事件")
+@router.post(
+    "/sessions/{session_id}/events", status_code=202, summary="提交消息或控制事件", response_model=EventAccepted
+)
 async def submit_public_event(
     session_id: str,
     payload: SessionEventCreate,
@@ -50,7 +54,7 @@ async def submit_public_event(
         event=payload.events[0],
         idempotency_key=idempotency_key,
     )
-    return {"object": "yuxi.session.event.accepted", **result}
+    return event_receipt(result)
 
 
 async def submit_thread_event(
@@ -75,7 +79,7 @@ async def submit_thread_event(
             idempotency_key=idempotency_key,
             mode=event.yuxi.mode,
             messages=input_messages_to_domain(event.input),
-            model_spec=event.yuxi.model_spec,
+            model_spec=event.yuxi.model,
             tool_approval_mode=event.yuxi.tool_approval_mode,
             attachment_file_ids=event.yuxi.attachment_file_ids,
         )
@@ -107,7 +111,12 @@ async def submit_thread_event(
     return result
 
 
-@router.get("/sessions/{session_id}/events", summary="订阅会话事件", response_class=StreamingResponse, responses={200: SSE_RESPONSE})
+@router.get(
+    "/sessions/{session_id}/events",
+    summary="订阅会话事件",
+    response_class=StreamingResponse,
+    responses={200: SSE_RESPONSE},
+)
 async def observe_public_events(
     session_id: str,
     last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
@@ -117,11 +126,11 @@ async def observe_public_events(
     """返回长期 text/event-stream，覆盖同一会话的多轮工作。
 
     event 等于 data.type，data 是公开事件本身；id 是恢复 cursor，区别于逻辑 event_id。
-    断线带 Last-Event-ID 续订；收到 yuxi.session.resync 后回读历史和会话快照。
+    断线带 Last-Event-ID 续订；收到 yuxi.session.resync 后回读 Items 和会话快照。
     agent.session.turn.completed/failed/cancelled 表达指定 Turn 的终态。
     连接不随单轮终态自动结束，客户端回读结果后自行关闭，不依赖 SDK finalResult。
     """
-    await get_thread_snapshot(db=db, scope=context.scope, thread_id=session_id)
+    await require_thread(db=db, scope=context.scope, thread_id=session_id)
     await db.close()
     return public_stream_response(scope=context.scope, thread_id=session_id, after_cursor=last_event_id)
 
@@ -140,10 +149,10 @@ def public_stream_response(
         """输出可选创建回执并订阅持久生命周期事件。"""
         if initial_event is not None:
             created = {
-                "type": "yuxi.session.created",
-                "event_id": initial_event["event_id"],
+                "type": "agent.session.created",
+                "event_id": initial_event["yuxi"]["receipt"]["event_id"],
                 "session_id": thread_id,
-                "yuxi": initial_event,
+                "session": initial_event,
             }
             yield format_sse(created, event=created["type"])
         async for cursor, event in stream_thread_events(scope=scope, thread_id=thread_id, after_cursor=after_cursor):
@@ -153,4 +162,5 @@ def public_stream_response(
         events(),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+        status_code=201 if initial_event is not None else 200,
     )

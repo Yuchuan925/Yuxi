@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import { openAsBlob } from "node:fs";
+import { basename } from "node:path";
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { createInterface } from "node:readline/promises";
@@ -18,6 +20,7 @@ const program = new Command()
 const remote = program.command("remote").description("管理 Yuxi 远程服务");
 const agent = program.command("agent").description("查看可用 Agent");
 const thread = program.command("thread").description("管理 Agent Thread");
+const file = program.command("file").description("准备消息的 draft 文件");
 const kb = program.command("kb").description("查询知识库");
 
 function printJson(value: unknown): void {
@@ -228,10 +231,12 @@ agent.command("show <id>").option("-r, --remote <name>").option("--json").action
   print(await client.agent(id), options.json);
 }));
 
-thread.command("list").option("-r, --remote <name>").option("--agent <id>").option("--json").action((options: { remote?: string; agent?: string; json?: boolean }) => withErrors(async () => {
+thread.command("list").option("-r, --remote <name>").option("--agent <id>").option("--after <id>").option("--limit <count>", "每页数量", "20").option("--order <order>", "asc 或 desc", "desc").option("--json").action((options: { remote?: string; agent?: string; after?: string; limit: string; order: string; json?: boolean }) => withErrors(async () => {
   const { client } = await context(options.remote);
-  const query = options.agent ? `?agent_id=${encodeURIComponent(options.agent)}` : "";
-  print(await client.threads(query), options.json);
+  const params = new URLSearchParams({ limit: options.limit, order: options.order });
+  if (options.agent) params.set("agent_id", options.agent);
+  if (options.after) params.set("after", options.after);
+  print(await client.threads(`?${params}`), options.json);
 }));
 
 thread.command("show <id>").option("-r, --remote <name>").option("--json").action((id: string, options: { remote?: string; json?: boolean }) => withErrors(async () => {
@@ -239,14 +244,55 @@ thread.command("show <id>").option("-r, --remote <name>").option("--json").actio
   print(await client.thread(id), options.json);
 }));
 
-thread.command("history <id>").option("-r, --remote <name>").option("--json").action((id: string, options: { remote?: string; json?: boolean }) => withErrors(async () => {
+thread.command("history <id>").option("-r, --remote <name>").option("--after <id>").option("--limit <count>", "每页数量", "20").option("--order <order>", "asc 或 desc", "desc").option("--json").action((id: string, options: { remote?: string; after?: string; limit: string; order: string; json?: boolean }) => withErrors(async () => {
   const { client } = await context(options.remote);
-  print(await client.history(id), options.json);
+  const params = new URLSearchParams({ limit: options.limit, order: options.order });
+  if (options.after) params.set("after", options.after);
+  print(await client.items(id, `?${params}`), options.json);
 }));
 
-thread.command("send <id> <message>").option("-r, --remote <name>").action((id: string, message: string, options: { remote?: string }) => withErrors(async () => {
+thread.command("send <id> <message>").option("-r, --remote <name>").option("--idempotency-key <key>", "重试复用的原请求键").option("--file-id <ids...>", "随消息提交的 draft ID").option("--image-url <urls...>", "完整的 data:image URL").action((id: string, message: string, options: { remote?: string; idempotencyKey?: string; fileId?: string[]; imageUrl?: string[] }) => withErrors(async () => {
   const { client } = await context(options.remote);
-  printJson(await client.send(id, message, idempotencyKey()));
+  const key = options.idempotencyKey || idempotencyKey();
+  process.stderr.write(`Idempotency-Key: ${key}\n`);
+  printJson(await client.send(id, message, key, options.fileId, options.imageUrl));
+}));
+
+thread.command("receipt <id> <key>").option("-r, --remote <name>").action((id: string, key: string, options: { remote?: string }) => withErrors(async () => {
+  const { client } = await context(options.remote);
+  printJson(await client.receipt(id, key));
+}));
+
+thread.command("input <id> <inputId>").option("-r, --remote <name>").action((id: string, inputId: string, options: { remote?: string }) => withErrors(async () => {
+  const { client } = await context(options.remote);
+  printJson(await client.input(id, inputId));
+}));
+
+thread.command("turn <id> <turnId>").option("-r, --remote <name>").action((id: string, turnId: string, options: { remote?: string }) => withErrors(async () => {
+  const { client } = await context(options.remote);
+  printJson(await client.turn(id, turnId));
+}));
+
+thread.command("turns <id>").option("-r, --remote <name>").option("--after <id>").option("--limit <count>", "每页数量", "20").option("--order <order>", "asc 或 desc", "desc").action((id: string, options: { remote?: string; after?: string; limit: string; order: string }) => withErrors(async () => {
+  const { client } = await context(options.remote);
+  const params = new URLSearchParams({ limit: options.limit, order: options.order });
+  if (options.after) params.set("after", options.after);
+  printJson(await client.turns(id, `?${params}`));
+}));
+
+file.command("upload <path>").option("-r, --remote <name>").option("--mime-type <type>", "文件 MIME", "application/octet-stream").action((path: string, options: { remote?: string; mimeType: string }) => withErrors(async () => {
+  const { client } = await context(options.remote);
+  printJson(await client.uploadFile(await openAsBlob(path, { type: options.mimeType }), basename(path)));
+}));
+
+file.command("show <id>").option("-r, --remote <name>").action((id: string, options: { remote?: string }) => withErrors(async () => {
+  const { client } = await context(options.remote);
+  printJson(await client.file(id));
+}));
+
+file.command("delete <id>").option("-r, --remote <name>").action((id: string, options: { remote?: string }) => withErrors(async () => {
+  const { client } = await context(options.remote);
+  printJson(await client.deleteFile(id));
 }));
 
 thread.command("watch <id>").option("-r, --remote <name>").option("--cursor <id>").action((id: string, options: { remote?: string; cursor?: string }) => withErrors(async () => {
@@ -291,8 +337,8 @@ program
     const { client, remote } = await context(options.remote);
     requireAuth(remote);
     const created = await client.createThread(options.agent, idempotencyKey());
-    const threadId = String(created.thread_id ?? created.id);
-    if (!threadId) throw new Error("服务端未返回 thread_id");
+    const threadId = String(created.id);
+    if (!threadId) throw new Error("服务端未返回 Session id");
     console.log(`Thread: ${threadId}`);
 
     const session = new ChatSession(client, threadId);
@@ -308,7 +354,7 @@ program
         if (!message) continue;
         if (["/exit", "/quit"].includes(message)) break;
         const result = await session.send(message, text => process.stdout.write(text));
-        if (result.status === "waiting") {
+        if (result.status === "requires_action") {
           console.log("\n当前 Turn 等待用户操作，请在 Yuxi 网页继续。");
           break;
         }

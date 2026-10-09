@@ -49,12 +49,9 @@ async function fixture() {
   const streams = new Set();
   const state = {
     snapshot: {
-      thread_id: "thread-1",
-      title: "历史对话",
-      agent_id: "chat",
-      current_turn: null,
-      queued_input_count: 0,
-      queue_paused: false,
+      id: "thread-1", object: "agent.session", status: "idle",
+      agent: { id: "chat", model: "test:model" }, created_at: 1791446400, last_active_at: 1791446400,
+      yuxi: { title: "历史对话", current_turn: null, queued_input_count: 0, queue_paused: false, archived: false },
     },
     items: [
       message("input-1", "user", "历史问题"),
@@ -63,6 +60,7 @@ async function fixture() {
     runs: [],
     artifacts: [],
     failNext: false,
+    failNextEvent: false,
     delayAlpha: false,
     oldHistoryDelay: false,
     eventSeq: 0,
@@ -94,19 +92,23 @@ async function fixture() {
     res.setHeader("X-App-Id", app);
     let raw = "";
     for await (const chunk of req) raw += chunk;
-    const body = raw ? JSON.parse(raw) : undefined;
+    const multipart = req.headers["content-type"]?.startsWith("multipart/form-data");
+    const body = raw && !multipart ? JSON.parse(raw) : undefined;
     requests.push({
       method: req.method,
       path: req.url,
       headers: req.headers,
       body,
+      raw,
     });
     const url = new URL(req.url, "http://fixture");
     const json = (value, status = 200) => {
       res.writeHead(status, { "Content-Type": "application/json" });
       res.end(JSON.stringify(value));
     };
-    if (url.pathname === "/api/v1/agents/") {
+    if (url.pathname === "/api/v1/agents/files" && req.method === "POST") {
+      json({ id: "1234567890abcdef1234567890abcdef", object: "file", filename: "draft.txt", bytes: 11, mime_type: "text/plain", status: "draft", created_at: 1791446400, expires_at: 1791532800 }, 201);
+    } else if (url.pathname === "/api/v1/agents/") {
       if (state.delayAlpha && app === "alpha")
         await new Promise((resolve) => setTimeout(resolve, 450));
       json({
@@ -123,18 +125,27 @@ async function fixture() {
       url.pathname === "/api/v1/agents/sessions" &&
       req.method === "GET"
     ) {
-      json(app === "alpha" && !user ? [state.snapshot] : []);
-    } else if (url.pathname.endsWith("/history")) {
-      const snapshot = structuredClone({
-        thread: state.snapshot,
-        items: state.items,
-        runs: state.runs,
-      });
+      json({ object: "list", data: app === "alpha" && !user ? [state.snapshot] : [], first_id: "thread-1", last_id: "thread-1", has_more: false });
+    } else if (url.pathname.endsWith("/items")) {
+      const items = structuredClone(state.items).reverse();
+      const start = url.searchParams.get("after") ? items.findIndex(item => item.id === url.searchParams.get("after")) + 1 : 0;
+      const limit = Number(url.searchParams.get("limit") || 20);
+      const data = items.slice(start, start + limit);
       if (state.oldHistoryDelay) {
         state.oldHistoryDelay = false;
-        await new Promise((resolve) => setTimeout(resolve, 450));
+        await new Promise(resolve => setTimeout(resolve, 450));
       }
-      json(snapshot);
+      json({ object: "list", data, first_id: data[0]?.id || null, last_id: data.at(-1)?.id || null, has_more: items.length > start + limit, yuxi: { runs: state.runs } });
+    } else if (url.pathname.includes("/turns/")) {
+      const turn = state.snapshot.yuxi.current_turn;
+      json({ id: url.pathname.split("/").at(-1), status: turn?.status, error: state.runs.find(run => run.status === "failed") ? { message: state.runs.find(run => run.status === "failed").error_message } : null,
+        yuxi: { ...turn, current_run_id: turn?.current_run_id, runs: state.runs,
+          output: turn?.status === "completed" ? state.items.filter(item => item.phase === "final_answer") : null } });
+    } else if (url.pathname.endsWith("/receipt")) {
+      const receipt = receipts.get(url.searchParams.get("idempotency_key"));
+      json(receipt?.yuxi?.receipt || receipt || { detail: "回执不存在" }, receipt ? 200 : 404);
+    } else if (url.pathname === "/api/v1/agents/sessions/thread-1" && req.method === "GET") {
+      json(structuredClone(state.snapshot));
     } else if (url.pathname.endsWith("/state")) {
       json({ agent_state: { artifacts: state.artifacts, todos: [] } });
     } else if (url.pathname.endsWith("/events") && req.method === "GET") {
@@ -143,7 +154,7 @@ async function fixture() {
       res.write(": connected\n\n");
       streams.add(res);
       res.on("close", () => streams.delete(res));
-      if (state.snapshot.current_turn?.status === "running") {
+      if (state.snapshot.yuxi.current_turn?.status === "in_progress") {
         const item = state.items.find((entry) => entry.role === "assistant");
         emit({ type: "agent.session.turn.item.added", item });
         emit({
@@ -161,44 +172,50 @@ async function fixture() {
       if (!receipts.has(key)) {
         state.snapshot = {
           ...state.snapshot,
-          title: body.title,
+          status: "in_progress",
+          yuxi: { ...state.snapshot.yuxi, title: body.title,
           current_turn: {
-            turn_id: "turn-1",
-            run_id: "run-1",
-            status: "running",
+            id: "turn-1",
+            current_run_id: "run-1",
+            status: "in_progress",
             result_run_id: null,
-          },
+          } },
         };
         state.items = [
           message("input-1", "user", body.input[0].content[0].text),
           message("output-2", "assistant", "", "in_progress"),
         ];
-        receipts.set(key, { thread_id: "thread-1", input_id: "input-1" });
+        receipts.set(key, { ...state.snapshot, yuxi: { ...state.snapshot.yuxi, receipt: { object: "yuxi.session.event.accepted", event_id: key, session_id: "thread-1", input_id: "input-1", turn_id: "turn-1", run_id: "run-1", status: "accepted" } } });
       }
       if (state.failNext) {
         state.failNext = false;
         json({ detail: "暂时无法返回回执" }, 503);
       } else json(receipts.get(key));
     } else if (url.pathname.endsWith("/events") && req.method === "POST") {
+      const key = req.headers["idempotency-key"];
+      if (receipts.has(key)) { json(receipts.get(key), 202); return; }
       const event = body.events[0];
       if (event.type === "agent.session.input.message") {
         state.items.push(
           message("input-3", "user", event.input[0].content[0].text),
         );
-        state.snapshot.queued_input_count = 1;
+        state.snapshot.yuxi.queued_input_count = 1;
       } else if (event.type === "agent.session.input.cancel") {
-        state.snapshot.current_turn.status = "cancelled";
-        state.snapshot.queue_paused = true;
+        state.snapshot.yuxi.current_turn.status = "cancelled";
+        state.snapshot.yuxi.queue_paused = true;
         state.items.find((item) => item.role === "assistant").status =
           "incomplete";
         emit({ type: "agent.session.turn.cancelled" });
       } else if (event.type === "yuxi.session.input.continue") {
-        state.snapshot.queue_paused = false;
+        state.snapshot.yuxi.queue_paused = false;
       } else if (event.type === "yuxi.session.input.resume") {
-        state.snapshot.current_turn.status = "running";
-        state.snapshot.current_turn.waitpoint = null;
+        state.snapshot.yuxi.current_turn.status = "in_progress";
+        state.snapshot.yuxi.current_turn.waitpoint = null;
       }
-      json({ input_id: "input-3", status: "accepted" }, 202);
+      const accepted = { object: "yuxi.session.event.accepted", event_id: key, session_id: "thread-1", input_id: "input-3", turn_id: null, run_id: null, status: "accepted" };
+      receipts.set(key, accepted);
+      if (state.failNextEvent) { state.failNextEvent = false; json({ detail: "接收响应丢失" }, 503); }
+      else json(accepted, 202);
     } else if (url.pathname.includes("/artifacts/")) {
       res.writeHead(200, {
         "Content-Type": "text/plain",
@@ -305,9 +322,9 @@ test("历史回读、流式正文、生成中追加消息和携带身份下载�
   expect(post.headers.authorization).toBe("Bearer test-alpha-key");
   expect(post.headers["idempotency-key"]).toBeTruthy();
   backend.state.items[1] = message("output-2", "assistant", "你好，已完成");
-  backend.state.snapshot.current_turn = {
-    turn_id: "turn-1",
-    run_id: "run-1",
+  backend.state.snapshot.yuxi.current_turn = {
+    id: "turn-1",
+    current_run_id: "run-1",
     result_run_id: "run-1",
     status: "completed",
   };
@@ -482,10 +499,10 @@ test("已接收但回执失败的输入手动重试复用同一幂等键", async
 });
 
 test("等待回答阻止普通发送，恢复提交完整等待点身份", async ({ page }) => {
-  backend.state.snapshot.current_turn = {
-    turn_id: "turn-1",
-    run_id: "run-1",
-    status: "waiting",
+  backend.state.snapshot.yuxi.current_turn = {
+    id: "turn-1",
+    current_run_id: "run-1",
+    status: "requires_action",
     waitpoint: {
       id: "wait-1",
       kind: "answer",
@@ -553,7 +570,7 @@ test("断线续订带 cursor，resync 回读持久结果并忽略迟到增量", 
   await expect(page.getByLabel("对话消息")).toContainText("完成的正文");
   backend.disconnect();
   backend.state.items[1] = message("output-2", "assistant", "完成的正文");
-  backend.state.snapshot.current_turn.status = "completed";
+  backend.state.snapshot.yuxi.current_turn.status = "completed";
   await expect.poll(() => backend.state.subscriptionCount).toBe(2);
   const resumed = backend.requests
     .filter(
@@ -616,10 +633,10 @@ test("窄屏抽屉限制键盘焦点，Escape 关闭并归还焦点", async ({ p
 });
 
 test("旧 history 迟到不能把新的等待状态回退为 running", async ({ page }) => {
-  backend.state.snapshot.current_turn = {
-    turn_id: "turn-1",
-    run_id: "run-1",
-    status: "running",
+  backend.state.snapshot.yuxi.current_turn = {
+    id: "turn-1",
+    current_run_id: "run-1",
+    status: "in_progress",
   };
   await page.goto("/");
   await page.getByRole("button", { name: "打开对话列表" }).click();
@@ -628,14 +645,14 @@ test("旧 history 迟到不能把新的等待状态回退为 running", async ({ 
   await page.getByRole("tab", { name: /^事件/ }).click();
   backend.state.oldHistoryDelay = true;
   const oldRequest = page.waitForRequest((request) =>
-    request.url().endsWith("/history"),
+    new URL(request.url()).pathname.endsWith("/items"),
   );
   await page.getByRole("button", { name: "刷新", exact: true }).click();
   await oldRequest;
-  backend.state.snapshot.current_turn = {
-    turn_id: "turn-1",
-    run_id: "run-1",
-    status: "waiting",
+  backend.state.snapshot.yuxi.current_turn = {
+    id: "turn-1",
+    current_run_id: "run-1",
+    status: "requires_action",
     waitpoint: {
       id: "wait-new",
       kind: "answer",
@@ -651,10 +668,10 @@ test("旧 history 迟到不能把新的等待状态回退为 running", async ({ 
 });
 
 test("审批恢复保留所有 call ID 和用户选择", async ({ page }) => {
-  backend.state.snapshot.current_turn = {
-    turn_id: "turn-1",
-    run_id: "run-1",
-    status: "waiting",
+  backend.state.snapshot.yuxi.current_turn = {
+    id: "turn-1",
+    current_run_id: "run-1",
+    status: "requires_action",
     waitpoint: {
       id: "wait-approval",
       kind: "approval",
@@ -696,13 +713,13 @@ test("审批恢复保留所有 call ID 和用户选择", async ({ page }) => {
 });
 
 test("失败原因来自当前 Run，公开调试记录隐藏 Key", async ({ page }) => {
-  backend.state.snapshot.current_turn = {
-    turn_id: "turn-1",
-    run_id: "run-1",
+  backend.state.snapshot.yuxi.current_turn = {
+    id: "turn-1",
+    current_run_id: "run-1",
     status: "failed",
   };
   backend.state.runs = [
-    { run_id: "run-1", error_message: "Insufficient Balance" },
+    { id: "run-1", status: "failed", error_message: "Insufficient Balance" },
   ];
   await page.goto("/");
   await page.getByRole("button", { name: "打开对话列表" }).click();
@@ -722,4 +739,63 @@ test("失败原因来自当前 Run，公开调试记录隐藏 Key", async ({ pag
   await event.locator("summary").click();
   await expect(event.locator("pre")).toContainText("[已隐藏]");
   await expect(event.locator("pre")).not.toContainText("test-alpha-key");
+});
+
+test("附件上传不创建会话，PNG 直接输入；接收响应丢失时原意图重试", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByLabel("选择 Agent")).toHaveValue("chat");
+  await page.locator('input[type=file]').nth(0).setInputFiles({ name: "draft.txt", mimeType: "text/plain", buffer: Buffer.from("draft bytes") });
+  await expect(page.getByLabel("移除附件 draft.txt")).toBeVisible();
+  const upload = backend.requests.find((request) => request.path === "/api/v1/agents/files");
+  expect(upload.headers["content-type"]).toMatch(/^multipart\/form-data; boundary=/);
+  expect(upload.raw).toContain("draft bytes");
+  expect(backend.requests.some((request) => request.method === "POST" && request.path === "/api/v1/agents/sessions")).toBe(false);
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/CxcAAAAASUVORK5CYII=", "base64");
+  await page.locator('input[type=file]').nth(1).setInputFiles({ name: "pixel.png", mimeType: "image/png", buffer: png });
+  await expect(page.getByLabel("移除图片 pixel.png")).toBeVisible();
+  await page.getByLabel("消息输入").fill("请读取附件和图片");
+  backend.state.failNext = true;
+  await page.getByRole("button", { name: "发送消息" }).click();
+  await expect(page.getByRole("button", { name: "重试", exact: true })).toBeVisible();
+  await expect(page.getByLabel("移除附件 draft.txt")).toBeVisible();
+  await page.getByRole("button", { name: "重试", exact: true }).click();
+  await expect(page.getByLabel("移除附件 draft.txt")).toHaveCount(0);
+  const posts = backend.requests.filter((request) => request.method === "POST" && request.path === "/api/v1/agents/sessions");
+  expect(posts).toHaveLength(2);
+  expect(posts[1].headers["idempotency-key"]).toBe(posts[0].headers["idempotency-key"]);
+  expect(posts[1].body).toEqual(posts[0].body);
+  expect(posts[0].body.attachment_file_ids).toEqual(["1234567890abcdef1234567890abcdef"]);
+  expect(posts[0].body.input[0].content[1]).toEqual({ type: "input_image", image_url: `data:image/png;base64,${png.toString("base64")}` });
+  await page.screenshot({ path: "/tmp/yuxi-draft-demo.png", fullPage: true });
+});
+
+
+test("已有会话接收响应丢失后查询回执，原消息只提交一次", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "打开对话列表" }).click();
+  await page.getByRole("button", { name: "历史对话" }).click();
+  await expect(page.getByLabel("消息输入")).toBeEnabled();
+  backend.state.failNextEvent = true;
+  await page.getByLabel("消息输入").fill("原消息待确认");
+  await page.getByRole("button", { name: "发送消息" }).click();
+  await expect(page.getByRole("button", { name: "重试", exact: true })).toBeVisible();
+  const post = backend.requests.find(request => request.method === "POST" && request.path.endsWith("/events"));
+  await page.getByRole("button", { name: "重试", exact: true }).click();
+  await expect(page.getByRole("button", { name: "重试", exact: true })).toBeHidden();
+  await expect(page.getByText("原消息待确认", { exact: true })).toBeVisible();
+  expect(backend.requests.filter(request => request.method === "POST" && request.path.endsWith("/events"))).toHaveLength(1);
+  expect(backend.requests.some(request => request.method === "GET" && new URL(request.path, "http://fixture").searchParams.get("idempotency_key") === post.headers["idempotency-key"])).toBe(true);
+});
+
+test("历史按页读取，更早消息加载后最新正文仍在", async ({ page }) => {
+  backend.state.items = Array.from({ length: 150 }, (_, index) => message(`input-${index}`, "user", `分页消息 ${index}`));
+  await page.goto("/");
+  await page.getByRole("button", { name: "打开对话列表" }).click();
+  await page.getByRole("button", { name: "历史对话" }).click();
+  await expect(page.getByText("分页消息 149", { exact: true })).toBeVisible();
+  await expect(page.getByText("分页消息 0", { exact: true })).toBeHidden();
+  await page.getByRole("button", { name: "加载更早消息" }).click();
+  await expect(page.getByText("分页消息 0", { exact: true })).toBeVisible();
+  await expect(page.getByText("分页消息 149", { exact: true })).toBeVisible();
+  expect(backend.requests.filter(request => request.path.includes("/items?")).map(request => new URL(request.path, "http://fixture").searchParams.get("after"))).toContain("input-50");
 });

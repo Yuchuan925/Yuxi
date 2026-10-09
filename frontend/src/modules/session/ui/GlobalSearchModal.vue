@@ -112,7 +112,7 @@
               <div v-else-if="sessionResults.length > 0" class="global-search-results">
                 <button
                   v-for="(item, index) in sessionResults"
-                  :key="item.id"
+                  :key="item.session.id"
                   type="button"
                   class="global-search-result"
                   :class="{ selected: selectedIndex === index }"
@@ -121,7 +121,7 @@
                 >
                   <MessageCircle :size="18" class="result-icon" />
                   <span class="result-main">
-                    <span class="result-title">{{ item.title || '新的对话' }}</span>
+                    <span class="result-title">{{ item.session.yuxi.title || '新的对话' }}</span>
                     <span class="result-snippet">
                       <template v-for="(part, partIndex) in splitSnippet(item)" :key="partIndex">
                         <mark v-if="part.match">{{ part.text }}</mark>
@@ -130,7 +130,7 @@
                     </span>
                   </span>
                   <span class="result-date">{{
-                    formatResultDate(item.latest_match_at || item.updated_at)
+                    formatResultDate(item.latest_match_at || new Date(item.session.last_active_at * 1000).toISOString())
                   }}</span>
                 </button>
                 <div v-if="isLoadingMore" class="global-search-loading-more">加载中...</div>
@@ -164,7 +164,7 @@
                   @click="selectRecentThread(row.thread)"
                 >
                   <MessageCircle :size="18" class="default-icon" />
-                  <span>{{ row.thread.title || '新的对话' }}</span>
+                  <span>{{ row.thread.yuxi.title || '新的对话' }}</span>
                 </button>
               </template>
 
@@ -255,8 +255,8 @@ const inputPlaceholder = computed(() =>
 const sortedRecentThreads = computed(() => {
   return [...props.recentThreads]
     .sort((a, b) => {
-      const first = parseToShanghai(a.updated_at || a.created_at)
-      const second = parseToShanghai(b.updated_at || b.created_at)
+      const first = parseToShanghai(new Date(a.last_active_at * 1000).toISOString())
+      const second = parseToShanghai(new Date(b.last_active_at * 1000).toISOString())
       if (!first && !second) return 0
       if (!first) return 1
       if (!second) return -1
@@ -332,9 +332,9 @@ const selectRecentThread = (thread) => {
 }
 
 const selectSessionResult = (item) => {
-  if (!item?.id) return
-  emit('thread-found', normalizeSearchThread(item))
-  emit('select-thread', normalizeSearchThread(item))
+  if (!item?.session.id) return
+  emit('thread-found', item.session)
+  emit('select-thread', item.session)
   close()
 }
 
@@ -343,17 +343,6 @@ const selectFileResult = (item) => {
   emit('select-file', item)
   close()
 }
-
-const normalizeSearchThread = (item) => ({
-  id: item.id || item.thread_id,
-  uid: item.uid,
-  agent_id: item.agent_id,
-  title: item.title,
-  is_pinned: Boolean(item.is_pinned),
-  created_at: item.created_at,
-  updated_at: item.updated_at,
-  metadata: item.metadata || {}
-})
 
 const moveSelection = (delta) => {
   if (actionCount.value <= 0) return
@@ -465,7 +454,7 @@ const searchFiles = async (query) => {
 const handleFileResultScroll = () => {}
 
 const getRecentGroupLabel = (thread) => {
-  const parsed = parseToShanghai(thread.updated_at || thread.created_at)
+  const parsed = parseToShanghai(new Date(thread.last_active_at * 1000).toISOString())
   if (!parsed) return '更早'
   const diffDays = dayjs().startOf('day').diff(parsed.startOf('day'), 'day')
   if (diffDays <= 7) return '前 7 天'

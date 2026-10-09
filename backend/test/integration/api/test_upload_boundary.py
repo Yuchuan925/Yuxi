@@ -8,6 +8,8 @@ import pytest
 from PIL import Image
 
 from yuxi.infrastructure.minio import get_minio_client
+from yuxi.infrastructure.postgres.manager import pg_manager
+from yuxi.modules.agents.models.attachments import AgentAttachment
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
@@ -47,24 +49,34 @@ async def test_attachment_upload_preserves_metadata_and_minio_bytes(test_client,
     storage = get_minio_client()
     bucket = storage.KB_BUCKETS["documents"]
     content = b"attachment bytes\x00\xff"
-    object_name = None
+    file_id = None
     try:
         response = await test_client.post(
-            "/api/v1/agents/attachments/tmp",
+            "/api/v1/agents/files",
             headers=standard_user["headers"],
             files={"file": ("source.txt", content, "text/plain")},
         )
-        assert response.status_code == 200, response.text
+        assert response.status_code == 201, response.text
         payload = response.json()
-        object_name = payload["object_name"]
-        assert payload["file_name"] == "source.txt"
-        assert payload["file_type"] == "text/plain"
-        assert payload["file_size"] == len(content)
+        file_id = payload["id"]
+        async with pg_manager.get_async_session_context() as db:
+            draft = await db.get(AgentAttachment, file_id)
+            assert draft.uid == str(standard_user["user"]["uid"])
+            assert draft.status == "draft" and draft.input_id is None
+            assert draft.filename == "source.txt" and draft.mime_type == "text/plain"
+            assert draft.size_bytes == len(content)
+            object_name = draft.object_name
+        assert payload["filename"] == "source.txt"
+        assert payload["mime_type"] == "text/plain"
+        assert payload["bytes"] == len(content)
         assert object_name.startswith(f"tmp/chat_attachments/{standard_user['user']['uid']}/")
         assert await storage.adownload_file(bucket, object_name) == content
     finally:
-        if object_name:
-            await storage.adelete_file(bucket, object_name)
+        if file_id:
+            removed = await test_client.delete(f"/api/v1/agents/files/{file_id}", headers=standard_user["headers"])
+            assert removed.status_code == 200, removed.text
+            async with pg_manager.get_async_session_context() as db:
+                assert await db.get(AgentAttachment, file_id) is None
 
 
 @pytest.mark.parametrize(

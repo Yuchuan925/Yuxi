@@ -4,7 +4,6 @@
     title="添加附件"
     ok-text="添加附件"
     cancel-text="取消"
-    :confirm-loading="confirming"
     :ok-button-props="{ disabled: confirmDisabled }"
     @ok="handleConfirm"
     @cancel="handleCancel"
@@ -13,7 +12,6 @@
       :multiple="true"
       :show-upload-list="false"
       :before-upload="handleBeforeUpload"
-      :disabled="confirming"
       class="attachment-dropzone"
     >
       <p class="dropzone-title">点击或拖拽文件到此处上传</p>
@@ -33,7 +31,6 @@
               size="small"
               type="text"
               class="lucide-icon-btn remove-btn"
-              :disabled="confirming"
               @click="removeItem(item.localId)"
             >
               <X :size="16" />
@@ -63,7 +60,7 @@
               <OCRSelector
                 :model-value="item.selectedParseMethod"
                 :allowed-engines="item.parseMethods"
-                :disabled="item.status === 'parsing' || confirming"
+                :disabled="item.status === 'parsing'"
                 placeholder="选择 OCR"
                 @update:model-value="handleParseMethodChange(item.localId, $event)"
               />
@@ -96,8 +93,6 @@ import OCRSelector from '@/modules/settings/ui/OCRSelector.vue'
 
 const props = defineProps({
   open: { type: Boolean, default: false },
-  threadId: { type: String, default: '' },
-  ensureThread: { type: Function, default: null },
   initialFiles: { type: Array, default: () => [] },
   initialFilesKey: { type: Number, default: 0 }
 })
@@ -107,7 +102,6 @@ const emit = defineEmits(['update:open', 'added'])
 const DEFAULT_OCR_ENGINE = 'rapid_ocr'
 const configStore = useConfigStore()
 const fileItems = ref([])
-const confirming = ref(false)
 let localIdSeed = 0
 let consumedInitialFilesKey = 0
 
@@ -124,7 +118,6 @@ watch(
   (open) => {
     if (!open) {
       fileItems.value = []
-      confirming.value = false
     }
   }
 )
@@ -153,16 +146,6 @@ const getDefaultParseMethod = (parseMethods) => {
   return selectableMethods[0] || null
 }
 
-const normalizeTmpUpload = (response) => ({
-  fileName: response.file_name,
-  fileType: response.file_type,
-  fileSize: response.file_size,
-  objectName: response.object_name,
-  parseSupported: response.parse_supported,
-  parseMethods: response.parse_methods || [],
-  selectedParseMethod: getDefaultParseMethod(response.parse_methods || [])
-})
-
 const updateItem = (localId, patch) => {
   fileItems.value = fileItems.value.map((item) =>
     item.localId === localId ? { ...item, ...patch } : item
@@ -184,9 +167,14 @@ const uploadFile = async (file) => {
   fileItems.value.push(item)
 
   try {
-    const response = await threadApi.uploadTmpAttachment(file)
-    const normalized = normalizeTmpUpload(response)
-    updateItem(localId, { ...normalized, status: 'uploaded' })
+    const uploaded = await threadApi.uploadDraftFile(file)
+    updateItem(localId, { file: uploaded, fileName: uploaded.filename, fileSize: uploaded.bytes, status: 'uploaded' })
+    const info = await threadApi.getDraftFile(uploaded.id)
+    updateItem(localId, {
+      parseSupported: info.parse_methods.length > 0,
+      parseMethods: info.parse_methods,
+      selectedParseMethod: getDefaultParseMethod(info.parse_methods)
+    })
   } catch (error) {
     updateItem(localId, {
       status: 'error',
@@ -221,19 +209,14 @@ watch(
 )
 
 const isParseDisabled = (item) =>
-  item.status === 'parsing' || !item.selectedParseMethod || confirming.value
-
-const clearParsedState = {
-  parsedObjectName: null
-}
+  item.status === 'parsing' || !item.selectedParseMethod
 
 const handleParseMethodChange = (localId, selectedParseMethod) => {
   const item = fileItems.value.find((entry) => entry.localId === localId)
   updateItem(localId, {
-    ...clearParsedState,
     selectedParseMethod,
     parseError: null,
-    status: item?.status === 'parsed' ? 'uploaded' : item?.status
+    status: item?.status
   })
 }
 
@@ -244,65 +227,44 @@ const handleStartParse = (localId) => {
 }
 
 const handleParse = async (item) => {
-  if (!item.objectName || !item.selectedParseMethod) return
+  if (!item.file?.id || !item.selectedParseMethod) return
 
   updateItem(item.localId, {
-    ...clearParsedState,
     status: 'parsing',
     parseError: null
   })
   try {
-    const response = await threadApi.parseTmpAttachment({
-      object_name: item.objectName,
-      parse_method: item.selectedParseMethod
-    })
+    const response = await threadApi.parseDraftFile(item.file.id, item.selectedParseMethod)
     updateItem(item.localId, {
       status: 'parsed',
-      parsedObjectName: response.parsed_object_name
+      file: response
     })
     message.success('附件解析完成')
   } catch (error) {
     updateItem(item.localId, {
-      ...clearParsedState,
-      status: 'uploaded',
+      status: item.file.status === 'parsed' ? 'parsed' : 'uploaded',
       parseError: getErrorMessage(error, '解析失败')
     })
   }
 }
 
 const removeItem = (localId) => {
+  const item = fileItems.value.find((entry) => entry.localId === localId)
+  if (item?.file?.id) void threadApi.deleteDraftFile(item.file.id).catch(() => {})
   fileItems.value = fileItems.value.filter((item) => item.localId !== localId)
 }
 
-const handleConfirm = async () => {
+const handleConfirm = () => {
   if (confirmDisabled.value) return
-
-  const attachments = confirmableItems.value.map((item) => ({
-    file_type: item.fileType,
-    object_name: item.objectName,
-    parsed_object_name: item.parsedObjectName || null
-  }))
-
-  confirming.value = true
-  try {
-    const threadId = props.threadId || (props.ensureThread ? await props.ensureThread() : '')
-    if (!threadId) {
-      message.error('创建对话失败，无法添加附件')
-      return
-    }
-
-    const response = await threadApi.confirmTmpThreadAttachments(threadId, attachments)
-    message.success('附件已添加')
-    emit('added', response)
-    emit('update:open', false)
-  } catch (error) {
-    message.error(getErrorMessage(error, '添加附件失败'))
-  } finally {
-    confirming.value = false
-  }
+  const files = confirmableItems.value.map((item) => item.file)
+  emit('added', files)
+  emit('update:open', false)
 }
 
 const handleCancel = () => {
+  for (const item of fileItems.value) {
+    if (item.file?.id) void threadApi.deleteDraftFile(item.file.id).catch(() => {})
+  }
   emit('update:open', false)
 }
 

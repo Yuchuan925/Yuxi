@@ -257,13 +257,13 @@ async function copyLogs() {
           <dt>Thread</dt>
           <dd>{{ state.threadId || "—" }}</dd>
           <dt>Turn</dt>
-          <dd>{{ state.snapshot?.current_turn?.turn_id || "—" }}</dd>
+          <dd>{{ state.snapshot?.yuxi.current_turn?.id || "—" }}</dd>
           <dt>Run</dt>
-          <dd>{{ state.snapshot?.current_turn?.run_id || "—" }}</dd>
+          <dd>{{ state.snapshot?.yuxi.current_turn?.current_run_id || "—" }}</dd>
           <dt>Result Run</dt>
-          <dd>{{ state.snapshot?.current_turn?.result_run_id || "—" }}</dd>
+          <dd>{{ state.snapshot?.yuxi.current_turn?.result_run_id || "—" }}</dd>
           <dt>状态</dt>
-          <dd>{{ state.snapshot?.current_turn?.status || "idle" }}</dd>
+          <dd>{{ state.snapshot?.yuxi.current_turn?.status || "idle" }}</dd>
           <dt>事件流</dt>
           <dd>{{ state.stream }}</dd>
         </dl>

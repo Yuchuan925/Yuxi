@@ -38,7 +38,6 @@ async def get_agent_state_view(
     current_user: User,
     db,
     app_id: str | None = None,
-    include_messages: bool = False,
     include_relations: bool = True,
 ) -> dict:
     """按用户和 APP 作用域读取 checkpoint 及持久执行关系。"""
@@ -74,14 +73,6 @@ async def get_agent_state_view(
         if include_relations:
             response["agent_state"]["cooperation"] = await tree_snapshot(db, agent_session)
             response["parent_thread_id"] = agent_session.parent_thread_id
-        if include_messages:
-            from yuxi.modules.agents.repositories.public_items import PublicItemRepository
-            from yuxi.modules.agents.services.public_items import serialize_public_items
-
-            rows = await PublicItemRepository(db).list_items(thread_id=thread_id, uid=current_uid, app_id=app_id)
-            response["items"] = [
-                item for message, run, result_id in rows for item in serialize_public_items(message, run, result_id)
-            ]
         return response
 
     raise HTTPException(status_code=404, detail="对话线程不存在")

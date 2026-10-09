@@ -27,7 +27,10 @@ const event = (type, runId = 'run', turnId = 'turn') => ({
   event_id: `${type}:${runId}`,
   session_id: 'thread',
   turn_id: turnId,
-  yuxi: { run_id: runId }
+  yuxi: { run_id: runId },
+  ...((type.startsWith('agent.session.turn.') && ['created', 'in_progress', 'completed', 'failed', 'cancelled'].includes(type.split('.').at(-1))) || type === 'yuxi.session.turn.waiting'
+    ? { turn: { status: type === 'yuxi.session.turn.waiting' ? 'requires_action' : type.endsWith('.created') ? 'queued' : type.split('.').at(-1) } }
+    : {})
 })
 const response = (events) =>
   new Response(
@@ -57,9 +60,10 @@ function harness(
   const delivered = [],
     terminal = []
   t.mock.method(api, 'getThreadTurn', async () => ({
-    turn_id: 'turn',
-    current_run_id: currentRun,
-    status
+    id: 'turn',
+    object: 'agent.session.turn',
+    status: status === 'running' ? 'in_progress' : status,
+    yuxi: { current_run_id: currentRun, status }
   }))
   t.mock.method(api, 'streamThreadEvents', async () => response(events))
   const stream = useAgentRunStream({
@@ -112,7 +116,7 @@ test('waiting 立即禁发并保留自身 Run，父终态回调不包含子 Thre
   const h = harness(t, [event('yuxi.session.turn.waiting')])
   await h.stream.startRunStream('thread', 'run', null, { turnId: 'turn' })
   await tick()
-  assert.equal(h.state.turnStatus, 'waiting')
+  assert.equal(h.state.turnStatus, 'requires_action')
   assert.equal(h.state.activeRunSteerable, false)
   assert.equal(h.state.activeRunId, 'run')
   assert.equal(h.terminal.length, 0)
@@ -193,6 +197,10 @@ test('旧 Turn 等待历史回读时启动新 FIFO 流，旧收尾不能中止�
     resetCount = 0,
     terminalCount = 0
   const state = { currentTurnId: 'turn', activeRunId: 'run', ongoingRunGroup: createItemState() }
+  t.mock.method(api, 'getThreadTurn', async (_thread, turnId) => ({
+    id: turnId,
+    yuxi: { current_run_id: 'next', status: 'running' }
+  }))
   t.mock.method(api, 'streamThreadEvents', async (_thread, _cursor, { signal }) => {
     if (!secondController) {
       secondController = signal
@@ -238,9 +246,10 @@ test('协作等待保留 SSE，自动恢复的 Run 重新允许 steer 并接收�
     signal,
     currentRun = 'run'
   t.mock.method(api, 'getThreadTurn', async () => ({
-    turn_id: 'turn',
-    current_run_id: currentRun,
-    status: 'running'
+    id: 'turn',
+    object: 'agent.session.turn',
+    status: 'in_progress',
+    yuxi: { current_run_id: currentRun, status: 'running' }
   }))
   t.mock.method(api, 'streamThreadEvents', async (_id, _cursor, options) => {
     signal = options.signal
@@ -256,9 +265,9 @@ test('协作等待保留 SSE，自动恢复的 Run 重新允许 steer 并接收�
     controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(value)}\n\n`))
   const subscribed = h.stream.startRunStream('thread', 'run', null, { turnId: 'turn' })
   await tick()
-  emit({ ...event('yuxi.session.turn.waiting'), waitpoint: { kind: 'cooperation' } })
+  emit({ ...event('yuxi.session.turn.waiting'), turn: { status: 'in_progress' }, waitpoint: { kind: 'cooperation' } })
   await tick()
-  assert.equal(h.state.turnStatus, 'waiting')
+  assert.equal(h.state.turnStatus, 'in_progress')
   assert.equal(h.state.activeRunSteerable, false)
   assert.equal(signal.aborted, false)
   h.state.queuedInputs ||= []
@@ -290,7 +299,9 @@ test('协作等待保留 SSE，自动恢复的 Run 重新允许 steer 并接收�
     currentPendingThreadAttachments: { value: [] },
     threadMessages: { value: {} },
     createClientRequestId: () => 'queued-input',
-    markAttachmentsInputId() {},
+    draftFilesByThread: { value: {} },
+    pendingSends: { value: {} },
+    fetchThreadAttachments: async () => {},
     buildOptimisticHumanMessage: ({ inputId, text }) => ({
       id: inputId,
       type: 'human',
@@ -304,7 +315,6 @@ test('协作等待保留 SSE，自动恢复的 Run 重新允许 steer 并接收�
     mergeItemSnapshot() {},
     startInputMonitor() {},
     resumeQueuedInputs: async () => {},
-    rollbackAttachments() {},
     isRunInterruptedConflict: () => false,
     handleChatError: (error) => {
       throw error
@@ -321,7 +331,7 @@ test('协作等待保留 SSE，自动恢复的 Run 重新允许 steer 并接收�
   emit(event('agent.session.turn.in_progress', 'resumed'))
   await tick()
   assert.equal(h.state.activeRunId, 'resumed')
-  assert.equal(h.state.turnStatus, 'running')
+  assert.equal(h.state.turnStatus, 'in_progress')
   assert.equal(h.state.isStreaming, true)
   assert.equal(h.state.activeRunSteerable, true)
   assert.equal(h.state.cooperationWaiting, false)

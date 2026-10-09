@@ -3,9 +3,9 @@
     <img
       v-for="(image, index) in messageImages"
       :key="index"
-      :src="`data:${image.mimeType};base64,${image.content}`"
+      :src="image"
       alt="用户上传的图片"
-      @click="openImagePreview(`data:${image.mimeType};base64,${image.content}`, '用户上传的图片')"
+      @click="openImagePreview(image, '用户上传的图片')"
     />
   </div>
   <div
@@ -133,7 +133,7 @@ import MentionTextRenderer from '@/modules/session/ui/MentionTextRenderer.vue'
 import { useAgentStore } from '@/modules/agents/model/agent'
 import { storeToRefs } from 'pinia'
 import { MessageProcessor } from '@/modules/session/model/messageProcessor'
-import { inferImageMimeTypeFromBase64, normalizeAttachmentPreviews } from '@/shared/lib/file_utils'
+import { normalizeAttachmentPreviews } from '@/shared/lib/file_utils'
 import { buildMentionDisplayLabels } from '@/modules/session/model/mention_utils'
 import FileTypeIcon from '@/shared/ui/FileTypeIcon.vue'
 import { normalizeToolCalls } from '@/modules/session/ui/tools/toolRegistry'
@@ -290,16 +290,7 @@ const { availableKnowledgeBases } = storeToRefs(agentStore)
 const messageAttachments = computed(() =>
   normalizeAttachmentPreviews(props.message.extra_metadata?.attachments)
 )
-// 后端投影的 image_contents 是权威；更早的响应可能只有单值 image_content，兜底成单元素。
-const messageImages = computed(() => {
-  const contents = props.message.image_contents?.length
-    ? props.message.image_contents
-    : [props.message.image_content].filter(Boolean)
-  return contents.map((content) => ({
-    content,
-    mimeType: inferImageMimeTypeFromBase64(content) || 'image/jpeg'
-  }))
-})
+const messageImages = computed(() => props.message.image_urls || [])
 
 const mentionDisplayLabels = computed(() => buildMentionDisplayLabels(props.mention || {}))
 
