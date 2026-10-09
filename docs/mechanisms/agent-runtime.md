@@ -31,6 +31,16 @@ API/worker 不信任浏览器内存中的完整配置。请求可以提供受限
 
 断线后调用方从 Public Session、Input、Turn、Run 与 Items 查询读取明确的接收、消费和结果归属。排队 Input 尚无 Turn/Run；最终输出只属于 Turn 的 `result_run_id` 所指顶层 Run。HTTP `202`、SSE 中断和 Run `yielded` 都不是整轮成功证明。
 
+## 回答来源标注
+
+completed Turn 的最终回答存在有效知识库或网页检索内容时，Web 回答下方提供“标注来源”。入口由 Web 内部路由提供，仅允许产品用户登录 JWT；API Key 包括 full Key 均被拒绝，Public 协议与 OpenAPI 不声明该能力。用户点击后，API 使用最终 Run 冻结的聊天模型发起独立调用，根据本轮检索快照匹配支持回答的证据。调用读取同一 Turn 各 Run 成功完成的 `query_kb`、`open_kb_document`、`find_kb_document` 和 `web_search` 结果，排除其他 Turn 与失败工具结果；它不会继续执行智能体或改写回答。知识库与网页任一种来源存在即可标注。
+
+标注 service 校验模型返回的来源编号、回答 Markdown 行范围和逐字证据摘录。知识库 chunk 的位置使用入库时保存的原文范围，编号原文窗口能进一步定位摘录行；网页证据以搜索返回的内容片段为准。模型匹配表达材料对回答的支持关系，实际生成时的因果来源与结论真伪仍需用户核验。未匹配的结论保持原样，一个回答范围可以对应多个来源。
+
+最终回答 Message 的 `extra_metadata.references` 保存标注、回答内容 hash、来源工具记录、文档代次、模型、用量和生成时间。Web 通过内部 GET 读取同一份持久结果，Public Turn metadata 不包含引用；来源读取和重新展示按当前知识库权限过滤。前端在对应 Markdown 块尾显示域名或文件名胶囊，同段多个来源合并为 `+N`。悬浮或聚焦展开来源卡片，显示完整标题、证据、知识库原文行号，并可切换来源；正文仅在查看来源时轻量高亮。向下键进入卡片，Escape 关闭并返回胶囊。单来源点击直接打开，多个来源在卡片中选择。支持文档的知识库来源打开文件预览，Dify、Notion 等只读检索连接器显示证据片段；网页来源打开 HTTP(S) 地址。知识库行号属于完整解析文本；文档代次变化或原文窗口无法核验时，预览提示位置失效并禁用旧行号高亮。回答保留原始空行与 SVG/HTML 预览，引用按原始 Markdown 范围匹配。
+
+同一 Turn 的标注请求由 PostgreSQL 事务锁拒绝并发重复调用，成功结果直接复用，刷新页面后恢复。独立调用最多等待 90 秒，回答与来源 JSON 输入最多 60000 字符；超预算、模型调用失败和无效输出明确返回错误，失败结果不保存为成功标注，用户可以重试。源码由 [引用用例](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/services/references.py) 与 [来源查询](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/repositories/references.py) 拥有；验证入口是 [HTTP 与 PostgreSQL 集成测试](https://github.com/xerrors/Yuxi/blob/main/backend/test/integration/api/test_turn_references.py) 和 [真实页面检查](https://github.com/xerrors/Yuxi/blob/main/frontend/test/browser/turnReferences.js)。
+
 ## 配置和运行态的区别
 
 | 数据 | 来源 | 生命周期 |

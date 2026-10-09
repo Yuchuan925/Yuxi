@@ -1,0 +1,42 @@
+// fixture 含前导空行、SVG、引用块/顶层相同的 html:preview；引用第 5/19 行，来源为带远端 file_id 的 Dify。
+// 已登录并打开该持久会话后运行：playwright-cli run-code --filename=frontend/test/browser/turnReferenceBoundaries.js
+// prettier-ignore
+async (page) => {
+  const check = (value, message) => { if (!value) throw new Error(message) }
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  await page.reload()
+  const show = page.getByRole('button', { name: '显示标注', exact: true }).first()
+  if (await show.isVisible()) await show.click()
+  const badges = page.locator('.reference-citation')
+  await badges.first().waitFor()
+  check(await badges.count() === 2, '前导空行不能丢失引用')
+  const blocks = page.locator('p.reference-answer-highlight')
+  check(await blocks.nth(0).getAttribute('data-source-start') === '5', '知识引用必须对应原始第 5 行')
+  check(await blocks.nth(1).getAttribute('data-source-start') === '19', '预览之后的网页引用必须对应原始第 19 行')
+  check(await page.locator('.svg-inline-render svg').count() === 1, '标注不能将 SVG 变成代码块')
+  const topPreview = page.locator('.message-md > .html-preview-render')
+  const topFrame = page.frameLocator('.message-md > .html-preview-render .html-preview-frame')
+  await topFrame.getByText('网页图示', { exact: true }).waitFor()
+  check(await page.locator('blockquote .html-preview-frame').count() === 1, '嵌套预览参与混合层级负向案例')
+  check(await topPreview.getAttribute('data-source-start') === '15', 'HTML 预览保留原始围栏位置')
+  check(await topFrame.getByText('网页图示', { exact: true }).isVisible(), '标注不能破坏 HTML 预览')
+  await badges.nth(0).click()
+  const dialog = page.getByRole('dialog')
+  await dialog.waitFor()
+  check(await dialog.getByText('知识库证据', { exact: true }).isVisible(), '远端文档必须显示证据片段')
+  check(await dialog.getByText('此来源暂不支持原文行定位。', { exact: true }).isVisible(), '不能伪造远端文档行号')
+  check(await dialog.getByText('文件加载失败', { exact: false }).count() === 0, '只读连接器不能进入本地文档读取错误')
+  await page.screenshot({ path: '/tmp/yuxi-turn-refs-connector.png', fullPage: true })
+  await dialog.getByRole('button', { name: 'Close', exact: true }).click()
+  await page.getByRole('button', { name: '隐藏标注', exact: true }).first().click()
+  await badges.first().waitFor({ state: 'detached' })
+  check(await badges.count() === 0, '隐藏标注必须移除角标')
+  check(await page.locator('.svg-inline-render svg').count() === 1, '隐藏标注仍保留 SVG')
+  await topFrame.getByText('网页图示', { exact: true }).waitFor()
+  check(await topFrame.getByText('网页图示', { exact: true }).isVisible(), '嵌套预览不能被当作顶层节点复用')
+  await page.getByRole('button', { name: '显示标注', exact: true }).first().click()
+  await badges.first().waitFor()
+  check(await topPreview.getAttribute('data-source-start') === '15', '复用 iframe 必须恢复原始行映射')
+  await page.screenshot({ path: '/tmp/yuxi-turn-refs-rich-answer.png', fullPage: true })
+  return { rawLines: [5, 19], svg: true, htmlPreview: true, mixedHierarchy: true, readonlyConnector: 'snippet' }
+}

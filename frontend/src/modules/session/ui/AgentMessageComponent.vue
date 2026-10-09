@@ -42,12 +42,12 @@
       />
 
       <!-- 消息内容 -->
-      <MarkdownPreview
+      <ReferenceAnnotatedAnswer
         v-if="parsedData.content"
         :key="message.id"
-        :content="parsedData.content"
-        code-copy
-        class="message-md"
+        :content="message.content"
+        :message="message"
+        :thread-id="threadId"
       />
 
       <!-- 错误提示块 -->
@@ -73,6 +73,7 @@
         "
       >
         <RefsComponent
+          :thread-id="threadId"
           :message="message"
           :show-refs="showRefs"
           :is-latest-message="isLatestMessage"
@@ -128,7 +129,7 @@ import { computed, ref, onUnmounted } from 'vue'
 import RefsComponent from '@/modules/session/ui/RefsComponent.vue'
 import { Check, Copy, X } from '@lucide/vue'
 import ToolCallsGroupComponent from '@/modules/session/ui/ToolCallsGroupComponent.vue'
-import MarkdownPreview from '@/modules/workspace/ui/MarkdownPreview.vue'
+import ReferenceAnnotatedAnswer from '@/modules/session/ui/ReferenceAnnotatedAnswer.vue'
 import MentionTextRenderer from '@/modules/session/ui/MentionTextRenderer.vue'
 import { useAgentStore } from '@/modules/agents/model/agent'
 import { storeToRefs } from 'pinia'

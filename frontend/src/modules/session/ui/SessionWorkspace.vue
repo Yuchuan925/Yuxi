@@ -158,6 +158,7 @@
                   <!-- 显示对话最后一个消息使用的模型 -->
                   <RefsComponent
                     v-if="shouldShowRefs(row.group)"
+                    :thread-id="currentChatId"
                     :message="getLastMessage(row.group)"
                     :run="getMessageRun(getLastMessage(row.group))"
                     :show-refs="['model', 'copy', 'sources']"

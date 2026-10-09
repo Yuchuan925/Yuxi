@@ -84,7 +84,7 @@
           <a-spin tip="正在加载解析内容..." />
         </div>
         <template v-else>
-          <p v-if="chunkId && contentState.loaded && locationNotice" class="location-notice">
+          <p v-if="(chunkId || referenceSource) && contentState.loaded && locationNotice" class="location-notice">
             {{ locationNotice }}
           </p>
           <p v-else-if="chunkId && contentState.loaded && !targetChunk" class="location-notice">
@@ -157,6 +157,7 @@ import AgentFilePreview from '@/modules/session/ui/workspace/AgentFilePreview.vu
 import { Download, ChevronDown, FileSearch, FileText, Rows3, Code2, X } from '@lucide/vue'
 
 const props = defineProps({
+  referenceSource: { type: Object, default: null },
   embedded: { type: Boolean, default: false },
   chunkId: { type: String, default: '' },
   startLine: { type: Number, default: null },
@@ -291,6 +292,17 @@ const targetChunk = computed(() =>
   contentState.value.lines.find((chunk) => chunk.id === props.chunkId)
 )
 const locationNotice = computed(() => {
+  if (props.referenceSource && contentState.value.loaded) {
+    const source = props.referenceSource
+    if (source.generation && source.generation !== file.value?.active_generation) {
+      return '文档已更新，原引用行号已失效。'
+    }
+    if (!source.generation) {
+      const lines = contentState.value.content.split(/\r\n|\r|\n/)
+      const window = lines.slice(source.start_line - 1, source.end_line).join('\n')
+      if (!source.numbered || window !== source.content) return '原引用位置无法核验，请查看检索片段。'
+    }
+  }
   if (contentState.value.lineLocation?.available !== false) return ''
   const reasons = {
     document_not_indexed: '文档尚未完成入库，完成入库后重新检索可定位高亮。',
@@ -306,7 +318,7 @@ const targetLines = computed(() =>
         start: locationNotice.value ? null : targetChunk.value?.start_line || null,
         end: locationNotice.value ? null : targetChunk.value?.end_line || null
       }
-    : { start: props.startLine, end: props.endLine }
+    : { start: locationNotice.value ? null : props.startLine, end: locationNotice.value ? null : props.endLine }
 )
 const hasContent = computed(
   () =>

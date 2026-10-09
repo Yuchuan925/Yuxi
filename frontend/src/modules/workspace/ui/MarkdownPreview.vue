@@ -1,23 +1,44 @@
 <template>
   <div
     ref="previewRef"
+    v-bind="$attrs"
     :class="[
       'yk-markdown-preview',
       'flat-md-preview',
       { 'is-dark': themeStore.isDark, 'is-compact': compact }
     ]"
     @click="handleMarkdownAction"
+    @pointerover="handleReferenceEnter"
+    @pointerout="scheduleReferenceClose"
+    @focusin="handleReferenceEnter"
+    @focusout="scheduleReferenceClose"
+    @keydown="handleReferenceKeydown"
   ></div>
+  <ReferenceSourcePopover
+    v-if="referencePreview"
+    ref="referencePopover"
+    :anchor="referencePreview.anchor"
+    :citations="referencePreview.citations"
+    :preview-id="referencePreviewId"
+    @keep-open="cancelReferenceClose"
+    @leave="scheduleReferenceClose"
+    @close="closeReferencePreview"
+    @open="openReference"
+  />
 </template>
 
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
 import { useThemeStore } from '@/shared/model/theme'
 import { apiGet } from '@/apis/base'
 import { renderMarkdown, resolveMarkdownImageUrl } from '@/shared/lib/markdown_preview'
+import { decorateMarkdownReferences } from '@/shared/lib/markdownReferences'
 import { HTML_PREVIEW_MAX_HEIGHT, HTML_PREVIEW_MIN_HEIGHT } from '@/shared/lib/htmlPreviewRenderer'
+import ReferenceSourcePopover from '@/modules/workspace/ui/ReferenceSourcePopover.vue'
 import 'katex/dist/katex.min.css'
+defineOptions({ inheritAttrs: false })
 const props = defineProps({
+  references: { type: Array, default: () => [] },
   content: {
     type: String,
     default: ''
@@ -47,10 +68,92 @@ const props = defineProps({
     default: false
   }
 })
+const emit = defineEmits(['open-reference'])
 
 const themeStore = useThemeStore()
 const shikiTheme = computed(() => (themeStore.isDark ? 'github-dark' : 'github-light'))
 const previewRef = ref(null)
+const referencePreview = ref(null)
+const referencePopover = ref(null)
+const referencePreviewId = `reference-preview-${useId()}`
+let referenceCloseTimer
+
+/** 仅在查看来源时强调命中的正文块。 */
+function highlightReferences(citations) {
+  previewRef.value?.querySelectorAll('.reference-answer-highlight').forEach((block) => {
+    const active = citations.some((citation) =>
+      Number(block.dataset.sourceStart) <= citation.answer_end_line &&
+      Number(block.dataset.sourceEnd) >= citation.answer_start_line)
+    block.classList.toggle('reference-answer-active', active)
+  })
+}
+
+/** 进入胶囊或卡片时取消延迟关闭。 */
+function cancelReferenceClose() {
+  clearTimeout(referenceCloseTimer)
+}
+
+/** 关闭预览并清除胶囊状态与临时强调。 */
+function closeReferencePreview() {
+  cancelReferenceClose()
+  const anchor = referencePreview.value?.anchor
+  anchor?.setAttribute('aria-expanded', 'false')
+  anchor?.removeAttribute('aria-controls')
+  referencePreview.value = null
+  highlightReferences([])
+}
+
+/** 留出跨越卡片间隙的时间，再确认焦点和指针均已离开。 */
+function scheduleReferenceClose() {
+  cancelReferenceClose()
+  referenceCloseTimer = setTimeout(() => {
+    const anchor = referencePreview.value?.anchor
+    if (anchor?.matches(':hover') || anchor === document.activeElement || referencePopover.value?.isActive()) return
+    closeReferencePreview()
+  }, 180)
+}
+
+/** 从胶囊索引取得当前回答的引用。 */
+function referenceCitations(anchor) {
+  return anchor.dataset.referenceIndices.split(',').map((index) => props.references[Number(index)]).filter(Boolean)
+}
+
+/** 展示来源组，需要时将键盘焦点移入卡片。 */
+async function showReferencePreview(anchor, focus = false) {
+  cancelReferenceClose()
+  if (referencePreview.value?.anchor !== anchor) closeReferencePreview()
+  const citations = referenceCitations(anchor)
+  if (!citations.length) return
+  referencePreview.value = { anchor, citations }
+  anchor.setAttribute('aria-expanded', 'true')
+  anchor.setAttribute('aria-controls', referencePreviewId)
+  highlightReferences(citations)
+  if (focus) {
+    await nextTick()
+    referencePopover.value?.focus()
+  }
+}
+
+/** 悬浮或聚焦胶囊时展开对应来源。 */
+function handleReferenceEnter(event) {
+  const anchor = event.target instanceof Element ? event.target.closest('.reference-citation') : null
+  if (anchor) void showReferencePreview(anchor)
+}
+
+/** 向下键进入来源卡片。 */
+function handleReferenceKeydown(event) {
+  const anchor = event.target instanceof Element ? event.target.closest('.reference-citation') : null
+  if (anchor && event.key === 'ArrowDown') {
+    event.preventDefault()
+    void showReferencePreview(anchor, true)
+  }
+}
+
+/** 交给回答组件打开原文或网页。 */
+function openReference(citation) {
+  closeReferencePreview()
+  emit('open-reference', citation)
+}
 
 /** 对命中的 Markdown 块高亮，并滚动到最接近起始行的块。 */
 const highlightSourceLines = async () => {
@@ -209,6 +312,7 @@ const getHtmlPreviewKey = (preview) => {
 const collectExistingHtmlPreviews = (root) => {
   const previewsByKey = new Map()
   root.querySelectorAll('.html-preview-render').forEach((preview) => {
+    if (preview.parentElement !== root) return
     const key = getHtmlPreviewKey(preview)
     if (!key) return
 
@@ -290,6 +394,11 @@ const replaceHtmlPreservingPreviews = (html) => {
     if (!reusablePreview) {
       pendingNodes.push(nextNode)
       return
+    }
+
+    for (const name of ['data-source-start', 'data-source-end']) {
+      if (nextNode.hasAttribute(name)) reusablePreview.setAttribute(name, nextNode.getAttribute(name))
+      else reusablePreview.removeAttribute(name)
     }
 
     replaceRangeBefore(root, cursor, reusablePreview, pendingNodes)
@@ -407,11 +516,13 @@ onMounted(async () => {
   enhanceHtmlPreviews()
   enhanceDocumentImages()
   if (props.codeCopy) enhanceCodeBlocks()
+  decorateMarkdownReferences(previewRef.value, props.references)
 })
 
 window.addEventListener('message', handleHtmlPreviewHeight)
 
 onBeforeUnmount(() => {
+  closeReferencePreview()
   window.removeEventListener('message', handleHtmlPreviewHeight)
   htmlPreviewFrames.clear()
   revokeImageBlobUrls()
@@ -423,9 +534,11 @@ watch(
     shikiTheme,
     () => props.codeCopy,
     () => props.resourceBaseUrl,
-    () => props.sourceLines
+    () => props.sourceLines,
+    () => props.references
   ],
   async ([content, theme, codeCopy], _, onCleanup) => {
+    closeReferencePreview()
     let expired = false
     onCleanup(() => {
       expired = true
@@ -438,7 +551,9 @@ watch(
       return
     }
 
-    const html = await renderMarkdown(content, { theme, sourceLines: props.sourceLines })
+    const html = await renderMarkdown(content, {
+      theme, sourceLines: props.sourceLines || props.references.length > 0
+    })
     if (!expired) {
       replaceHtmlPreservingPreviews(html)
       revokeImageBlobUrls()
@@ -450,6 +565,7 @@ watch(
       enhanceHtmlPreviews()
       enhanceDocumentImages()
       if (codeCopy) enhanceCodeBlocks()
+      decorateMarkdownReferences(previewRef.value, props.references)
       cleanupHtmlPreviewFrames()
     }
   },
@@ -460,6 +576,14 @@ watch(
 const handleMarkdownAction = async (e) => {
   const target = e.target instanceof Element ? e.target : e.target?.parentElement
   if (!target) return
+
+  const reference = target.closest('.reference-citation')
+  if (reference) {
+    const citations = referenceCitations(reference)
+    if (citations.length === 1) openReference(citations[0])
+    else await showReferencePreview(reference, true)
+    return
+  }
 
   const codeCopyBtn = target.closest('.markdown-code-copy-btn')
   if (codeCopyBtn) {
@@ -606,6 +730,33 @@ const showCopiedFeedback = (btn) => {
 </script>
 
 <style lang="less">
+.yk-markdown-preview .reference-answer-active {
+  background: var(--gray-50);
+  border-radius: 3px;
+}
+.yk-markdown-preview .reference-citation {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  max-width: min(190px, 100%);
+  height: 21px;
+  padding: 0 8px;
+  margin-left: 7px;
+  border: 0;
+  border-radius: 999px;
+  color: var(--gray-700);
+  background: var(--gray-100);
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1.5;
+  vertical-align: middle;
+  cursor: pointer;
+  &:hover, &[aria-expanded='true'] { background: var(--gray-200); color: var(--gray-1000); }
+  &:focus-visible { outline: 2px solid var(--main-500); outline-offset: 2px; }
+  .reference-citation-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .reference-citation-count { flex-shrink: 0; color: var(--gray-600); }
+}
 .yk-markdown-preview .source-line-highlight {
   background-color: var(--color-warning-50);
   outline: 1px solid var(--color-warning-100);

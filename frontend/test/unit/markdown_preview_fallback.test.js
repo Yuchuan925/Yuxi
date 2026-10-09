@@ -20,6 +20,16 @@ test('定位预览保留空行后的标题、正文与代码块原始行号', ()
   assert.doesNotMatch(renderer.render(content), /data-source-start/)
 })
 
+test('引用映射保留前导空行与 SVG 预览后正文的原始行号', () => {
+  const renderer = createMarkdownRenderer({ themeName: 'github-light', highlighter: null })
+  const content = '\n\n结论。\n\n```svg\n<svg><text>图示</text></svg>\n```\n\n后续结论。'
+  const html = renderer.render(content, { sourceLines: true })
+  assert.match(html, /<p data-source-start="3" data-source-end="3">结论。/)
+  assert.match(html, /<div data-source-start="5" data-source-end="7"><div class="svg-inline-render">/)
+  assert.match(html, /<p data-source-start="9" data-source-end="9">后续结论。/)
+  assert.doesNotMatch(html, /language-svg/)
+})
+
 test('frontmatter 保留多行字段的 YAML 缩进', () => {
   const renderer = createMarkdownRenderer({ themeName: 'github-light', highlighter: null })
   const html = renderer.render(`---

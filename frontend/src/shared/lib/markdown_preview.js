@@ -189,8 +189,22 @@ const markdownSourceLines = (md) => {
     const render = md.renderer.rules[type]
     if (!render) continue
     md.renderer.rules[type] = (tokens, index, options, env, renderer) => {
-      const html = render(tokens, index, options, env, renderer)
-      const map = tokens[index].map
+      const token = tokens[index]
+      let html = render(tokens, index, options, env, renderer)
+      // 在 token 层渲染预览，避免预处理压缩围栏后改变后续原文行号。
+      if (env.sourceLines && type === 'fence') {
+        const fenced = `${token.markup}${token.info}\n${token.content}${token.markup}`
+        const language = token.info.trim().toLowerCase()
+        if (language === 'svg') html = renderSvgBlocks(fenced)
+        if (language === 'html:preview') {
+          html = renderHtmlPreviewBlocks(fenced, { sanitizeHtml: sanitizeHtmlPreviewSrcdoc })
+        }
+      }
+      const map = token.map
+      if (env.sourceLines && map && type === 'fence' && token.info.trim().toLowerCase() === 'html:preview') {
+        // iframe 复用要求预览容器继续是根节点的直接子元素。
+        return html.replace('<div ', `<div data-source-start="${map[0] + 1}" data-source-end="${map[1]}" `)
+      }
       return env.sourceLines && map
         ? `<div data-source-start="${map[0] + 1}" data-source-end="${map[1]}">${html}</div>`
         : html

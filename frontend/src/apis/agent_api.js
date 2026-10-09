@@ -163,6 +163,12 @@ export const agentApi = {
   getThreadTurn: (threadId, turnId, options = {}) =>
     apiGet(`/api/v1/agents/sessions/${threadId}/turns/${turnId}`, options),
 
+  getTurnReferences: (threadId, turnId) =>
+    apiGet(`/api/agent/threads/${threadId}/turns/${turnId}/references`),
+
+  annotateTurnReferences: (threadId, turnId) =>
+    apiPost(`/api/agent/threads/${threadId}/turns/${turnId}/references`),
+
   getThreadInput: (threadId, inputId) =>
     apiGet(`/api/v1/agents/sessions/${threadId}/inputs/${inputId}`),
 

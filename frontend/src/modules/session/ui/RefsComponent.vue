@@ -53,6 +53,24 @@
       </span>
 
       <!-- 来源按钮 - 使用 flex-grow 占据剩余空间并右对齐 -->
+      <button
+        v-if="referenceEntry?.available && showKey('sources')"
+        type="button"
+        class="item btn reference-action"
+        :disabled="referenceEntry.annotating"
+        :aria-pressed="referenceEntry.references ? referenceEntry.visible : undefined"
+        @click="annotateSources"
+      >
+        <LoaderCircle v-if="referenceEntry.annotating" size="12" class="reference-loading" />
+        <Quote v-else size="12" />
+        {{ referenceButtonLabel }}
+      </button>
+      <button
+        v-else-if="referenceEntry?.error && !referenceEntry.loaded"
+        type="button"
+        class="item btn"
+        @click="referenceStore.load(threadId, msg.turn_id)"
+      >来源加载失败，重试</button>
       <div v-if="hasSources && showKey('sources')" class="sources-spacer"></div>
       <span
         v-if="hasSources && showKey('sources')"
@@ -71,6 +89,13 @@
         <ChevronDown :size="12" class="expand-icon" :class="{ rotated: isSourcesExpanded }" />
       </span>
     </div>
+
+    <p v-if="referenceEntry?.error && referenceEntry.loaded" class="reference-notice" role="alert">
+      {{ referenceEntry.error }}
+    </p>
+    <p v-else-if="referenceEntry?.references && referenceEntry.visible && !referenceEntry.references.citations.length" class="reference-notice" role="status">
+      未找到支持回答的引用片段
+    </p>
 
     <!-- 来源详情面板 -->
     <div v-if="isSourcesExpanded" class="sources-panel-body">
@@ -93,15 +118,19 @@ import {
   Check,
   RotateCcw,
   BookOpen,
-  ChevronDown
+  ChevronDown,
+  Quote,
+  LoaderCircle
 } from '@lucide/vue'
 import { formatChatTime } from '@/shared/lib/time'
 import KnowledgeSourceSection from '@/modules/agents/ui/KnowledgeSourceSection.vue'
 import WebSearchSourceSection from '@/modules/agents/ui/WebSearchSourceSection.vue'
 import { formatRunTimingDuration, getRunTotalLatencyMs } from '@/modules/session/model/runTiming'
+import { useTurnReferencesStore } from '@/modules/session/model/turnReferences'
 
 const emit = defineEmits(['retry', 'openRefs'])
 const props = defineProps({
+  threadId: { type: String, default: '' },
   message: Object,
   run: { type: Object, default: null },
   showRefs: {
@@ -119,16 +148,59 @@ const props = defineProps({
 })
 
 const msg = ref(props.message)
+const referenceStore = useTurnReferencesStore()
+const referenceEntry = computed(() =>
+  props.threadId && msg.value?.turn_id && msg.value?.phase === 'final_answer'
+    ? referenceStore.getEntry(props.threadId, msg.value.turn_id)
+    : null
+)
+const referenceButtonLabel = computed(() => {
+  if (referenceEntry.value?.annotating) return '正在标注…'
+  if (referenceEntry.value?.references) return referenceEntry.value.visible ? '隐藏标注' : '显示标注'
+  return '标注来源'
+})
+const annotateSources = () => {
+  if (referenceEntry.value?.references) {
+    referenceEntry.value.visible = !referenceEntry.value.visible
+    return
+  }
+  return referenceStore.annotate(props.threadId, msg.value.turn_id)
+}
+watch(
+  [() => props.threadId, () => props.message?.turn_id, () => props.message?.phase],
+  ([threadId, turnId, phase]) => {
+    if (threadId && turnId && phase === 'final_answer') void referenceStore.load(threadId, turnId)
+  },
+  { immediate: true }
+)
 
 // Sources state
 const isSourcesExpanded = ref(false)
 
-const knowledgeChunks = computed(() =>
-  Array.isArray(props.sources?.knowledgeChunks) ? props.sources.knowledgeChunks : []
-)
-const webSources = computed(() =>
-  Array.isArray(props.sources?.webSources) ? props.sources.webSources : []
-)
+const knowledgeChunks = computed(() => {
+  if (!referenceEntry.value?.loaded) {
+    return Array.isArray(props.sources?.knowledgeChunks) ? props.sources.knowledgeChunks : []
+  }
+  return referenceEntry.value.sources
+    .filter((source) => source.kind === 'knowledge')
+    .map((source) => ({
+      kb_id: source.kb_id,
+      file_id: source.file_id,
+      content: source.content,
+      metadata: {
+        source: source.title,
+        chunk_id: source.chunk_id,
+        start_line: source.start_line,
+        end_line: source.end_line
+      }
+    }))
+})
+const webSources = computed(() => {
+  if (!referenceEntry.value?.loaded) {
+    return Array.isArray(props.sources?.webSources) ? props.sources.webSources : []
+  }
+  return referenceEntry.value.sources.filter((source) => source.kind === 'web')
+})
 
 const hasSources = computed(() => knowledgeChunks.value.length > 0 || webSources.value.length > 0)
 
@@ -230,6 +302,21 @@ const dislikeThisResponse = () => antMessage.info('反馈功能开发中')
 </script>
 
 <style lang="less" scoped>
+.reference-action {
+  border: 0;
+  background: transparent;
+  font: inherit;
+  &:disabled { cursor: wait; opacity: 0.6; }
+  &:focus-visible { outline: 2px solid var(--main-500); outline-offset: 2px; }
+}
+.reference-notice {
+  margin: 6px 0;
+  color: var(--gray-600);
+  font-size: 12px;
+}
+.reference-loading { animation: reference-spin 1s linear infinite; }
+@keyframes reference-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .reference-loading { animation: none; } }
 .refs {
   display: flex;
   flex-direction: column;
