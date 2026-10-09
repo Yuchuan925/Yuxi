@@ -104,9 +104,7 @@ async def _ensure_thread_idle(*, db: AsyncSession, thread_id: str) -> None:
         )
         .limit(1)
     )
-    pending_input = await db.scalar(
-        select(AgentInput.id).where(AgentInput.thread_id == thread_id, AgentInput.status == "pending").limit(1)
-    )
+    pending_input = await db.scalar(select(AgentInput.id).where(AgentInput.thread_id == thread_id, AgentInput.status == "pending").limit(1))
     if active_turn is None and pending_input is None:
         return
     raise HTTPException(

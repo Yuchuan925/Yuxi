@@ -43,10 +43,7 @@ async def test_langgraph_message_does_not_route_by_nested_thread_id(container):
             return Graph()
 
     events = [
-        event
-        async for event in Agent().stream_messages_with_state(
-            ["hello"], context=BaseContext(thread_id="parent-thread", uid="user-1")
-        )
+        event async for event in Agent().stream_messages_with_state(["hello"], context=BaseContext(thread_id="parent-thread", uid="user-1"))
     ]
     assert "thread_id" not in events[0]["params"]["data"][1]
     assert events[1]["params"]["data"][1]["thread_id"] == "child-thread"

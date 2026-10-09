@@ -97,9 +97,7 @@ async def test_graph_candidates_cannot_bypass_text_constraints():
     assert all(chunk["score_type"] == "fusion" for chunk in chunks)
 
 
-@pytest.mark.parametrize(
-    "module,executor", [(milvus_module, MilvusKB), (graph_module, graph_module.MilvusGraphVectorStore)]
-)
+@pytest.mark.parametrize("module,executor", [(milvus_module, MilvusKB), (graph_module, graph_module.MilvusGraphVectorStore)])
 def test_database_operations_use_own_connection_and_fail_closed(monkeypatch, module, executor):
     """数据库切换失败传给调用方，不退回默认库。"""
     selected = {}

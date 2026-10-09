@@ -56,9 +56,7 @@ async def resolve_configured_runtime_tools(context) -> list[Any]:
             continue
         for tool in mcp_tools:
             if tool.name in selected_tool_names:
-                raise RuntimeError(
-                    f"工具名冲突：MCP '{server_name}' 的 '{tool.name}' 与 {selected_tool_sources[tool.name]} 工具同名"
-                )
+                raise RuntimeError(f"工具名冲突：MCP '{server_name}' 的 '{tool.name}' 与 {selected_tool_sources[tool.name]} 工具同名")
             selected_tools.append(tool)
             selected_tool_names.add(tool.name)
             selected_tool_sources[tool.name] = f"MCP '{server_name}'"

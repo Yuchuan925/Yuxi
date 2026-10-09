@@ -155,8 +155,7 @@ def _normalize_relation_endpoint(
     entity = entity_refs.get(endpoint_ref)
     if entity is None:
         raise ValueError(
-            f"relations[].source/target 必须是实体对象，或引用 entities[].text/id，"
-            f"未找到: {path}={endpoint_ref}, Result: {result}"
+            f"relations[].source/target 必须是实体对象，或引用 entities[].text/id，未找到: {path}={endpoint_ref}, Result: {result}"
         )
     return entity
 

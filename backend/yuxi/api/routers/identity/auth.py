@@ -641,9 +641,7 @@ async def read_users(
         users_with_dept = await user_repo.list_with_department(skip=skip, limit=limit)
     else:
         # 普通管理员只能看到本部门用户
-        users_with_dept = await user_repo.list_with_department(
-            skip=skip, limit=limit, department_id=current_user.department_id
-        )
+        users_with_dept = await user_repo.list_with_department(skip=skip, limit=limit, department_id=current_user.department_id)
 
     users = []
     for user, dept_name in users_with_dept:

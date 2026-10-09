@@ -88,8 +88,7 @@ async def test_two_sandboxes_share_project_files_but_not_runtime_state():
     try:
         first_result = await asyncio.to_thread(
             first.execute,
-            f"mkdir -p {project_root}/outputs && printf shared-bytes > {project_file} "
-            f"&& printf private-runtime > {runtime_file}",
+            f"mkdir -p {project_root}/outputs && printf shared-bytes > {project_file} && printf private-runtime > {runtime_file}",
         )
         assert first_result.exit_code == 0, first_result.output
 
@@ -149,8 +148,7 @@ async def test_recreated_runtime_keeps_project_files_and_drops_process_state():
     try:
         result = await asyncio.to_thread(
             first.execute,
-            f"mkdir -p {project_root}/outputs && printf persistent > {project_file} "
-            f"&& printf transient > {runtime_file}",
+            f"mkdir -p {project_root}/outputs && printf persistent > {project_file} && printf transient > {runtime_file}",
         )
         assert result.exit_code == 0, result.output
         await asyncio.to_thread(
@@ -339,9 +337,7 @@ async def test_ocr_directory_copy_is_visible_in_real_sandbox(tmp_path):
             "workdir_path": runtime_path,
         }
         runtime = SimpleNamespace(config={"configurable": context}, context=SimpleNamespace(**context), state={})
-        result = await ocr_parse_file.coroutine(
-            file_path=f"{runtime_path}/source.docx", runtime=runtime, ocr_engine="disable"
-        )
+        result = await ocr_parse_file.coroutine(file_path=f"{runtime_path}/source.docx", runtime=runtime, ocr_engine="disable")
         [markdown_response] = await asyncio.to_thread(backend.download_files, [result["parsed_path"]])
         assert markdown_response.error is None
         markdown = markdown_response.content.decode()

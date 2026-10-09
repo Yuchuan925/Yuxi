@@ -51,11 +51,7 @@ async def test_session_items_pagination_uses_only_authorized_public_content(test
         first = (await test_client.get(base, headers=admin_headers, params={"order": "asc", "limit": 2})).json()
         assert first["object"] == "list" and first["has_more"] is True
         assert [item["id"] for item in first["data"]] == expected[:2]
-        second = (
-            await test_client.get(
-                base, headers=admin_headers, params={"order": "asc", "limit": 2, "after": first["last_id"]}
-            )
-        ).json()
+        second = (await test_client.get(base, headers=admin_headers, params={"order": "asc", "limit": 2, "after": first["last_id"]})).json()
         assert [item["id"] for item in second["data"]] == expected[2:]
         assert second["has_more"] is False
         descending = (await test_client.get(base, headers=admin_headers)).json()
@@ -119,8 +115,7 @@ async def test_items_page_bounds_database_rows_and_splits_one_message(test_clien
     try:
         record = await conn.fetchrow("SELECT id,uid,app_id FROM sessions WHERE thread_id=$1", session_id)
         await conn.executemany(
-            "INSERT INTO messages (session_record_id,role,content,extra_metadata,created_at,delivery_status) "
-            "VALUES ($1,'assistant','PRIVATE_AUDIT','{}'::json,now(),'complete')",
+            "INSERT INTO messages (session_record_id,role,content,extra_metadata,created_at,delivery_status) VALUES ($1,'assistant','PRIVATE_AUDIT','{}'::json,now(),'complete')",
             [(record["id"],)] * 250,
         )
         public = {
@@ -137,8 +132,7 @@ async def test_items_page_bounds_database_rows_and_splits_one_message(test_clien
             for index in [2, 0, 1]
         }
         await conn.execute(
-            "INSERT INTO messages (session_record_id,role,content,extra_metadata,created_at,delivery_status) "
-            "VALUES ($1,'assistant','PRIVATE_AUDIT',$2::json,now(),'complete')",
+            "INSERT INTO messages (session_record_id,role,content,extra_metadata,created_at,delivery_status) VALUES ($1,'assistant','PRIVATE_AUDIT',$2::json,now(),'complete')",
             record["id"],
             json.dumps({"public_items": public}),
         )
@@ -225,19 +219,13 @@ async def test_receipt_recovery_is_scoped_and_preserves_queued_input(test_client
             ]
         }
         send_key = f"send-{original_key}"
-        accepted = await test_client.post(
-            f"{url}/events", headers={**headers[0], "Idempotency-Key": send_key}, json=body
-        )
+        accepted = await test_client.post(f"{url}/events", headers={**headers[0], "Idempotency-Key": send_key}, json=body)
         assert accepted.status_code == 202, accepted.text
         receipt = await test_client.get(f"{url}/receipt", headers=headers[0], params={"idempotency_key": send_key})
         assert receipt.status_code == 200 and receipt.json() == accepted.json()
         assert receipt.json()["turn_id"] is None and receipt.json()["run_id"] is None
-        assert (
-            await test_client.get(f"{url}/receipt", headers=headers[0], params={"idempotency_key": "missing"})
-        ).status_code == 404
-        assert (
-            await test_client.get(f"{url}/receipt", headers=headers[1], params={"idempotency_key": send_key})
-        ).status_code == 404
+        assert (await test_client.get(f"{url}/receipt", headers=headers[0], params={"idempotency_key": "missing"})).status_code == 404
+        assert (await test_client.get(f"{url}/receipt", headers=headers[1], params={"idempotency_key": send_key})).status_code == 404
         replay = await test_client.post(f"{url}/events", headers={**headers[0], "Idempotency-Key": send_key}, json=body)
         assert replay.json() == receipt.json()
         changed = await test_client.post(

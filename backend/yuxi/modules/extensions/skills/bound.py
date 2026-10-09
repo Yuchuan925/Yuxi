@@ -87,9 +87,7 @@ async def upload_agent_bound_skill(
 
 async def lock_manageable_agent(db: AsyncSession, slug: str, operator: User) -> tuple[Agent, User]:
     """先锁 Agent，再刷新实际操作者，绑定写入沿用同一授权。"""
-    agent = await db.scalar(
-        select(Agent).where(Agent.slug == slug).with_for_update().execution_options(populate_existing=True)
-    )
+    agent = await db.scalar(select(Agent).where(Agent.slug == slug).with_for_update().execution_options(populate_existing=True))
     operator = await UserRepository(db).lock_active_human(operator.uid)
     if agent is None or operator is None or not user_can_manage_agent(operator, agent):
         raise PermissionError("智能体不存在或无权管理")

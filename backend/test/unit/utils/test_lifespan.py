@@ -25,9 +25,7 @@ async def test_optional_startup_component_failure_is_structured_without_raw_mess
         operation=fail,
     )
 
-    assert app.state.startup_components == {
-        "builtin_mcp_servers": {"status": "error", "required": False, "code": "RuntimeError"}
-    }
+    assert app.state.startup_components == {"builtin_mcp_servers": {"status": "error", "required": False, "code": "RuntimeError"}}
     assert "password" not in str(app.state.startup_components)
 
 
@@ -48,9 +46,7 @@ async def test_invalid_security_secrets_fail_before_database_startup(
     ):
         await lifespan_module._startup(app)
 
-    assert app.state.startup_components == {
-        "security_secrets": {"status": "error", "required": True, "code": "ValueError"}
-    }
+    assert app.state.startup_components == {"security_secrets": {"status": "error", "required": True, "code": "ValueError"}}
 
 
 async def test_api_startup_validates_full_schema_without_running_ddl(
@@ -105,8 +101,6 @@ async def test_required_startup_component_failure_still_releases_every_runtime_c
         async with lifespan_module.lifespan(app):
             raise AssertionError("startup failure must prevent yield")
 
-    assert app.state.startup_components == {
-        "default_agents": {"status": "error", "required": True, "code": "RuntimeError"}
-    }
+    assert app.state.startup_components == {"default_agents": {"status": "error", "required": True, "code": "RuntimeError"}}
     assert "password" not in str(exc_info.value)
     assert released == ["sandbox_provider", "queue_clients", "neo4j", "postgres"]

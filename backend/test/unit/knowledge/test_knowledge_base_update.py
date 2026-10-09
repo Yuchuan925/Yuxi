@@ -109,9 +109,7 @@ class FakeFileRepository:
         records = [
             record
             for record in self.records.values()
-            if record.kb_id == kb_id
-            and (not after_file_id or record.file_id > after_file_id)
-            and (not files_only or not record.is_folder)
+            if record.kb_id == kb_id and (not after_file_id or record.file_id > after_file_id) and (not files_only or not record.is_folder)
         ]
         records.sort(key=lambda record: record.file_id)
         return records[:limit]
@@ -137,9 +135,7 @@ class FakeFileRepository:
             "token_count": sum(int(record.token_count or 0) for record in files),
             "pending_parse_count": sum(1 for record in files if record.status == "uploaded"),
             "pending_index_count": sum(1 for record in files if record.status in {"parsed", "error_indexing"}),
-            "processing_count": sum(
-                1 for record in files if record.status in {"processing", "waiting", "parsing", "indexing"}
-            ),
+            "processing_count": sum(1 for record in files if record.status in {"processing", "waiting", "parsing", "indexing"}),
         }
 
 

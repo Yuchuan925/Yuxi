@@ -50,9 +50,7 @@ class InputMessage(WireModel):
 
     type: Literal["message"] = "message"
     role: Literal["user"]
-    content: list[Annotated[InputTextPart | InputImagePart, Field(discriminator="type")]] = Field(
-        min_length=1, max_length=18
-    )
+    content: list[Annotated[InputTextPart | InputImagePart, Field(discriminator="type")]] = Field(min_length=1, max_length=18)
 
 
 class SessionAgentOverride(WireModel):
@@ -83,17 +81,14 @@ class SessionCreate(WireModel):
     )
 
     agent_id: str = Field(min_length=1, max_length=64, description="可见的已保存 Agent slug，先从 Agent 目录查询。")
-    agent: SessionAgentOverride | None = Field(
-        default=None, description="仅支持 model 覆盖；其他官方 Agent 配置当前不支持。"
-    )
+    agent: SessionAgentOverride | None = Field(default=None, description="仅支持 model 覆盖；其他官方 Agent 配置当前不支持。")
     input: (
-        Annotated[str, Field(min_length=1, max_length=32768)]
-        | Annotated[list[InputMessage], Field(min_length=1, max_length=20)]
-        | None
-    ) = Field(default=None, description="初始用户输入；字符串等价于一条 input_text 用户消息，省略创建空会话。")
-    stream: StrictBool = Field(
-        default=False, description="true 返回长期 text/event-stream；必须同时提供 input，客户端自行关闭订阅。"
+        Annotated[str, Field(min_length=1, max_length=32768)] | Annotated[list[InputMessage], Field(min_length=1, max_length=20)] | None
+    ) = Field(
+        default=None,
+        description="初始用户输入；字符串等价于一条 input_text 用户消息，省略创建空会话。",
     )
+    stream: StrictBool = Field(default=False, description="true 返回长期 text/event-stream；必须同时提供 input，客户端自行关闭订阅。")
     project_id: str | None = Field(default=None, description="Yuxi 扩展：当前用户的 Project；省略时创建隐式 Project。")
     title: str | None = Field(default=None, max_length=255, description="Yuxi 扩展：会话展示标题。")
     tool_approval_mode: str | None = Field(default=None, description="Yuxi 扩展：后续输入默认工具审批模式。")
@@ -138,13 +133,9 @@ class MessageOptions(WireModel):
 
     mode: Literal["follow_up", "steer"] | None = Field(
         default=None,
-        description=(
-            "follow_up 按 FIFO 排队；steer 优先接管。省略时运行中选择 steer，空闲选择 follow_up，协作等待时排队。"
-        ),
+        description="follow_up 按 FIFO 排队；steer 优先接管。省略时运行中选择 steer，空闲选择 follow_up，协作等待时排队。",
     )
-    model: str | None = Field(
-        default=None, min_length=1, description="本次 follow_up 的模型覆盖，与消息原子接收；steer 禁止覆盖。"
-    )
+    model: str | None = Field(default=None, min_length=1, description="本次 follow_up 的模型覆盖，与消息原子接收；steer 禁止覆盖。")
     tool_approval_mode: str | None = None
     attachment_file_ids: list[Annotated[str, Field(min_length=32, max_length=32)]] = Field(
         default_factory=list,
@@ -279,7 +270,9 @@ class SessionEventCreate(WireModel):
     )
 
     events: list[ThreadEvent] = Field(
-        min_length=1, max_length=1, description="每次只允许一个消息或控制事件；消息事件可包含多条有序用户消息。"
+        min_length=1,
+        max_length=1,
+        description="每次只允许一个消息或控制事件；消息事件可包含多条有序用户消息。",
     )
 
 
@@ -376,8 +369,8 @@ class MessageItem(PublicItem):
 
     type: Literal["message"]
     role: Literal["user", "assistant"]
-    content: list[Annotated[InputTextContent | InputImageContent | OutputTextPart, Field(discriminator="type")]] = (
-        Field(description="用户含 input_text/input_image，助手含 output_text；按内容块顺序读取。")
+    content: list[Annotated[InputTextContent | InputImageContent | OutputTextPart, Field(discriminator="type")]] = Field(
+        description="用户含 input_text/input_image，助手含 output_text；按内容块顺序读取。"
     )
     phase: Literal["commentary", "final_answer"] | None = Field(
         description="只有 result_run_id 指向 Run 的最终输出为 final_answer；用户输入为 null。"
@@ -468,9 +461,7 @@ class InputResponse(BaseModel):
     received_seq: int
     cutoff_seq: int | None
     items: list[MessageItem]
-    attachment_status: Literal["preparing", "ready"] = Field(
-        description="ready 表示本次附件已写入 Workdir；preparing 时禁止消费。"
-    )
+    attachment_status: Literal["preparing", "ready"] = Field(description="ready 表示本次附件已写入 Workdir；preparing 时禁止消费。")
     attachment_error: str | None = Field(description="最近一次准备失败，恢复会重试同一 Input。")
 
 

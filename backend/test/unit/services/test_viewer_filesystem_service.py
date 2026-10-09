@@ -107,9 +107,7 @@ def realtime_viewer(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_viewer_root_is_realtime_project_workdir(realtime_viewer):
-    result = await svc.list_viewer_filesystem_tree(
-        thread_id="thread-1", path="/", current_user=SimpleNamespace(uid="user-1"), db=object()
-    )
+    result = await svc.list_viewer_filesystem_tree(thread_id="thread-1", path="/", current_user=SimpleNamespace(uid="user-1"), db=object())
     assert [item["name"] for item in result["entries"]] == ["outputs", "report.txt"]
     assert result["entries"][0]["path"] == "/outputs/"
     assert result["entries"][1]["path"] == "/report.txt"
@@ -119,9 +117,7 @@ async def test_viewer_root_is_realtime_project_workdir(realtime_viewer):
 async def test_viewer_rejects_other_project_and_user_data(realtime_viewer):
     for path in ("/home/gem/user-data/projects/other/file.txt", "/home/gem/user-data/a.txt"):
         with pytest.raises(HTTPException) as exc:
-            await svc.read_viewer_file_content(
-                thread_id="thread-1", path=path, current_user=SimpleNamespace(uid="user-1"), db=object()
-            )
+            await svc.read_viewer_file_content(thread_id="thread-1", path=path, current_user=SimpleNamespace(uid="user-1"), db=object())
         assert exc.value.status_code == 403
 
 
@@ -225,9 +221,7 @@ async def test_viewer_search_walks_current_workdir(realtime_viewer):
     realtime_viewer.directories["/projects/11111111-1111-4111-8111-111111111111/outputs"] = [
         {"name": "final-report.md", "is_dir": False, "size": 10, "modified_at": 3}
     ]
-    result = await svc.search_viewer_files(
-        thread_id="thread-1", query="report", current_user=SimpleNamespace(uid="user-1"), db=object()
-    )
+    result = await svc.search_viewer_files(thread_id="thread-1", query="report", current_user=SimpleNamespace(uid="user-1"), db=object())
     assert [item["name"] for item in result["entries"]] == ["report.txt", "final-report.md"]
 
     directory_result = await svc.search_viewer_files(
@@ -307,8 +301,7 @@ async def test_viewer_upload_returns_scope_path_and_artifact_url(realtime_viewer
             "size": 7,
             "modified_at": "1970-01-01T00:00:00+00:00",
             "artifact_url": (
-                "/api/v1/agents/sessions/thread-1/artifacts/home/gem/user-data/"
-                "projects/11111111-1111-4111-8111-111111111111/new.txt"
+                "/api/v1/agents/sessions/thread-1/artifacts/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/new.txt"
             ),
         }
     ]

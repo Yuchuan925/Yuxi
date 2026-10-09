@@ -119,9 +119,7 @@ class EvaluationMetricsCalculator:
         return metrics
 
     @staticmethod
-    async def calculate_answer_metrics(
-        query: str, generated_answer: str, gold_answer: str, judge_llm: Any = None
-    ) -> dict[str, Any]:
+    async def calculate_answer_metrics(query: str, generated_answer: str, gold_answer: str, judge_llm: Any = None) -> dict[str, Any]:
         """计算答案指标 (LLM Judge)"""
         if not judge_llm:
             return {}
@@ -129,9 +127,7 @@ class EvaluationMetricsCalculator:
         return await AnswerMetrics.judge_correctness(query, generated_answer, gold_answer, judge_llm)
 
     @staticmethod
-    def calculate_overall_score(
-        retrieval_metrics_list: list[dict[str, float]], answer_metrics_list: list[dict[str, Any]]
-    ) -> float | None:
+    def calculate_overall_score(retrieval_metrics_list: list[dict[str, float]], answer_metrics_list: list[dict[str, Any]]) -> float | None:
         """综合得分：有答案准确率则用准确率，否则用 recall@10。"""
         if answer_metrics_list:
             scores = [m.get("score", 0.0) for m in answer_metrics_list]

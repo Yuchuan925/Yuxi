@@ -122,9 +122,7 @@ class BaseAgent:
             async for event in run:
                 yield event
 
-        yield GraphExecutionResult(
-            checkpoint=await graph.aget_state(input_config), steer_before_model=context.steer_before_model
-        )
+        yield GraphExecutionResult(checkpoint=await graph.aget_state(input_config), steer_before_model=context.steer_before_model)
 
     async def stream_messages_with_state(self, messages: list[str], *, context: BaseContext, **kwargs):
         graph_input = {"messages": messages}

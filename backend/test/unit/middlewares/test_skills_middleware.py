@@ -53,9 +53,7 @@ async def test_skills_prompt_uses_effective_skills_at_request_level():
             "effective_skills": ["alpha"],
             "runtime_skills": {
                 "alpha": _runtime_skill("alpha", name="Alpha", description="alpha desc"),
-                "configured-only": _runtime_skill(
-                    "configured-only", name="Configured Only", description="should not appear"
-                ),
+                "configured-only": _runtime_skill("configured-only", name="Configured Only", description="should not appear"),
             },
         },
     )
@@ -326,9 +324,7 @@ async def test_activated_mcp_rejects_name_of_inactive_registered_skill_tool(monk
 
     registered_local_tool = SimpleNamespace(name="chart_tool")
     with pytest.raises(RuntimeError, match="Skill MCP 工具名冲突：chart_tool"):
-        await SkillsMiddleware(enable_skills_prompt=False).awrap_model_call(
-            FakeRequest([registered_local_tool]), AsyncMock()
-        )
+        await SkillsMiddleware(enable_skills_prompt=False).awrap_model_call(FakeRequest([registered_local_tool]), AsyncMock())
 
 
 @pytest.mark.asyncio
@@ -523,9 +519,7 @@ def _make_gated_request(activated, *, preloaded=None):
                     mcps=[],
                     _skill_runtime_snapshot={
                         "effective_skills": ["knowledge-base"],
-                        "runtime_skills": {
-                            "knowledge-base": _runtime_skill("knowledge-base", tools=["list_kbs", "query_kb"])
-                        },
+                        "runtime_skills": {"knowledge-base": _runtime_skill("knowledge-base", tools=["list_kbs", "query_kb"])},
                     },
                 )
             )

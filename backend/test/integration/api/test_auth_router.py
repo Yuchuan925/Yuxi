@@ -46,9 +46,7 @@ async def _expire_login_lock(user_id: int) -> None:
         session_factory = async_sessionmaker(bind=engine, expire_on_commit=False)
         async with session_factory() as session:
             await session.execute(
-                update(UserModel)
-                .where(UserModel.id == user_id)
-                .values(login_locked_until=utc_now() - timedelta(seconds=1))
+                update(UserModel).where(UserModel.id == user_id).values(login_locked_until=utc_now() - timedelta(seconds=1))
             )
             await session.commit()
     finally:
@@ -294,9 +292,7 @@ async def test_admin_user_page_filters_before_pagination_and_excludes_deleted(te
             await test_client.delete(f"/api/auth/users/{user['id']}", headers=admin_headers)
 
 
-async def test_admin_password_mutations_reject_passwords_shorter_than_eight_characters(
-    test_client, admin_headers, standard_user
-):
+async def test_admin_password_mutations_reject_passwords_shorter_than_eight_characters(test_client, admin_headers, standard_user):
     create_response = await test_client.post(
         "/api/auth/users",
         json={"username": f"weak_{uuid.uuid4().hex[:8]}", "password": "short", "role": "user"},
@@ -375,9 +371,7 @@ async def test_department_admin_is_limited_to_own_department_users(test_client, 
         option_uids = {user["uid"] for user in access_options}
         assert user_a["uid"] in option_uids
         assert user_b["uid"] in option_uids
-        assert all(
-            set(user) == {"uid", "username", "role", "department_id", "department_name"} for user in access_options
-        )
+        assert all(set(user) == {"uid", "username", "role", "department_id", "department_name"} for user in access_options)
 
         superadmin_list_response = await test_client.get("/api/auth/users?limit=1000", headers=admin_headers)
         assert superadmin_list_response.status_code == 200, superadmin_list_response.text
@@ -398,9 +392,7 @@ async def test_department_admin_is_limited_to_own_department_users(test_client, 
         )
         assert cross_update.status_code == 403, cross_update.text
 
-        role_escalation = await test_client.put(
-            f"/api/auth/users/{user_a['id']}", json={"role": "admin"}, headers=dept_a["admin_headers"]
-        )
+        role_escalation = await test_client.put(f"/api/auth/users/{user_a['id']}", json={"role": "admin"}, headers=dept_a["admin_headers"])
         assert role_escalation.status_code == 403, role_escalation.text
         assert role_escalation.json()["detail"] == "只有系统管理员可以提升角色"
 

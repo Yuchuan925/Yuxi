@@ -49,7 +49,5 @@ def get_job_definition(job_type: str, handler_version: int = 1) -> JobDefinition
     if definition is None:
         raise ValueError(f"Unknown job type: {job_type}")
     if definition.version != handler_version:
-        raise ValueError(
-            f"Unsupported handler version for {job_type}: {handler_version}; expected {definition.version}"
-        )
+        raise ValueError(f"Unsupported handler version for {job_type}: {handler_version}; expected {definition.version}")
     return definition

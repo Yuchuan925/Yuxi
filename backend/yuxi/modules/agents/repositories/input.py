@@ -74,9 +74,7 @@ class AgentInputRepository:
         result = await self.db.execute(statement.execution_options(populate_existing=for_update))
         return result.scalar_one_or_none()
 
-    async def get_queue_head(
-        self, *, thread_id: str, uid: str, app_id: str | None, for_update: bool = True
-    ) -> AgentInput | None:
+    async def get_queue_head(self, *, thread_id: str, uid: str, app_id: str | None, for_update: bool = True) -> AgentInput | None:
         """读取 steer 优先、follow-up FIFO 的队头；调用方先锁 Thread。"""
         statement = (
             select(AgentInput)
@@ -94,9 +92,7 @@ class AgentInputRepository:
         result = await self.db.execute(statement.execution_options(populate_existing=for_update))
         return result.scalar_one_or_none()
 
-    async def get_pending_steer(
-        self, *, thread_id: str, uid: str, app_id: str | None, for_update: bool = True
-    ) -> AgentInput | None:
+    async def get_pending_steer(self, *, thread_id: str, uid: str, app_id: str | None, for_update: bool = True) -> AgentInput | None:
         """读取并可锁定 Thread 唯一待消费 steer。"""
         statement = select(AgentInput).where(
             AgentInput.thread_id == thread_id,
@@ -166,9 +162,7 @@ class AgentInputRepository:
 
     async def get_latest_receive_seq(self, input_id: str) -> int | None:
         """读取领取事务的批次截止序号。"""
-        value = await self.db.scalar(
-            select(func.max(AgentInputReceipt.receive_seq)).where(AgentInputReceipt.input_id == input_id)
-        )
+        value = await self.db.scalar(select(func.max(AgentInputReceipt.receive_seq)).where(AgentInputReceipt.input_id == input_id))
         return int(value) if value is not None else None
 
     async def consume(self, *, input_id: str, turn_id: str, run_id: str, cutoff_seq: int) -> AgentInput:
@@ -205,15 +199,9 @@ class AgentInputRepository:
             AgentInputReceipt.receive_seq <= cutoff_seq,
         )
         message_ids = select(AgentInputMessage.message_id).where(AgentInputMessage.receipt_id.in_(receipt_ids))
+        await self.db.execute(update(AgentInputReceipt).where(AgentInputReceipt.id.in_(receipt_ids)).values(turn_id=turn_id, run_id=run_id))
         await self.db.execute(
-            update(AgentInputReceipt)
-            .where(AgentInputReceipt.id.in_(receipt_ids))
-            .values(turn_id=turn_id, run_id=run_id)
-        )
-        await self.db.execute(
-            update(Message)
-            .where(Message.id.in_(message_ids))
-            .values(turn_id=turn_id, run_id=run_id, delivery_status="dispatched")
+            update(Message).where(Message.id.in_(message_ids)).values(turn_id=turn_id, run_id=run_id, delivery_status="dispatched")
         )
         await self.db.flush()
         return input_item

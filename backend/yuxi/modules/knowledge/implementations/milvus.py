@@ -301,9 +301,7 @@ def _retrieval_config_options() -> list[dict[str, Any]]:
             **metadata,
         }
         if options_provider == "rerank_models":
-            option["options"] = [
-                {"label": info.display_name, "value": info.spec} for info in model_cache.get_all_specs("rerank")
-            ]
+            option["options"] = [{"label": info.display_name, "value": info.spec} for info in model_cache.get_all_specs("rerank")]
         options.append(option)
     return options
 
@@ -584,10 +582,7 @@ class MilvusKB(KnowledgeBase):
                 return
             except Exception as e:
                 last_error = e
-                logger.warning(
-                    f"Milvus chunk upsert failed for file {file_id} "
-                    f"(attempt {attempt + 1}/{MILVUS_CHUNK_UPSERT_ATTEMPTS}): {e}"
-                )
+                logger.warning(f"Milvus chunk upsert failed for file {file_id} (attempt {attempt + 1}/{MILVUS_CHUNK_UPSERT_ATTEMPTS}): {e}")
                 if attempt + 1 < MILVUS_CHUNK_UPSERT_ATTEMPTS:
                     await asyncio.sleep(MILVUS_CHUNK_UPSERT_RETRY_DELAY_SECONDS)
 
@@ -621,9 +616,7 @@ class MilvusKB(KnowledgeBase):
                 embeddings,
             )
 
-    async def _delete_file_chunks_from_milvus(
-        self, collection: Collection, file_id: str, generation: int | None = None
-    ) -> None:
+    async def _delete_file_chunks_from_milvus(self, collection: Collection, file_id: str, generation: int | None = None) -> None:
         expr = f'file_id == "{file_id}"'
         if generation is not None:
             expr += f" and generation == {int(generation)}"
@@ -646,9 +639,7 @@ class MilvusKB(KnowledgeBase):
         Milvus 中可能残留已删除文件的向量（如删除流程中途失败），
         检索侧依据 PG 中 file_id 是否存在进行过滤，防止已删除内容被返回。
         """
-        file_ids = sorted(
-            {str(file_id) for chunk in chunks if (file_id := (chunk.get("metadata") or {}).get("file_id"))}
-        )
+        file_ids = sorted({str(file_id) for chunk in chunks if (file_id := (chunk.get("metadata") or {}).get("file_id"))})
         if not file_ids:
             return []
 
@@ -683,10 +674,7 @@ class MilvusKB(KnowledgeBase):
         for file_id, generation in await KnowledgeFileRepository().list_active_generations(kb_id):
             grouped.setdefault(generation, []).append(file_id)
         return (
-            " or ".join(
-                f"(generation == {generation} and file_id in {json.dumps(file_ids)})"
-                for generation, file_ids in grouped.items()
-            )
+            " or ".join(f"(generation == {generation} and file_id in {json.dumps(file_ids)})" for generation, file_ids in grouped.items())
             or "file_id in []"
         )
 
@@ -782,8 +770,8 @@ class MilvusKB(KnowledgeBase):
             current_meta = await self._load_file_meta(kb_id, file_id)
             current_status = current_meta.get("status")
             raise ValueError(
-                f"Cannot index file with status '{current_status}'. "
-                f"File must be parsed first (status should be one of: {', '.join(allowed_statuses)})"
+                f"Cannot index file with status '{current_status}'. File must be parsed first "
+                f"(status should be one of: {', '.join(allowed_statuses)})"
             )
 
         file_meta = self._file_record_to_meta(claimed_record)
@@ -982,9 +970,7 @@ class MilvusKB(KnowledgeBase):
 
                         retrieved_chunks.append(self._build_chunk_from_hit(hit, similarity, include_distances))
 
-                logger.debug(
-                    f"Milvus vector query response: {len(retrieved_chunks)} chunks found (after similarity filtering)"
-                )
+                logger.debug(f"Milvus vector query response: {len(retrieved_chunks)} chunks found (after similarity filtering)")
 
             elif search_mode == "keyword":
                 bm25_top_k = min(
@@ -1010,9 +996,7 @@ class MilvusKB(KnowledgeBase):
 
                 if results and len(results) > 0 and len(results[0]) > 0:
                     for hit in results[0]:
-                        retrieved_chunks.append(
-                            self._build_chunk_from_hit(hit, hit.distance, include_distances, score_field="bm25_score")
-                        )
+                        retrieved_chunks.append(self._build_chunk_from_hit(hit, hit.distance, include_distances, score_field="bm25_score"))
 
                 logger.debug(f"Milvus BM25 query response: {len(retrieved_chunks)} chunks found")
             else:
@@ -1053,9 +1037,7 @@ class MilvusKB(KnowledgeBase):
                 if results and len(results) > 0 and len(results[0]) > 0:
                     for hit in results[0]:
                         score = float(hit.distance or 0.0)
-                        retrieved_chunks.append(
-                            self._build_chunk_from_hit(hit, score, include_distances, score_field="hybrid_score")
-                        )
+                        retrieved_chunks.append(self._build_chunk_from_hit(hit, score, include_distances, score_field="hybrid_score"))
 
                 if highlighter and retrieved_chunks:
                     # 3.0.2 的 hybrid_search 不返回高亮；在已召回 ID 内取文本高亮，保持融合分数与顺序。
@@ -1071,9 +1053,7 @@ class MilvusKB(KnowledgeBase):
                         highlighter=highlighter,
                     )
                     highlights_by_id = {
-                        hit.entity.get("chunk_id"): self._build_chunk_from_hit(hit, hit.distance, False).get(
-                            "highlights"
-                        )
+                        hit.entity.get("chunk_id"): self._build_chunk_from_hit(hit, hit.distance, False).get("highlights")
                         for hit in highlighted[0]
                     }
                     for chunk in retrieved_chunks:
@@ -1115,8 +1095,7 @@ class MilvusKB(KnowledgeBase):
             reranker_model = merged_kwargs.get("reranker_model")
             if not reranker_model:
                 raise ValueError(
-                    "Reranker model must be specified when use_reranker=True. "
-                    "Please provide reranker_model in query parameters."
+                    "Reranker model must be specified when use_reranker=True. Please provide reranker_model in query parameters."
                 )
 
             try:
@@ -1131,9 +1110,7 @@ class MilvusKB(KnowledgeBase):
                     for chunk, rerank_score in zip(retrieved_chunks, rerank_scores):
                         chunk["rerank_score"] = float(rerank_score)
 
-                    retrieved_chunks.sort(
-                        key=lambda item: item.get("rerank_score", item.get("score", 0.0)), reverse=True
-                    )
+                    retrieved_chunks.sort(key=lambda item: item.get("rerank_score", item.get("score", 0.0)), reverse=True)
                     elapsed = time.time() - rerank_start
                     logger.info(f"Reranking completed for {kb_id} in {elapsed:.3f}s with model {reranker_model}")
                 finally:
@@ -1249,10 +1226,7 @@ class MilvusKB(KnowledgeBase):
 
             chunks = await KnowledgeChunkRepository().list_by_chunk_ids([chunk_id for chunk_id, _ in graph_scores])
             score_by_chunk_id = dict(graph_scores)
-            return [
-                self._build_chunk_from_record(chunk, score_by_chunk_id[chunk.chunk_id], score_field="graph_score")
-                for chunk in chunks
-            ]
+            return [self._build_chunk_from_record(chunk, score_by_chunk_id[chunk.chunk_id], score_field="graph_score") for chunk in chunks]
         except Exception as exc:  # noqa: BLE001
             logger.error(f"Graph retrieval failed for {kb_id}: {exc}")
             return []

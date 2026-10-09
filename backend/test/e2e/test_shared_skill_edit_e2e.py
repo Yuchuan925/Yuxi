@@ -30,9 +30,9 @@ async def test_edited_shared_skill_is_loaded_by_next_run(e2e_client: httpx.Async
     agent_slug = f"pytest-run-agent-{uuid.uuid4().hex[:8]}"
     original = f"---\nname: {slug}\nslug: {slug}\ndescription: before\n---\n# Before\n"
     marker = f"UPDATED_SHARED_SKILL_{uuid.uuid4().hex}"
-    updated = original.replace(
-        "description: before", "description: after\ntool_dependencies:\n- present_artifacts"
-    ).replace("# Before", f"# 图片生成技能\n{marker}")
+    updated = original.replace("description: before", "description: after\ntool_dependencies:\n- present_artifacts").replace(
+        "# Before", f"# 图片生成技能\n{marker}"
+    )
     me = await e2e_client.get("/api/auth/me", headers=e2e_headers)
     assert me.status_code == 200, me.text
     uid = str(me.json()["uid"])
@@ -81,9 +81,7 @@ async def test_edited_shared_skill_is_loaded_by_next_run(e2e_client: httpx.Async
                 "base_url": "http://api:8765/v1",
                 "api_key": "ci-replay-key",
                 "capabilities": ["chat"],
-                "enabled_models": [
-                    {"id": "deterministic-chat", "display_name": "Replay", "type": "chat", "source": "manual"}
-                ],
+                "enabled_models": [{"id": "deterministic-chat", "display_name": "Replay", "type": "chat", "source": "manual"}],
                 "is_enabled": True,
             },
         )
@@ -177,9 +175,7 @@ async def test_edited_shared_skill_is_loaded_by_next_run(e2e_client: httpx.Async
             await conn.close()
         manifest = json.loads(raw_manifest) if isinstance(raw_manifest, str) else raw_manifest
         assert [item["slug"] for item in manifest["resources"]["skills"]] == [slug]
-        assert (
-            manifest["resources"]["skills"][0]["preload_content_hash"] == hashlib.sha256(updated.encode()).hexdigest()
-        )
+        assert manifest["resources"]["skills"][0]["preload_content_hash"] == hashlib.sha256(updated.encode()).hexdigest()
     finally:
         if thread_id:
             await archive_public_thread(e2e_client, e2e_headers, thread_id, turn_id=turn_id)

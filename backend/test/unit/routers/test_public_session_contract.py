@@ -11,9 +11,7 @@ from yuxi.api.routers.public_v1.agents.schemas import SessionCreate, input_messa
 def test_initial_text_shorthand_has_same_domain_message_as_array():
     """字符串简写保留与消息数组相同的持久输入内容。"""
     text = SessionCreate(agent_id="agent", input="你好")
-    array = SessionCreate(
-        agent_id="agent", input=[{"role": "user", "content": [{"type": "input_text", "text": "你好"}]}]
-    )
+    array = SessionCreate(agent_id="agent", input=[{"role": "user", "content": [{"type": "input_text", "text": "你好"}]}])
     assert (
         input_messages_to_domain(text.input)[0].langchain_message.content
         == input_messages_to_domain(array.input)[0].langchain_message.content
@@ -110,9 +108,7 @@ def test_session_receipt_does_not_override_state_or_expose_internal_snapshot():
     assert result["agent"] == {"id": "agent", "model": "model"}
 
 
-@pytest.mark.parametrize(
-    "kind,expected", [("cooperation", "in_progress"), ("answer", "requires_action"), ("approval", "requires_action")]
-)
+@pytest.mark.parametrize("kind,expected", [("cooperation", "in_progress"), ("answer", "requires_action"), ("approval", "requires_action")])
 def test_public_waiting_status_expresses_the_required_action(kind, expected):
     """普通调用方从核心状态决定等待，waitpoint 保留具体等待内容。"""
     from types import SimpleNamespace

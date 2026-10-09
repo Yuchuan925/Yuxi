@@ -100,9 +100,7 @@ class MinIOClient:
             if "://" in endpoint:
                 endpoint = endpoint.split("://")[-1]
 
-            self._client = Minio(
-                endpoint=endpoint, access_key=self.access_key, secret_key=self.secret_key, secure=False
-            )
+            self._client = Minio(endpoint=endpoint, access_key=self.access_key, secret_key=self.secret_key, secure=False)
         return self._client
 
     def ensure_bucket_exists(self, bucket_name: str) -> bool:
@@ -126,9 +124,7 @@ class MinIOClient:
         except StorageError:
             raise
 
-    def upload_file(
-        self, bucket_name: str, object_name: str, data: bytes, content_type: str | None = None
-    ) -> UploadResult:
+    def upload_file(self, bucket_name: str, object_name: str, data: bytes, content_type: str | None = None) -> UploadResult:
         """上传文件到 MinIO"""
         try:
             self.ensure_bucket_exists(bucket_name=bucket_name)
@@ -164,7 +160,11 @@ class MinIOClient:
         content_type: str | None = None,
     ) -> UploadResult:
         result = await asyncio.to_thread(
-            self.upload_file, bucket_name=bucket_name, object_name=object_name, data=data, content_type=content_type
+            self.upload_file,
+            bucket_name=bucket_name,
+            object_name=object_name,
+            data=data,
+            content_type=content_type,
         )
         return result
 
@@ -225,7 +225,10 @@ class MinIOClient:
     def get_presigned_url(self, bucket_name: str, object_name: str, days=7) -> str:
         """将minio放在内网访问，外部通过返回代理链接访问"""
         res_url = self.client.get_presigned_url(
-            method="GET", bucket_name=bucket_name, object_name=object_name, expires=timedelta(days=days)
+            method="GET",
+            bucket_name=bucket_name,
+            object_name=object_name,
+            expires=timedelta(days=days),
         )
         return res_url
 

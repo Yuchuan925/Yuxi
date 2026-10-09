@@ -106,9 +106,7 @@ async def test_claim_concurrency_coalesce_and_soft_delete_history():
         async with session_factory() as db:
             repo = ScheduledAgentRepository(db)
             job = await repo.get_job(job_id, uid, lock=True)
-            runs = list(
-                (await db.execute(select(ScheduledAgentRun).where(ScheduledAgentRun.job_id == job_id))).scalars()
-            )
+            runs = list((await db.execute(select(ScheduledAgentRun).where(ScheduledAgentRun.job_id == job_id))).scalars())
             assert len(runs) == 1
             scheduled_run = runs[0]
             assert scheduled_run.thread_id
@@ -143,9 +141,7 @@ async def test_claim_concurrency_coalesce_and_soft_delete_history():
                 intent_hash="scheduled",
                 input_id=input_item.id,
             )
-            message = Message(
-                session_record_id=agent_session.id, role="user", content="hello", delivery_status="queued"
-            )
+            message = Message(session_record_id=agent_session.id, role="user", content="hello", delivery_status="queued")
             db.add(message)
             await db.flush()
             await input_repo.add_messages(input_id=input_item.id, receipt_id=receipt.id, message_ids=[message.id])
@@ -206,18 +202,12 @@ async def test_claim_concurrency_coalesce_and_soft_delete_history():
     finally:
         async with session_factory() as db:
             await db.execute(delete(ScheduledAgentRun).where(ScheduledAgentRun.job_id == job_id))
+            await db.execute(update(AgentTurn).where(AgentTurn.uid == uid).values(current_run_id=None, result_run_id=None))
             await db.execute(
-                update(AgentTurn).where(AgentTurn.uid == uid).values(current_run_id=None, result_run_id=None)
-            )
-            await db.execute(
-                delete(AgentInputMessage).where(
-                    AgentInputMessage.input_id.in_(select(AgentInput.id).where(AgentInput.uid == uid))
-                )
+                delete(AgentInputMessage).where(AgentInputMessage.input_id.in_(select(AgentInput.id).where(AgentInput.uid == uid)))
             )
             await db.execute(delete(AgentInputReceipt).where(AgentInputReceipt.uid == uid))
-            await db.execute(
-                delete(Message).where(Message.session_record_id.in_(select(Session.id).where(Session.uid == uid)))
-            )
+            await db.execute(delete(Message).where(Message.session_record_id.in_(select(Session.id).where(Session.uid == uid))))
             await db.execute(update(AgentRun).where(AgentRun.uid == uid).values(input_id=None))
             await db.execute(delete(AgentInput).where(AgentInput.uid == uid))
             await db.execute(delete(AgentRun).where(AgentRun.uid == uid))
@@ -449,11 +439,7 @@ async def test_transient_dispatch_failure_is_recovered_exactly_once(monkeypatch)
             await db.execute(delete(AgentInputMessage).where(AgentInputMessage.input_id == input_id))
             await db.execute(delete(AgentInputReceipt).where(AgentInputReceipt.input_id == input_id))
             await db.execute(delete(AgentInput).where(AgentInput.id == input_id))
-            await db.execute(
-                delete(Message).where(
-                    Message.session_record_id.in_(select(Session.id).where(Session.thread_id == thread_id))
-                )
-            )
+            await db.execute(delete(Message).where(Message.session_record_id.in_(select(Session.id).where(Session.thread_id == thread_id))))
             await db.execute(delete(Session).where(Session.thread_id == thread_id))
             await db.execute(delete(ScheduledAgentRun).where(ScheduledAgentRun.id == scheduled_run_id))
             await db.execute(delete(ScheduledAgentJob).where(ScheduledAgentJob.id == job_id))

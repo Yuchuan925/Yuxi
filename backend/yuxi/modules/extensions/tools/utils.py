@@ -42,8 +42,8 @@ def get_tool_info(tools) -> list[dict[str, Any]]:
 
             except Exception as e:
                 logger.error(
-                    f"Failed to process tool {getattr(tool_obj, 'name', 'unknown')}: {e}\n{traceback.format_exc()}. "
-                    f"Details: {dict(tool_obj.__dict__)}"
+                    f"Failed to process tool {getattr(tool_obj, 'name', 'unknown')}: {e}\n"
+                    f"{traceback.format_exc()}. Details: {dict(tool_obj.__dict__)}"
                 )
                 continue
 

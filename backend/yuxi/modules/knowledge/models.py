@@ -255,12 +255,8 @@ class KnowledgeGraphTriple(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     triple_id = Column(String(64), nullable=False)
     kb_id = Column(String(80), ForeignKey("knowledge_bases.kb_id", ondelete="CASCADE"), nullable=False)
-    source_entity_id = Column(
-        String(64), ForeignKey("knowledge_graph_entities.entity_id", ondelete="CASCADE"), nullable=False
-    )
-    target_entity_id = Column(
-        String(64), ForeignKey("knowledge_graph_entities.entity_id", ondelete="CASCADE"), nullable=False
-    )
+    source_entity_id = Column(String(64), ForeignKey("knowledge_graph_entities.entity_id", ondelete="CASCADE"), nullable=False)
+    target_entity_id = Column(String(64), ForeignKey("knowledge_graph_entities.entity_id", ondelete="CASCADE"), nullable=False)
     relation_type = Column(String(256), nullable=False)
     content = Column(Text, nullable=False)
     vector_status = Column(String(16), nullable=False, default="pending")

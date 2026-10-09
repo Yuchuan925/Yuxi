@@ -82,9 +82,7 @@ async def test_state_view_reads_postgres_snapshot_and_rejects_other_users(test_c
             assert "interrupt" not in response.json()
             assert (await test_client.get(url)).status_code == 401
             assert (await test_client.get(url, headers=standard_user["headers"])).status_code == 404
-            assert (
-                await test_client.get(f"/api/v1/agents/sessions/{uuid.uuid4()}/state", headers=admin_headers)
-            ).status_code == 404
+            assert (await test_client.get(f"/api/v1/agents/sessions/{uuid.uuid4()}/state", headers=admin_headers)).status_code == 404
             archived = await test_client.post(f"/api/v1/agents/sessions/{thread_id}/archive", headers=admin_headers)
             assert archived.status_code == 200, archived.text
             preserved = await test_client.get(url, headers=admin_headers)

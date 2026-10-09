@@ -17,10 +17,7 @@ class KnowledgeToolError(ValueError):
 
 def list_kbs(visible_kbs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """列出可见知识库的工具展示字段。"""
-    return [
-        {"kb_id": kb.get("kb_id"), "name": kb.get("name", ""), "description": kb.get("description") or "无描述"}
-        for kb in visible_kbs
-    ]
+    return [{"kb_id": kb.get("kb_id"), "name": kb.get("name", ""), "description": kb.get("description") or "无描述"} for kb in visible_kbs]
 
 
 def require_visible_kb(kb_id: str, visible_kbs: list[dict[str, Any]]) -> str:

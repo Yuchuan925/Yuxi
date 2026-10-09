@@ -64,9 +64,7 @@ async def dispatch_job(job_id: str) -> None:
     try:
         await publish_job(job_id)
     except Exception:
-        logger.error(
-            "BackgroundJob publication failed; pending intent will be retried: job_id=%s", job_id, exc_info=True
-        )
+        logger.error("BackgroundJob publication failed; pending intent will be retried: job_id=%s", job_id, exc_info=True)
 
 
 async def publish_job(job_id: str) -> None:
@@ -75,9 +73,7 @@ async def publish_job(job_id: str) -> None:
     await pool.enqueue_job("process_background_job", job_id)
 
 
-def resolve_job_timeout(
-    timeout_seconds: float | None, *, default: float = BACKGROUND_JOB_DEFAULT_TIMEOUT_SECONDS
-) -> float:
+def resolve_job_timeout(timeout_seconds: float | None, *, default: float = BACKGROUND_JOB_DEFAULT_TIMEOUT_SECONDS) -> float:
     """校验 worker 的执行预算，单次覆盖不能超过 worker 默认值。"""
     if not math.isfinite(default) or default <= 0:
         raise ValueError("BackgroundJob timeout must be a positive finite number of seconds")

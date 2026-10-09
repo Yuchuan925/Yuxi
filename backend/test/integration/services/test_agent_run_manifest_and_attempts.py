@@ -86,9 +86,7 @@ async def test_fresh_run_fact_schema_contains_manifest_and_attempt_constraints(f
         )
         unique_index_exists = await connection.scalar(
             text(
-                "SELECT EXISTS (SELECT 1 FROM pg_indexes "
-                "WHERE tablename = 'agent_run_attempts' "
-                "AND indexname = 'uq_agent_run_attempts_run_attempt_no')"
+                "SELECT EXISTS (SELECT 1 FROM pg_indexes WHERE tablename = 'agent_run_attempts' AND indexname = 'uq_agent_run_attempts_run_attempt_no')"
             )
         )
 
@@ -120,17 +118,13 @@ async def test_attempt_history_survives_retry_takeover_and_reconciliation(fact_d
 
         async with session_factory() as db:
             repository = AgentRunRepository(db)
-            renewed = await repository.renew_lease(
-                run_id, worker_id=owner_a, lease_seconds=60, now=now + timedelta(seconds=10)
-            )
+            renewed = await repository.renew_lease(run_id, worker_id=owner_a, lease_seconds=60, now=now + timedelta(seconds=10))
             await db.commit()
         assert renewed is True
 
         async with session_factory() as db:
             repository = AgentRunRepository(db)
-            released = await repository.release_lease_for_retry(
-                run_id, worker_id=owner_a, now=now + timedelta(seconds=11)
-            )
+            released = await repository.release_lease_for_retry(run_id, worker_id=owner_a, now=now + timedelta(seconds=11))
             await db.commit()
         assert released is True
 
@@ -143,9 +137,7 @@ async def test_attempt_history_survives_retry_takeover_and_reconciliation(fact_d
 
         async with session_factory() as db:
             repository = AgentRunRepository(db)
-            _, second_claim = await repository.mark_running(
-                run_id, worker_id=owner_b, lease_seconds=5, now=now + timedelta(seconds=12)
-            )
+            _, second_claim = await repository.mark_running(run_id, worker_id=owner_b, lease_seconds=5, now=now + timedelta(seconds=12))
             await db.commit()
         assert second_claim is True
 
@@ -212,9 +204,7 @@ async def test_duplicate_attempt_no_rejected_by_unique_constraint(fact_database)
     try:
         async with session_factory() as db:
             repository = AgentRunRepository(db)
-            _, acquired = await repository.mark_running(
-                run_id, worker_id="worker-uq:token-1", lease_seconds=60, now=now
-            )
+            _, acquired = await repository.mark_running(run_id, worker_id="worker-uq:token-1", lease_seconds=60, now=now)
             await db.commit()
         assert acquired is True
 

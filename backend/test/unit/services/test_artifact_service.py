@@ -117,9 +117,7 @@ async def test_artifact_allows_project_user_data_and_authorized_skills(live_file
         "/home/gem/user-data/notes.txt",
         "/home/gem/skills/reporter/SKILL.md",
     ):
-        response = await svc.resolve_thread_artifact_view(
-            thread_id="thread-1", current_uid="user-1", db=object(), path=path
-        )
+        response = await svc.resolve_thread_artifact_view(thread_id="thread-1", current_uid="user-1", db=object(), path=path)
         assert Path(response.path).read_bytes() == live_files.expected_bytes(path)
         response = render_file_result(response)
         await response.background()

@@ -70,9 +70,7 @@ def _is_anchor_chunk(candidate: dict[str, Any], anchor_chunk: dict[str, Any]) ->
     return candidate_file_id == anchor_chunk.get("file_id") and candidate_chunk_index == anchor_chunk.get("chunk_index")
 
 
-async def select_neighbor_chunks_by_kb_query(
-    *, kb_id: str, anchor_chunk: dict[str, Any], neighbors_count: int
-) -> list[dict[str, Any]]:
+async def select_neighbor_chunks_by_kb_query(*, kb_id: str, anchor_chunk: dict[str, Any], neighbors_count: int) -> list[dict[str, Any]]:
     if neighbors_count <= 0:
         return []
 
@@ -198,9 +196,7 @@ async def _generate_benchmark_item_once(
     chunks_by_id: dict[str, dict[str, Any]],
 ) -> dict[str, Any] | None:
     if generation_mode == "graph_enhanced":
-        graph_anchor_chunks = [
-            chunk for chunk in all_chunks if chunk.get("graph_indexed") is True and _chunk_entity_ids(chunk)
-        ]
+        graph_anchor_chunks = [chunk for chunk in all_chunks if chunk.get("graph_indexed") is True and _chunk_entity_ids(chunk)]
         if not graph_anchor_chunks:
             raise ValueError("No graph indexed chunks with entities found in knowledge base")
         anchor_chunk = graph_anchor_chunks[random.randrange(len(graph_anchor_chunks))]
@@ -322,9 +318,7 @@ async def iter_generated_benchmark_items(
                             else:
                                 generated += 1
                                 if progress_cb:
-                                    total_val = (
-                                        total_progress if total_progress is not None else (progress_base + count)
-                                    )
+                                    total_val = total_progress if total_progress is not None else (progress_base + count)
                                     progress = int(99 * (progress_base + generated) / max(total_val, 1))
                                     message = f"已生成 {progress_base + generated}/{total_val}"
                     await results_queue.put((attempt_no, item))

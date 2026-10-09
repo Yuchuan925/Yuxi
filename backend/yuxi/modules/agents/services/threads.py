@@ -35,9 +35,7 @@ from yuxi.shared.datetime import format_utc_datetime, utc_now
 async def require_thread(*, db: AsyncSession, scope: ActorScope, thread_id: str, lock: bool = False) -> Session:
     """按用户与 APP 完整作用域读取 Thread，可选择取得调度锁。"""
     repo = SessionRepository(db)
-    agent_session = (
-        await repo.lock_session_by_thread_id(thread_id) if lock else await repo.get_session_by_thread_id(thread_id)
-    )
+    agent_session = await repo.lock_session_by_thread_id(thread_id) if lock else await repo.get_session_by_thread_id(thread_id)
     if (
         agent_session is None
         or agent_session.uid != scope.uid
@@ -100,9 +98,7 @@ async def search_threads(
         limit=limit,
         offset=offset,
     )
-    facts = await SessionRepository(db).public_facts(
-        [item["agent_session"] for item in search_items], uid=scope.uid, app_id=scope.app_id
-    )
+    facts = await SessionRepository(db).public_facts([item["agent_session"] for item in search_items], uid=scope.uid, app_id=scope.app_id)
     items = [
         {
             "session": session_resource(*row),
@@ -171,12 +167,12 @@ async def archive_thread(*, db: AsyncSession, scope: ActorScope, thread_id: str)
     agent_session = await require_thread(db=db, scope=scope, thread_id=thread_id, lock=True)
     if agent_session.status == "archived":
         return
-    active_turn = await AgentTurnRepository(db).lock_active_for_thread(
-        thread_id=thread_id, uid=scope.uid, app_id=scope.app_id
-    )
+    active_turn = await AgentTurnRepository(db).lock_active_for_thread(thread_id=thread_id, uid=scope.uid, app_id=scope.app_id)
     inputs = await AgentInputRepository(db).list_pending_inputs(thread_id=thread_id, uid=scope.uid, app_id=scope.app_id)
     active_run = await AgentRunRepository(db).get_active_run_by_thread_for_user(
-        agent_slug=agent_session.agent_id, thread_id=thread_id, uid=scope.uid
+        agent_slug=agent_session.agent_id,
+        thread_id=thread_id,
+        uid=scope.uid,
     )
     if active_turn is not None or inputs or active_run is not None:
         raise HTTPException(status_code=409, detail="Thread 仍有活跃执行或待处理输入")
@@ -199,9 +195,7 @@ async def get_queue_snapshot(*, db: AsyncSession, scope: ActorScope, thread_id: 
     items = await input_repo.list_pending_inputs(thread_id=thread_id, uid=scope.uid, app_id=scope.app_id)
     messages_by_input = await input_repo.list_messages_for_inputs([item.id for item in items])
     preparation = await AttachmentRepository(db).statuses_for_inputs([item.id for item in items])
-    active = await AgentTurnRepository(db).get_active_for_thread(
-        thread_id=thread_id, uid=scope.uid, app_id=scope.app_id
-    )
+    active = await AgentTurnRepository(db).get_active_for_thread(thread_id=thread_id, uid=scope.uid, app_id=scope.app_id)
     return {
         "thread_id": thread_id,
         "queue_paused": bool(agent_session.queue_paused),
@@ -228,17 +222,13 @@ async def continue_queue(*, db: AsyncSession, scope: ActorScope, thread_id: str,
     event_type = "yuxi.session.input.continue"
     intent_hash = hash_control_intent(event_type)
     receipt_repo = AgentInputReceiptRepository(db)
-    existing = await receipt_repo.get_for_scope(
-        uid=scope.uid, app_id=scope.app_id, thread_id=thread_id, idempotency_key=idempotency_key
-    )
+    existing = await receipt_repo.get_for_scope(uid=scope.uid, app_id=scope.app_id, thread_id=thread_id, idempotency_key=idempotency_key)
     if existing is not None:
         require_control_replay(existing, event_type, intent_hash)
         return control_accepted(existing)
 
     agent_session = await require_thread(db=db, scope=scope, thread_id=thread_id, lock=True)
-    existing = await receipt_repo.get_for_scope(
-        uid=scope.uid, app_id=scope.app_id, thread_id=thread_id, idempotency_key=idempotency_key
-    )
+    existing = await receipt_repo.get_for_scope(uid=scope.uid, app_id=scope.app_id, thread_id=thread_id, idempotency_key=idempotency_key)
     if existing is not None:
         require_control_replay(existing, event_type, intent_hash)
         return control_accepted(existing)
@@ -267,32 +257,24 @@ async def continue_queue(*, db: AsyncSession, scope: ActorScope, thread_id: str,
     return control_accepted(receipt)
 
 
-async def cancel_input(
-    *, db: AsyncSession, scope: ActorScope, thread_id: str, input_id: str, idempotency_key: str
-) -> dict:
+async def cancel_input(*, db: AsyncSession, scope: ActorScope, thread_id: str, input_id: str, idempotency_key: str) -> dict:
     """取消未领取的 Input，不伪造尚未存在的 Turn。"""
     check_control_key(idempotency_key)
     event_type = "yuxi.session.input.cancel_input"
     intent_hash = hash_control_intent(event_type, input_id)
     receipt_repo = AgentInputReceiptRepository(db)
-    existing = await receipt_repo.get_for_scope(
-        uid=scope.uid, app_id=scope.app_id, thread_id=thread_id, idempotency_key=idempotency_key
-    )
+    existing = await receipt_repo.get_for_scope(uid=scope.uid, app_id=scope.app_id, thread_id=thread_id, idempotency_key=idempotency_key)
     if existing is not None:
         require_control_replay(existing, event_type, intent_hash)
         return control_accepted(existing)
 
     await require_thread(db=db, scope=scope, thread_id=thread_id, lock=True)
-    existing = await receipt_repo.get_for_scope(
-        uid=scope.uid, app_id=scope.app_id, thread_id=thread_id, idempotency_key=idempotency_key
-    )
+    existing = await receipt_repo.get_for_scope(uid=scope.uid, app_id=scope.app_id, thread_id=thread_id, idempotency_key=idempotency_key)
     if existing is not None:
         require_control_replay(existing, event_type, intent_hash)
         return control_accepted(existing)
     input_repo = AgentInputRepository(db)
-    input_item = await input_repo.get_for_scope(
-        input_id=input_id, thread_id=thread_id, uid=scope.uid, app_id=scope.app_id, for_update=True
-    )
+    input_item = await input_repo.get_for_scope(input_id=input_id, thread_id=thread_id, uid=scope.uid, app_id=scope.app_id, for_update=True)
     if input_item is None:
         raise HTTPException(status_code=404, detail="Input 不存在")
     if input_item.status != "pending":

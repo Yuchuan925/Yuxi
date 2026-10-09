@@ -250,9 +250,7 @@ class Workspace:
         with os.fdopen(os.open(source_path, os.O_RDONLY | os.O_NOFOLLOW), "rb") as source:
             if not stat.S_ISREG(os.fstat(source.fileno()).st_mode):
                 raise ValueError("upload source is not a regular file")
-            return self.upload_authorized_file_from_stream(
-                path, source, max_bytes=None, overwrite=overwrite, create_parents=create_parents
-            )
+            return self.upload_authorized_file_from_stream(path, source, max_bytes=None, overwrite=overwrite, create_parents=create_parents)
 
     def upload_authorized_file_from_stream(
         self,

@@ -114,9 +114,7 @@ async def _compute_readiness(*, startup_complete: bool, component_snapshot: tupl
         "redis": redis,
         "worker": worker,
     }
-    required_components_ready = all(
-        component["status"] == "ok" for component in components.values() if component["required"]
-    )
+    required_components_ready = all(component["status"] == "ok" for component in components.values() if component["required"])
     ready = all(check["status"] == "ok" for check in checks.values()) and required_components_ready
     degraded = any(component["status"] == "error" for component in components.values() if not component["required"])
     return {
@@ -146,9 +144,7 @@ async def get_readiness(
 
     job = _readiness_inflight.get(cache_key)
     if job is None:
-        job = asyncio.create_task(
-            _compute_readiness(startup_complete=startup_complete, component_snapshot=component_snapshot)
-        )
+        job = asyncio.create_task(_compute_readiness(startup_complete=startup_complete, component_snapshot=component_snapshot))
         _readiness_inflight[cache_key] = job
     try:
         result = await asyncio.shield(job)

@@ -63,9 +63,7 @@ async def test_bound_skill_creation_upload_revision_visibility_and_delete(test_c
     try:
         absent = await test_client.get(f"/api/agent/{agent_slug}/self-skill", headers=admin_headers)
         assert absent.json()["skill"] is None
-        bindings = await asyncio.gather(
-            *[test_client.post(f"/api/agent/{agent_slug}/self-skill", headers=admin_headers) for _ in range(2)]
-        )
+        bindings = await asyncio.gather(*[test_client.post(f"/api/agent/{agent_slug}/self-skill", headers=admin_headers) for _ in range(2)])
         assert all(result.status_code == 200 for result in bindings), [result.text for result in bindings]
         skill_slug = bindings[0].json()["skill"]["slug"]
         assert re.fullmatch(r"self-[0-9a-f]{8}", skill_slug)
@@ -87,9 +85,7 @@ async def test_bound_skill_creation_upload_revision_visibility_and_delete(test_c
             ("put", "/share-config", {"share_config": None}),
             ("delete", "", None),
         ):
-            result = await test_client.request(
-                method, f"/api/system/skills/{skill_slug}{suffix}", headers=admin_headers, json=payload
-            )
+            result = await test_client.request(method, f"/api/system/skills/{skill_slug}{suffix}", headers=admin_headers, json=payload)
             assert result.status_code == 400, result.text
             assert "专属 Skill" in result.text
         for method, path, payload in (
@@ -109,16 +105,17 @@ async def test_bound_skill_creation_upload_revision_visibility_and_delete(test_c
         saved = await test_client.put(
             f"/api/system/skills/{skill_slug}/content",
             headers=admin_headers,
-            json={"expected_revision": revision, "changes": [
-                {"action": "create", "path": "references/note.md", "content": "reference-before"},
-                {"action": "create", "path": "scripts/run.py", "content": "print('bound')\n"},
-            ]},
+            json={
+                "expected_revision": revision,
+                "changes": [
+                    {"action": "create", "path": "references/note.md", "content": "reference-before"},
+                    {"action": "create", "path": "scripts/run.py", "content": "print('bound')\n"},
+                ],
+            },
         )
         assert saved.status_code == 200, saved.text
         old_revision = saved.json()["data"]["revision"]
-        read = await test_client.get(
-            f"/api/system/skills/{skill_slug}/file?path=references/note.md", headers=admin_headers
-        )
+        read = await test_client.get(f"/api/system/skills/{skill_slug}/file?path=references/note.md", headers=admin_headers)
         edited = await test_client.put(
             f"/api/system/skills/{skill_slug}/file",
             headers=admin_headers,
@@ -177,9 +174,7 @@ async def test_bound_skill_creation_upload_revision_visibility_and_delete(test_c
                 row = (await db.execute(select(Skill).where(Skill.slug == skill_slug))).scalar_one()
                 assert row.content_hash == binding.json()["revision"]
                 assert row.bound_agent.slug == agent_slug
-                count = await db.scalar(
-                    text("SELECT count(*) FROM skills WHERE bound_agent_id = :id"), {"id": row.bound_agent_id}
-                )
+                count = await db.scalar(text("SELECT count(*) FROM skills WHERE bound_agent_id = :id"), {"id": row.bound_agent_id})
                 assert count == 1
         finally:
             await engine.dispose()
@@ -217,9 +212,7 @@ async def test_bound_permission_follows_agent_and_removes_revoked_projection(tes
         denied = await test_client.get(f"/api/agent/{slug}/self-skill", headers=standard_user["headers"])
         assert denied.status_code == 404, denied.text
         before = await current_content(skill_slug)
-        shared = await test_client.put(
-            f"/api/agent/{slug}", headers=admin_headers, json={"visibility": "shared", "share_config": grants}
-        )
+        shared = await test_client.put(f"/api/agent/{slug}", headers=admin_headers, json={"visibility": "shared", "share_config": grants})
         assert shared.status_code == 200, shared.text
         assert shared.json()["agent"]["id"] == created.json()["agent"]["id"]
         readable = await test_client.get(f"/api/agent/{slug}/self-skill", headers=standard_user["headers"])
@@ -282,9 +275,7 @@ async def test_private_agent_sharing_rolls_back_when_bound_dependency_is_restric
     assert confirmed.status_code == 200 and confirmed.json()["data"][0]["success"], confirmed.text
     engine = create_async_engine(os.environ["POSTGRES_URL"])
     try:
-        created = await test_client.post(
-            "/api/agent", headers=admin_headers, json={"name": agent_slug, "slug": agent_slug}
-        )
+        created = await test_client.post("/api/agent", headers=admin_headers, json={"name": agent_slug, "slug": agent_slug})
         assert created.status_code == 200, created.text
         uploaded = await test_client.post(
             f"/api/agent/{agent_slug}/self-skill/upload",
@@ -370,9 +361,7 @@ async def test_bound_runtime_uses_app_agent_visibility_without_management(test_c
             other_owner = await db.scalar(select(User).where(User.uid == standard_user["user"]["uid"]))
             repo = UserRepository(db)
             end_user = await repo.get_or_create_public_end_user(owner=owner, app_id=app_id, end_user_id="allowed")
-            denied_user = await repo.get_or_create_public_end_user(
-                owner=other_owner, app_id=app_id, end_user_id="denied"
-            )
+            denied_user = await repo.get_or_create_public_end_user(owner=other_owner, app_id=app_id, end_user_id="denied")
             allowed_uid, denied_uid = end_user.uid, denied_user.uid
             await db.commit()
         async with factory() as db:
@@ -428,10 +417,7 @@ async def test_binding_added_after_preparation_waits_for_next_context(test_clien
             following = ChatBotContext(uid=user.uid, agent_slug=slug, skills=[], preload_skills=[])
             refreshed = await resolve_runtime_skills_for_context(following, db=db, user=user)
             assert refreshed["preloaded_skills"] == [skill_slug]
-            assert (
-                refreshed["preloaded_skill_contents"][skill_slug]
-                == (await current_content(skill_slug)).joinpath("SKILL.md").read_text()
-            )
+            assert refreshed["preloaded_skill_contents"][skill_slug] == (await current_content(skill_slug)).joinpath("SKILL.md").read_text()
     finally:
         deleted = await test_client.delete(f"/api/agent/{slug}", headers=admin_headers)
         assert deleted.status_code in {200, 404}, deleted.text
@@ -518,18 +504,23 @@ async def test_bound_zip_import_is_create_only(test_client, admin_headers):
     created = await test_client.post("/api/agent", headers=admin_headers, json={"slug": agent, "name": agent})
     assert created.status_code == 200, created.text
     try:
-        results = await asyncio.gather(*[
-            test_client.post(
-                f"/api/agent/{agent}/self-skill/upload", headers=admin_headers,
-                files={"file": ("skill.zip", skill_zip(description=label), "application/zip")},
-            ) for label in ("first", "second")
-        ])
+        results = await asyncio.gather(
+            *[
+                test_client.post(
+                    f"/api/agent/{agent}/self-skill/upload",
+                    headers=admin_headers,
+                    files={"file": ("skill.zip", skill_zip(description=label), "application/zip")},
+                )
+                for label in ("first", "second")
+            ]
+        )
         assert sorted(result.status_code for result in results) == [200, 409]
         accepted = next(result.json() for result in results if result.status_code == 200)
         source = await current_content(accepted["skill"]["slug"])
         before = {str(path.relative_to(source)): path.read_bytes() for path in source.rglob("*") if path.is_file()}
         rejected = await test_client.post(
-            f"/api/agent/{agent}/self-skill/upload", headers=admin_headers,
+            f"/api/agent/{agent}/self-skill/upload",
+            headers=admin_headers,
             data={"expected_revision": accepted["revision"]},
             files={"file": ("skill.zip", skill_zip(description="replacement"), "application/zip")},
         )

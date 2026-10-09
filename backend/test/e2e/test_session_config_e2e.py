@@ -35,9 +35,7 @@ async def test_session_snapshot_and_input_freeze_survive_definition_and_session_
         session_id = created.json()["id"]
         assert created.json()["agent"]["model"] == MODEL
         assert created.json()["yuxi"]["tool_approval_mode"] == "default"
-        initial_config = json.loads(
-            await conn.fetchval("SELECT config_snapshot FROM sessions WHERE thread_id=$1", session_id)
-        )
+        initial_config = json.loads(await conn.fetchval("SELECT config_snapshot FROM sessions WHERE thread_id=$1", session_id))
         assert initial_config["model"] == MODEL
         assert "FROZEN_SESSION_PROMPT" in initial_config["system_prompt"]
         assert initial_config["tools"] == []
@@ -48,11 +46,7 @@ async def test_session_snapshot_and_input_freeze_survive_definition_and_session_
             response = await e2e_client.post(
                 f"/api/v1/agents/sessions/{session_id}/events",
                 headers={**e2e_headers, "Idempotency-Key": key or str(uuid.uuid4())},
-                json={
-                    "events": [
-                        {"type": "agent.session.input.message", "input": [_message(text)], "yuxi": options or {}}
-                    ]
-                },
+                json={"events": [{"type": "agent.session.input.message", "input": [_message(text)], "yuxi": options or {}}]},
             )
             assert response.status_code == 202, response.text
             return response.json()
@@ -94,26 +88,18 @@ async def test_session_snapshot_and_input_freeze_survive_definition_and_session_
             key = str(uuid.uuid4())
             after = await submit(OUTPUT + " AFTER_UPDATE", {"mode": "follow_up"}, key)
             assert await submit(OUTPUT + " AFTER_UPDATE", {"mode": "follow_up"}, key) == after
-            override = await submit(
-                OUTPUT + " SINGLE_OVERRIDE", {"mode": "follow_up", "model": MODEL, "tool_approval_mode": "default"}
-            )
+            override = await submit(OUTPUT + " SINGLE_OVERRIDE", {"mode": "follow_up", "model": MODEL, "tool_approval_mode": "default"})
             steer = await submit(OUTPUT + " ACTIVE_STEER")
             payloads = {}
             for label, receipt in (("before", before), ("after", after), ("override", override), ("steer", steer)):
-                payloads[label] = json.loads(
-                    await conn.fetchval("SELECT input_payload FROM agent_inputs WHERE id=$1", receipt["input_id"])
-                )
+                payloads[label] = json.loads(await conn.fetchval("SELECT input_payload FROM agent_inputs WHERE id=$1", receipt["input_id"]))
             assert (
                 payloads["before"]["context_snapshot"]["tool_approval_mode"]
                 == payloads["steer"]["context_snapshot"]["tool_approval_mode"]
                 == "default"
             )
             assert payloads["after"]["context_snapshot"]["tool_approval_mode"] == "always_trust"
-            assert (
-                payloads["before"]["context_snapshot"]["model"]
-                == payloads["steer"]["context_snapshot"]["model"]
-                == MODEL
-            )
+            assert payloads["before"]["context_snapshot"]["model"] == payloads["steer"]["context_snapshot"]["model"] == MODEL
             assert payloads["after"]["context_snapshot"]["model"] == updated_model
             assert payloads["override"]["context_snapshot"]["model"] == MODEL
             assert payloads["override"]["context_snapshot"]["tool_approval_mode"] == "default"

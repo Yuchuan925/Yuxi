@@ -65,9 +65,7 @@ async def test_bound_skill_is_preloaded_without_explicit_selection(
                 "base_url": "http://api:8765/v1",
                 "api_key": "ci-replay-key",
                 "capabilities": ["chat"],
-                "enabled_models": [
-                    {"id": "deterministic-chat", "display_name": "Replay", "type": "chat", "source": "manual"}
-                ],
+                "enabled_models": [{"id": "deterministic-chat", "display_name": "Replay", "type": "chat", "source": "manual"}],
                 "is_enabled": True,
             },
         )
@@ -113,9 +111,7 @@ async def test_bound_skill_is_preloaded_without_explicit_selection(
             payload["config_json"]["context"]["mcps"] = [mcp_slug]
             package = BytesIO()
             with ZipFile(package, "w") as archive:
-                archive.writestr(
-                    "SKILL.md", "---\nslug: create-guide\nname: Guide\ndescription: creation\n---\n\n# 操作指南\n"
-                )
+                archive.writestr("SKILL.md", "---\nslug: create-guide\nname: Guide\ndescription: creation\n---\n\n# 操作指南\n")
                 archive.writestr("references/creation.txt", "CREATION_REFERENCE")
             agent = await e2e_client.post(
                 "/api/agent/with-skill",
@@ -135,10 +131,7 @@ async def test_bound_skill_is_preloaded_without_explicit_selection(
         root = await e2e_client.get(f"/api/system/skills/{slug}/file?path=SKILL.md", headers=e2e_headers)
         assert root.status_code == 200, root.text
         original = root.json()["data"]["content"]
-        updated = (
-            original.replace("---\n\n# 操作指南", "tool_dependencies:\n- present_artifacts\n---\n\n# 图片生成技能")
-            + marker
-        )
+        updated = original.replace("---\n\n# 操作指南", "tool_dependencies:\n- present_artifacts\n---\n\n# 图片生成技能") + marker
         saved = await e2e_client.put(
             f"/api/system/skills/{slug}/file",
             headers=e2e_headers,
@@ -256,14 +249,9 @@ async def test_bound_skill_is_preloaded_without_explicit_selection(
         assert [item["slug"] for item in manifest["resources"]["skills"]] == [slug]
         if create_with_resources:
             assert manifest["resources"]["mcps"] == [mcp_slug]
-            assert (
-                get_user_skills_root_dir(uid).joinpath(slug, "references/creation.txt").read_text()
-                == "CREATION_REFERENCE"
-            )
+            assert get_user_skills_root_dir(uid).joinpath(slug, "references/creation.txt").read_text() == "CREATION_REFERENCE"
             assert not remote_tool["effect"].exists()
-        assert (
-            manifest["resources"]["skills"][0]["preload_content_hash"] == hashlib.sha256(updated.encode()).hexdigest()
-        )
+        assert manifest["resources"]["skills"][0]["preload_content_hash"] == hashlib.sha256(updated.encode()).hexdigest()
     finally:
         if edit_during_run:
             async with httpx.AsyncClient(base_url="http://localhost:8765", timeout=10) as replay:

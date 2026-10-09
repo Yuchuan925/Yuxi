@@ -59,9 +59,7 @@ async def create_uploaded_skill_draft(
         with prepared_uploaded_skill(filename=filename, file_bytes=file_bytes) as source_skill_dir:
             item = _stage_skill_draft_item(source_skill_dir=source_skill_dir, draft_items_dir=items_dir)
 
-        return _write_skill_draft(
-            draft_dir, operator=operator, source_type="upload", source=filename, items=[item], failures=[]
-        )
+        return _write_skill_draft(draft_dir, operator=operator, source_type="upload", source=filename, items=[item], failures=[])
     except Exception:
         shutil.rmtree(draft_dir, ignore_errors=True)
         raise
@@ -134,9 +132,7 @@ async def create_remote_skill_draft(
             seen_slugs.add(item["slug"])
             items.append(item)
 
-        return _write_skill_draft(
-            draft_dir, operator=operator, source_type="remote", source=source, items=items, failures=failures
-        )
+        return _write_skill_draft(draft_dir, operator=operator, source_type="remote", source=source, items=items, failures=failures)
     except Exception:
         shutil.rmtree(draft_dir, ignore_errors=True)
         raise
@@ -153,9 +149,7 @@ async def discard_skill_install_draft(*, draft_id: str, operator: User) -> None:
     shutil.rmtree(draft_dir, ignore_errors=True)
 
 
-def load_and_select_draft_items(
-    draft_id: str, slugs: list[str] | None, operator: User
-) -> tuple[Path, dict, list[PreparedSkillDraftItem]]:
+def load_and_select_draft_items(draft_id: str, slugs: list[str] | None, operator: User) -> tuple[Path, dict, list[PreparedSkillDraftItem]]:
     """加载草稿并只返回结构、身份和路径均有效的可安装条目。"""
     draft_dir, data = load_skill_draft(draft_id)
     if not isinstance(data.get("created_by"), str) or not data["created_by"]:
@@ -166,8 +160,7 @@ def load_and_select_draft_items(
         raise ValueError("无效的安装草稿来源")
     failures = data.get("failures")
     if not isinstance(failures, list) or any(
-        not isinstance(item, dict) or not isinstance(item.get("slug"), str) or not isinstance(item.get("error"), str)
-        for item in failures
+        not isinstance(item, dict) or not isinstance(item.get("slug"), str) or not isinstance(item.get("error"), str) for item in failures
     ):
         raise ValueError("安装草稿失败记录非法")
 

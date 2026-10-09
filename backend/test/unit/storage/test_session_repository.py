@@ -63,9 +63,7 @@ async def test_list_agent_runs_for_trace_returns_latest_bounded_window_in_order(
     )
     session_session.add(agent_session)
     await session_session.flush()
-    session_session.add(
-        AgentTurn(id="turn-trace", thread_id=agent_session.thread_id, uid=agent_session.uid, status="completed")
-    )
+    session_session.add(AgentTurn(id="turn-trace", thread_id=agent_session.thread_id, uid=agent_session.uid, status="completed"))
     await session_session.flush()
     for index in range(3):
         created_at = now + timedelta(seconds=index)
@@ -343,9 +341,7 @@ async def test_session_page_includes_different_sources(session_session):
     await session_session.commit()
 
     repo = SessionRepository(session_session)
-    items, _ = await repo.list_public_sessions(
-        uid="user-a", app_id=None, agent_id=None, limit=20, after=None, order="desc"
-    )
+    items, _ = await repo.list_public_sessions(uid="user-a", app_id=None, agent_id=None, limit=20, after=None, order="desc")
 
     assert {item.thread_id for item in items} == {"thread-normal", "thread-public", "thread-scheduled"}
 

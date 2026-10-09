@@ -18,9 +18,7 @@ class TestMinIOClientStatFile:
 
         result = client.stat_file("knowledgebases", "db/upload/test.pdf")
         assert result == 1024
-        client._client.stat_object.assert_called_once_with(
-            bucket_name="knowledgebases", object_name="db/upload/test.pdf"
-        )
+        client._client.stat_object.assert_called_once_with(bucket_name="knowledgebases", object_name="db/upload/test.pdf")
 
     def test_stat_file_returns_none_when_not_found(self):
         from io import BytesIO
@@ -33,9 +31,7 @@ class TestMinIOClientStatFile:
         client = MinIOClient()
         client._client = MagicMock()
         resp = HTTPResponse(BytesIO(b""), status=404)
-        client._client.stat_object.side_effect = S3Error(
-            resp, "NoSuchKey", "Not found", "resource", "request_id", "host_id"
-        )
+        client._client.stat_object.side_effect = S3Error(resp, "NoSuchKey", "Not found", "resource", "request_id", "host_id")
 
         result = client.stat_file("knowledgebases", "db/upload/missing.pdf")
         assert result is None

@@ -128,7 +128,10 @@ def split_text_by_length_and_newline(
                     current_chunk_tokens = 0
 
                 sub_chunks = semantic_chunking_with_auto_clusters(
-                    line, embed_fn=embed_fn, token_count_fn=token_count_fn, max_chunk_size=max_length
+                    line,
+                    embed_fn=embed_fn,
+                    token_count_fn=token_count_fn,
+                    max_chunk_size=max_length,
                 )
                 chunks.extend(sub_chunks)
             # 如果当前行的 Token 数量与当前分块的 Token 数量合并后超过最大 Token 数量，直接作为独立分块放入chunks

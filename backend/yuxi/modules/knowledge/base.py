@@ -283,8 +283,7 @@ class KnowledgeBase(ABC):
             current_meta = await self._load_file_meta(kb_id, file_id)
             current_status = current_meta.get("status")
             raise ValueError(
-                f"Cannot parse file with status '{current_status}'. "
-                f"File must be in one of these states: {', '.join(allowed_statuses)}"
+                f"Cannot parse file with status '{current_status}'. File must be in one of these states: {', '.join(allowed_statuses)}"
             )
 
         file_meta = self._file_record_to_meta(claimed_record)
@@ -494,9 +493,7 @@ class KnowledgeBase(ABC):
         )
         for result in results:
             if isinstance(result, Exception):
-                logger.warning(
-                    "解析产物清理失败: kb=%s file=%s attempt=%s error=%s", kb_id, file_id, attempt_id, result
-                )
+                logger.warning("解析产物清理失败: kb=%s file=%s attempt=%s error=%s", kb_id, file_id, attempt_id, result)
 
     async def _read_minio_bytes(self, file_path: str) -> bytes:
         from yuxi.infrastructure.minio import get_minio_client
@@ -660,11 +657,7 @@ class KnowledgeBase(ABC):
                 continue
 
             metadata = chunk.get("metadata") if isinstance(chunk.get("metadata"), dict) else {}
-            metadata = {
-                key: value
-                for key, value in metadata.items()
-                if key not in {"filepath", "parsed_path", "path", "markdown_file"}
-            }
+            metadata = {key: value for key, value in metadata.items() if key not in {"filepath", "parsed_path", "path", "markdown_file"}}
             file_id = metadata.get("file_id") or chunk.get("file_id") or chunk.get("full_doc_id") or ""
             chunk_id = metadata.get("chunk_id") or chunk.get("chunk_id") or chunk.get("id")
             chunk_index = metadata.get("chunk_index")

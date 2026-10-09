@@ -63,9 +63,7 @@ async def files_env(sessions, tmp_path, monkeypatch):  # noqa: F811
 
     async def upload(name="source.txt", content=b"original"):
         async with sessions() as db:
-            result = await attachments.upload_draft_file(
-                file_content=content, filename=name, content_type="text/plain", scope=SCOPE, db=db
-            )
+            result = await attachments.upload_draft_file(file_content=content, filename=name, content_type="text/plain", scope=SCOPE, db=db)
             await db.commit()
         uploaded.append(result)
         return result
@@ -87,9 +85,7 @@ async def files_env(sessions, tmp_path, monkeypatch):  # noqa: F811
     finally:
         client = get_minio_client()
         for file in uploaded:
-            await client.adelete_objects_by_prefix(
-                client.KB_BUCKETS["documents"], f"tmp/chat_attachments/{SCOPE.uid}/{file['id']}/"
-            )
+            await client.adelete_objects_by_prefix(client.KB_BUCKETS["documents"], f"tmp/chat_attachments/{SCOPE.uid}/{file['id']}/")
             try:
                 Workspace(SCOPE.uid).delete_authorized_path(f"/tmp/chat_attachments/{SCOPE.uid}/{file['id']}", root="/")
             except FileNotFoundError:
@@ -204,12 +200,7 @@ async def test_crash_after_file_write_replays_the_same_input_and_path(files_env,
     monkeypatch.setattr(attachments, "prepare_input_attachments", prepare)
     receipt = await submit(file, "crash-replay")
     async with factory() as db:
-        assert (
-            await inputs.get_receipt_snapshot(
-                db=db, scope=SCOPE, thread_id="input-thread", idempotency_key="crash-replay"
-            )
-            == receipt
-        )
+        assert await inputs.get_receipt_snapshot(db=db, scope=SCOPE, thread_id="input-thread", idempotency_key="crash-replay") == receipt
         assert await AttachmentRepository(db).has_unready(input_id)
         assert await db.scalar(select(func.count()).select_from(AgentRun)) == 0
     await scheduler.recover_pending_dispatches()
@@ -262,9 +253,7 @@ async def test_same_draft_cannot_be_received_by_two_threads(files_env):
             config_snapshot={"model": "test:chat", "tool_approval_mode": "default"},
         )
         await db.commit()
-    results = await asyncio.gather(
-        submit(file, "thread-one"), submit(file, "thread-two", "second-thread"), return_exceptions=True
-    )
+    results = await asyncio.gather(submit(file, "thread-one"), submit(file, "thread-two", "second-thread"), return_exceptions=True)
     assert sum(isinstance(item, dict) for item in results) == 1
     [failure] = [item for item in results if isinstance(item, Exception)]
     assert isinstance(failure, HTTPException) and failure.status_code == 409
@@ -337,9 +326,7 @@ async def test_attachment_delete_guards_and_failed_commit_preserve_formal_bytes(
     path = f"/uploads/{file['id']}_source.txt"
 
     async def delete(db):
-        return await attachments.delete_thread_attachment_view(
-            thread_id="input-thread", file_id=file["id"], db=db, current_uid=SCOPE.uid
-        )
+        return await attachments.delete_thread_attachment_view(thread_id="input-thread", file_id=file["id"], db=db, current_uid=SCOPE.uid)
 
     async with factory() as db:
         with pytest.raises(HTTPException) as error:

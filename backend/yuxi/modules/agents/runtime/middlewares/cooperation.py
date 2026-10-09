@@ -17,26 +17,20 @@ from yuxi.modules.agents.repositories.cooperation import CooperationRepository
 PROMPT = (
     "## Session 协作\n"
     "所有 Session 独立保存上下文，共享工作目录和沙盒，不继承对话；description 必须提供目标和必要信息。\n"
-    "list_agents 列出当前用户可调用的 Agent 配置，返回 "
-    "id、name、description；list_sessions 查询已存在的协作成员。\n"
-    "create_session 省略 agent_id 时继承当前配置与实际模型；指定目录中的 id 时使用目标 Agent "
-    "的配置和模型。\n"
-    "用户消息中的 @agent:<id>（也可使用双引号包裹 id）引用已创建的 Agent 配置；按任务需要协作时，将引用的 "
-    "id 用作 create_session 的 agent_id，并在 description "
-    "中提供目标和必要资料。提及不切换当前 Session，也不要求无条件创建子会话；配置可用性以 list_agents "
-    "和实际调用的授权结果为准。\n"
+    "list_agents 列出当前用户可调用的 Agent 配置，返回 id、name、description；list_sessions 查询已存在的协作成员。\n"
+    "create_session 省略 agent_id 时继承当前配置与实际模型；指定目录中的 id 时使用目标 Agent 的配置和模型。\n"
+    "用户消息中的 @agent:<id>（也可使用双引号包裹 id）引用已创建的 Agent 配置；"
+    "按任务需要协作时，将引用的 id 用作 create_session 的 agent_id，并在 description "
+    "中提供目标和必要资料。提及不切换当前 Session，也不要求无条件创建子会话；配置可用性以 list_agents 和实际调用的授权结果为准。\n"
     "审批模式沿用派发方当前运行选择，Agent 配置不会扩大用户授权。\n"
     "create_session 只创建当前 Session 的直属子会话，name 只填写单段名称，不能填写路径或指定父节点。\n"
-    "系统自动生成 path：/root 创建 aaa 得到 /root/aaa；只有 /root/aaa 创建 bbb 才得到 "
-    "/root/aaa/bbb。\n"
+    "系统自动生成 path：/root 创建 aaa 得到 /root/aaa；只有 /root/aaa 创建 bbb 才得到 /root/aaa/bbb。\n"
     "用返回的稳定 session_id 或完整 path 寻址已有成员。\n"
     "submit_input 提交工作并返回稳定 input_id；send_message 只投递信息，不启动工作。\n"
     "submit_input 在目标忙碌或等待协作时进入 FIFO 队列，不能打断或催促当前任务。\n"
-    "wait_inputs 等待提交的 input_id 全部结束，get_result 按 input_id 或 "
-    "turn_id 读取精确结果。\n"
+    "wait_inputs 等待提交的 input_id 全部结束，get_result 按 input_id 或 turn_id 读取精确结果。\n"
     "list_sessions 一次查看整树状态摘要，不包含结果正文。\n"
-    "wait_sessions 从返回的 cursor 等待更新，等待时释放执行名额；cancel_turn 只取消指定 "
-    "Turn。\n"
+    "wait_sessions 从返回的 cursor 等待更新，等待时释放执行名额；cancel_turn 只取消指定 Turn。\n"
     "整棵树共用四个执行名额。不要等待尚未派发的任务。父 Session 结束不取消后代。\n"
     "子会话优先完成被分配的任务并交付结果；继承的 Agent 配置不代表你负责根会话的整体编排。\n"
     "只有当前任务确需独立分工时才继续创建子会话。动态进度通过 list_sessions 查询，不从身份信息推断。\n"
@@ -84,9 +78,7 @@ class CooperationMiddleware(AgentMiddleware):
             ],
             description: str,
             runtime: ToolRuntime,
-            agent_id: Annotated[
-                str | None, Field(description="list_agents 返回的配置 id（slug）；省略时继承当前配置。")
-            ] = None,
+            agent_id: Annotated[str | None, Field(description="list_agents 返回的配置 id（slug）；省略时继承当前配置。")] = None,
         ) -> dict:
             return await invoke(
                 runtime,
@@ -98,9 +90,7 @@ class CooperationMiddleware(AgentMiddleware):
             )
 
         async def submit_input(target: str, description: str, runtime: ToolRuntime) -> dict:
-            return await invoke(
-                runtime, "submit_input", target=target, description=description, call_id=runtime.tool_call_id
-            )
+            return await invoke(runtime, "submit_input", target=target, description=description, call_id=runtime.tool_call_id)
 
         async def send_message(target: str, content: str, runtime: ToolRuntime) -> dict:
             return await invoke(runtime, "send_message", target=target, content=content, call_id=runtime.tool_call_id)
@@ -122,12 +112,8 @@ class CooperationMiddleware(AgentMiddleware):
             result = await invoke(runtime, "wait_inputs", input_ids=input_ids, timeout_seconds=timeout_seconds)
             return interrupt(result) if result.get("kind") == "cooperation" else result
 
-        async def wait_sessions(
-            targets: list[str], runtime: ToolRuntime, after_cursor: int = 0, timeout_seconds: int = 300
-        ) -> dict:
-            result = await invoke(
-                runtime, "wait_updates", targets=targets, after_cursor=after_cursor, timeout_seconds=timeout_seconds
-            )
+        async def wait_sessions(targets: list[str], runtime: ToolRuntime, after_cursor: int = 0, timeout_seconds: int = 300) -> dict:
+            result = await invoke(runtime, "wait_updates", targets=targets, after_cursor=after_cursor, timeout_seconds=timeout_seconds)
             return interrupt(result) if result.get("kind") == "cooperation" else result
 
         self.tools = [
@@ -174,9 +160,7 @@ class CooperationMiddleware(AgentMiddleware):
             self._identity_prompt = "## 当前协作身份（运行时提供）\n" + json.dumps(identity, ensure_ascii=False)
             self._identity_run_id = context.run_id
         return await handler(
-            request.override(
-                system_message=append_to_system_message(request.system_message, f"{PROMPT}\n\n{self._identity_prompt}")
-            )
+            request.override(system_message=append_to_system_message(request.system_message, f"{PROMPT}\n\n{self._identity_prompt}"))
         )
 
     async def abefore_model(self, state, runtime):

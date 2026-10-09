@@ -49,9 +49,7 @@ def test_pure_invalid_call_is_removed_and_feedback_added():
         {
             "role": "assistant",
             "content": None,
-            "tool_calls": [
-                {"type": "function", "id": "call-bad", "function": {"name": "kbs_search", "arguments": '{"query":'}}
-            ],
+            "tool_calls": [{"type": "function", "id": "call-bad", "function": {"name": "kbs_search", "arguments": '{"query":'}}],
         },
     ]
     originals = [

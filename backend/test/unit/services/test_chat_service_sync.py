@@ -73,8 +73,6 @@ def test_context_update_applies_only_declared_runtime_fields() -> None:
     assert callable(context.update)
 
 
-
-
 class _EmptyModelAuditRepo:
     def __init__(self, _db):
         pass
@@ -140,9 +138,7 @@ class _FakeDBBase:
 class _FakeRunRepoBase:
     async def get_run(self, _run_id: str):
         """消息重建测试固定当前 Run 与 Turn 的输出归属。"""
-        return SimpleNamespace(
-            run_type="chat", id="run-1", uid="user-1", app_id=None, turn_id="turn-1", input_message_id=None
-        )
+        return SimpleNamespace(run_type="chat", id="run-1", uid="user-1", app_id=None, turn_id="turn-1", input_message_id=None)
 
 
 class _FakeConvRepo:
@@ -1033,8 +1029,7 @@ async def test_workspace_prompt_excludes_memory_from_shared_context(
     await agent_context._append_workspace_agent_prompt(context)
 
     assert context.system_prompt == (
-        "You are a helpful assistant.\n\n"
-        "用户工作区 agents/AGENTS.md 内容：\n行为约束\n\n用户工作区 agents/USER.md 内容：\n用户信息"
+        "You are a helpful assistant.\n\n用户工作区 agents/AGENTS.md 内容：\n行为约束\n\n用户工作区 agents/USER.md 内容：\n用户信息"
     )
     assert "长期记忆" not in context.system_prompt
 
@@ -1042,10 +1037,7 @@ async def test_workspace_prompt_excludes_memory_from_shared_context(
 @pytest.mark.asyncio
 async def test_workspace_prompt_merges_workspace_agent_context(monkeypatch: pytest.MonkeyPatch):
     def fake_agent_context(_uid: str) -> str:
-        return (
-            "用户工作区 agents/AGENTS.md 内容：\n回答前先读取 AGENTS.md\n\n"
-            "用户工作区 agents/USER.md 内容：\n用户偏好中文"
-        )
+        return "用户工作区 agents/AGENTS.md 内容：\n回答前先读取 AGENTS.md\n\n用户工作区 agents/USER.md 内容：\n用户偏好中文"
 
     monkeypatch.setattr(agent_context, "_load_workspace_agent_context", fake_agent_context)
 
@@ -1054,9 +1046,7 @@ async def test_workspace_prompt_merges_workspace_agent_context(monkeypatch: pyte
     await agent_context._append_workspace_agent_prompt(context)
 
     assert context.system_prompt == (
-        "原始系统提示词\n\n"
-        "用户工作区 agents/AGENTS.md 内容：\n回答前先读取 AGENTS.md\n\n"
-        "用户工作区 agents/USER.md 内容：\n用户偏好中文"
+        "原始系统提示词\n\n用户工作区 agents/AGENTS.md 内容：\n回答前先读取 AGENTS.md\n\n用户工作区 agents/USER.md 内容：\n用户偏好中文"
     )
     assert context.thread_id == "thread-1"
     assert context.uid == "user-1"
@@ -1108,9 +1098,7 @@ async def test_get_agent_state_view_rejects_missing_session(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("turn_status", ["waiting", "cancelled"])
-async def test_get_agent_state_view_returns_interrupt_only_for_waiting_owner(
-    monkeypatch: pytest.MonkeyPatch, turn_status
-):
+async def test_get_agent_state_view_returns_interrupt_only_for_waiting_owner(monkeypatch: pytest.MonkeyPatch, turn_status):
     thread_id = "thread-1"
 
     class ConvRepo:
@@ -1233,10 +1221,6 @@ async def test_get_agent_state_view_reads_checkpoint_without_workspace_binding(m
     assert result["agent_state"]["cooperation"] == {"sessions": []}
 
 
-
-
-
-
 @pytest.mark.asyncio
 async def test_workspace_prompt_keeps_prompt_when_workspace_agent_context_empty(
     monkeypatch: pytest.MonkeyPatch,
@@ -1281,9 +1265,7 @@ async def test_execution_rejects_archived_cooperation_session(monkeypatch):
     from unittest.mock import AsyncMock
 
     repository = SimpleNamespace(
-        get_session_by_thread_id=AsyncMock(
-            return_value=SimpleNamespace(uid="user-1", agent_id="worker", status="archived")
-        )
+        get_session_by_thread_id=AsyncMock(return_value=SimpleNamespace(uid="user-1", agent_id="worker", status="archived"))
     )
     monkeypatch.setattr(svc, "SessionRepository", lambda _db: repository)
     with pytest.raises(ValueError, match="对话线程不存在"):
@@ -1314,14 +1296,10 @@ async def test_execution_does_not_rebuild_missing_snapshot_context(monkeypatch, 
         "SessionRepository",
         lambda _db: SimpleNamespace(get_session_by_thread_id=AsyncMock(return_value=agent_session)),
     )
-    monkeypatch.setattr(
-        svc, "AgentRepository", lambda _db: SimpleNamespace(get_visible_by_slug=AsyncMock(return_value=agent))
-    )
+    monkeypatch.setattr(svc, "AgentRepository", lambda _db: SimpleNamespace(get_visible_by_slug=AsyncMock(return_value=agent)))
     monkeypatch.setattr(svc, "get_agent_backend", lambda _backend: object())
     monkeypatch.setattr(svc, "resolve_session_workdir_path", _resolve_test_workdir)
-    monkeypatch.setattr(
-        agent_context, "normalize_agent_context_config", AsyncMock(side_effect=AssertionError("不得重新解析配置"))
-    )
+    monkeypatch.setattr(agent_context, "normalize_agent_context_config", AsyncMock(side_effect=AssertionError("不得重新解析配置")))
     with pytest.raises(error, match=message):
         await svc._resolve_agent_runtime(
             db=object(),

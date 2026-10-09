@@ -64,11 +64,7 @@ async def resolve_runtime_skills_for_context(
         bound = await SkillRepository(db).get_by_bound_agent_id(agent.id)
         previous = getattr(context, "_skill_runtime_snapshot", None)
         if bound is not None and previous is not None:
-            prepared_bound = {
-                slug
-                for slug, metadata in previous["skill_metadata"].items()
-                if metadata["source_scope"] == "agent_bound"
-            }
+            prepared_bound = {slug for slug, metadata in previous["skill_metadata"].items() if metadata["source_scope"] == "agent_bound"}
             # 执行边界只复核已准备绑定；中途新增绑定在下一 Run 生效。
             if bound.slug not in prepared_bound:
                 bound = None
@@ -90,9 +86,7 @@ async def resolve_runtime_skills_for_context(
     selected_skills = [slug for slug in selected if slug in skill_items_by_slug]
     context_skills = normalize_string_list([*selected_skills, *(item.slug for item in personal_items)])
     effective_skills = expand_skill_closure(context_skills, runtime_skills)
-    limited = any(
-        dependency not in runtime_skills for slug in effective_skills for dependency in runtime_skills[slug]["skills"]
-    )
+    limited = any(dependency not in runtime_skills for slug in effective_skills for dependency in runtime_skills[slug]["skills"])
     configured_preloads = normalize_string_list(getattr(context, "preload_skills", None))
     context_preload_skills = [slug for slug in configured_preloads if slug in selected_skills]
     if bound_slug:
@@ -101,9 +95,7 @@ async def resolve_runtime_skills_for_context(
         context_preload_skills = normalize_string_list([*context_preload_skills, bound_slug])
     preloaded_skills = expand_skill_closure(context_preload_skills, runtime_skills)
     preloaded_contents = (
-        await asyncio.to_thread(_read_preloaded_skill_contents, preloaded_skills, skill_items_by_slug)
-        if preloaded_skills
-        else {}
+        await asyncio.to_thread(_read_preloaded_skill_contents, preloaded_skills, skill_items_by_slug) if preloaded_skills else {}
     )
     return {
         "capability_limited": limited,
@@ -130,9 +122,7 @@ def build_runtime_skills(skills: list) -> dict[str, RuntimeSkill]:
     for item in skills:
         if not item.slug:
             continue
-        root = (
-            VIRTUAL_PERSONAL_SKILLS_PATH if getattr(item, "source_scope", None) == "personal" else VIRTUAL_SKILLS_PATH
-        )
+        root = VIRTUAL_PERSONAL_SKILLS_PATH if getattr(item, "source_scope", None) == "personal" else VIRTUAL_SKILLS_PATH
         result[item.slug] = {
             "name": item.name,
             "description": item.description,

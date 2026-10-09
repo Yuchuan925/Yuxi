@@ -87,9 +87,7 @@ async def stream_thread_events(
             )
             turn_ids = list({run.turn_id for run in runs})
             repo = AgentTurnRepository(db)
-            turns = await repo.list_for_scope(
-                turn_ids=turn_ids, thread_id=thread_id, uid=scope.uid, app_id=scope.app_id
-            )
+            turns = await repo.list_for_scope(turn_ids=turn_ids, thread_id=thread_id, uid=scope.uid, app_id=scope.app_id)
             facts = [(run, turns.get(run.turn_id)) for run in runs]
             start_times = await repo.get_start_times(turn_ids=turn_ids, uid=scope.uid, app_id=scope.app_id)
         emitted = False
@@ -120,9 +118,7 @@ async def stream_thread_events(
                 cursor.run_phase = 1
                 yield (
                     cursor.encode(),
-                    adapter.extension(
-                        "run.created", "created", input_id=run.input_id, created_by_run_id=run.created_by_run_id
-                    ),
+                    adapter.extension("run.created", "created", input_id=run.input_id, created_by_run_id=run.created_by_run_id),
                 )
                 emitted = True
             if cursor.run_phase == 1:
@@ -147,10 +143,9 @@ async def stream_thread_events(
                 except Exception as exc:
                     logger.warning("读取 Run 增量失败: run=%s error=%s", run.id, exc)
                     events, oldest = [], []
-                expired = (
-                    cursor.event_seq != "0-0"
-                    and (not oldest or _redis_id(oldest[0]["seq"]) > _redis_id(cursor.event_seq))
-                ) or (run.status in TERMINAL_RUN_STATUSES and not events and not oldest)
+                expired = (cursor.event_seq != "0-0" and (not oldest or _redis_id(oldest[0]["seq"]) > _redis_id(cursor.event_seq))) or (
+                    run.status in TERMINAL_RUN_STATUSES and not events and not oldest
+                )
                 position = (run.id, cursor.event_seq)
                 if expired and position not in resynced:
                     resynced.add(position)
@@ -195,9 +190,7 @@ async def stream_thread_events(
                     yield (
                         cursor.encode(),
                         {
-                            **adapter.extension(
-                                "turn.waiting", "waiting", waitpoint=turn.waitpoint, current_run_id=turn.current_run_id
-                            ),
+                            **adapter.extension("turn.waiting", "waiting", waitpoint=turn.waitpoint, current_run_id=turn.current_run_id),
                             "turn": turn_core(turn, run, started_at=start_times[turn.id]),
                         },
                     )

@@ -86,9 +86,7 @@ async def test_invalid_entry_or_missing_field_is_rejected(reranker, entry):
         await reranker._batch_rerank("query", ["A"], max_length=128)
 
 
-@pytest.mark.parametrize(
-    "score", [None, True, False, "invalid", float("nan"), float("inf"), -float("inf"), "NaN", "inf"]
-)
+@pytest.mark.parametrize("score", [None, True, False, "invalid", float("nan"), float("inf"), -float("inf"), "NaN", "inf"])
 async def test_invalid_score_is_rejected(reranker, score):
     _respond_with(reranker, [{"index": 0, "relevance_score": score}])
 

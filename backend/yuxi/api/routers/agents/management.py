@@ -140,9 +140,7 @@ async def get_default_agent(current_user: User = Depends(get_required_user), db:
 
 
 @agent_router.post("")
-async def create_agent(
-    payload: AgentCreate, current_user: User = Depends(get_required_user), db: AsyncSession = Depends(get_db)
-):
+async def create_agent(payload: AgentCreate, current_user: User = Depends(get_required_user), db: AsyncSession = Depends(get_db)):
     """创建定义与 Context，保留 JSON 创建契约。"""
     return await _create_agent_response(db, current_user, payload)
 
@@ -162,9 +160,7 @@ async def create_agent_with_skill(
     if not (file.filename or "").lower().endswith(".zip"):
         raise HTTPException(status_code=422, detail="请上传 Skill ZIP 文件")
     try:
-        file_bytes = await read_upload_with_limit(
-            file, max_size_bytes=10 * 1024 * 1024, too_large_message="ZIP 文件不能超过 10 MiB"
-        )
+        file_bytes = await read_upload_with_limit(file, max_size_bytes=10 * 1024 * 1024, too_large_message="ZIP 文件不能超过 10 MiB")
     except ValueError as exc:
         raise HTTPException(status_code=413, detail=str(exc)) from exc
     return await _create_agent_response(db, current_user, payload, skill_upload=(file.filename, file_bytes))
@@ -236,9 +232,7 @@ async def update_agent(
 
 
 @agent_router.delete("/{agent_id}")
-async def delete_agent(
-    agent_id: str, current_user: User = Depends(get_required_user), db: AsyncSession = Depends(get_db)
-):
+async def delete_agent(agent_id: str, current_user: User = Depends(get_required_user), db: AsyncSession = Depends(get_db)):
     repo = AgentRepository(db)
     agent_slug = agent_id  # 兼容既有路径参数名；这里实际是 Agent.slug。
     item = await repo.get_visible_by_slug(slug=agent_slug, user=current_user, for_run=False)
@@ -278,9 +272,7 @@ async def set_agent_default(
 
 
 @agent_router.get("/{agent_id}/self-skill")
-async def get_self_skill(
-    agent_id: str, current_user: User = Depends(get_required_user), db: AsyncSession = Depends(get_db)
-):
+async def get_self_skill(agent_id: str, current_user: User = Depends(get_required_user), db: AsyncSession = Depends(get_db)):
     """读取专属 Skill 与整包修订。"""
     try:
         return await get_agent_bound_skill(db, agent_slug=agent_id, operator=current_user)
@@ -289,9 +281,7 @@ async def get_self_skill(
 
 
 @agent_router.post("/{agent_id}/self-skill")
-async def create_self_skill(
-    agent_id: str, current_user: User = Depends(get_required_user), db: AsyncSession = Depends(get_db)
-):
+async def create_self_skill(agent_id: str, current_user: User = Depends(get_required_user), db: AsyncSession = Depends(get_db)):
     """按 Agent 管理权限幂等创建操作指南。"""
     try:
         return await create_agent_bound_skill(db, agent_slug=agent_id, operator=current_user)

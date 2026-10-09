@@ -46,9 +46,7 @@ async def knowledge_session(monkeypatch):
 
 
 async def test_exists_by_filename_matches_active_file_exactly(knowledge_session):
-    existing_name = (
-        "google_drive/shared_drives/engineering/serving-runtime/dsid_e4ff04ebc2a14c1982abc4987753790c__playbook.txt"
-    )
+    existing_name = "google_drive/shared_drives/engineering/serving-runtime/dsid_e4ff04ebc2a14c1982abc4987753790c__playbook.txt"
     knowledge_session.add_all(
         [
             KnowledgeBase(kb_id="kb_1", name="KB 1", description="", kb_type="milvus"),

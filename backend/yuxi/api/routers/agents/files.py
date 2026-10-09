@@ -36,12 +36,13 @@ async def retrieve_draft(file_id: str, user: User = Depends(require_product_user
 
 
 @router.post("/files/{file_id}/parse")
-async def parse_file(
-    file_id: str, payload: DraftParse, user: User = Depends(require_product_user), db: AsyncSession = Depends(get_db)
-):
+async def parse_file(file_id: str, payload: DraftParse, user: User = Depends(require_product_user), db: AsyncSession = Depends(get_db)):
     """预解析仍留在 draft，发送时由文件 ID 带上派生内容。"""
     return await parse_draft_file(
-        file_id=file_id, parse_method=payload.parse_method, scope=ActorScope(uid=str(user.uid), app_id=None), db=db
+        file_id=file_id,
+        parse_method=payload.parse_method,
+        scope=ActorScope(uid=str(user.uid), app_id=None),
+        db=db,
     )
 
 
@@ -52,7 +53,9 @@ async def prepare_image(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="只支持图片文件上传")
     try:
         content = await read_upload_with_limit(
-            file, max_size_bytes=10 * 1024 * 1024, too_large_message="图片文件过大，请上传小于10MB的图片"
+            file,
+            max_size_bytes=10 * 1024 * 1024,
+            too_large_message="图片文件过大，请上传小于10MB的图片",
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

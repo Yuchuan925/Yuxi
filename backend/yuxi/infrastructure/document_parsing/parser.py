@@ -92,11 +92,7 @@ def _convert_document(source: Path, output_dir: Path, options: ParseOptions) -> 
     markdown_path = output_dir / "document.md"
     markdown_path.write_text(markdown, encoding="utf-8")
     resources = tuple(
-        sorted(
-            path.relative_to(output_dir).as_posix()
-            for path in output_dir.rglob("*")
-            if path.is_file() and path != markdown_path
-        )
+        sorted(path.relative_to(output_dir).as_posix() for path in output_dir.rglob("*") if path.is_file() and path != markdown_path)
     )
     return ParseResult(output_dir, markdown_path, resources)
 
@@ -109,15 +105,11 @@ def _parse_ocr(source: Path, output_dir: Path, options: ParseOptions) -> str:
         if source.suffix.lower() != ".pdf":
             raise ValueError("图像文件必须启用 OCR 才能提取文本")
         with source.open("rb") as stream:
-            return "\n\n".join(
-                (page.extract_text(extraction_mode="plain") or "").strip() for page in PdfReader(stream).pages
-            )
+            return "\n\n".join((page.extract_text(extraction_mode="plain") or "").strip() for page in PdfReader(stream).pages)
     spec = get_engine_spec(options.ocr_engine)
     if source.suffix.lower() not in spec.supported_extensions:
         raise ValueError(f"OCR 引擎 {options.ocr_engine} 不支持文件类型 {source.suffix}")
-    return get_engine(options.ocr_engine, **options.processor_kwargs).process_file(
-        str(source), output_dir, options.params
-    )
+    return get_engine(options.ocr_engine, **options.processor_kwargs).process_file(str(source), output_dir, options.params)
 
 
 def _copy_markdown_resources(source: Path, output_dir: Path, markdown: str) -> str:
@@ -195,9 +187,7 @@ def _convert_xls_to_markdown(file_path: Path) -> str:
     import pandas as pd
 
     # 文档提取不假定首行是表头，也不把文本编号和 NA 等字面值转换成分析数据。
-    sheet_map = pd.read_excel(
-        file_path, engine="xlrd", sheet_name=None, header=None, dtype=object, keep_default_na=False
-    )
+    sheet_map = pd.read_excel(file_path, engine="xlrd", sheet_name=None, header=None, dtype=object, keep_default_na=False)
     blocks: list[str] = []
     for sheet_name, dataframe in sheet_map.items():
         if dataframe.empty:

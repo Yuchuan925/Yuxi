@@ -46,9 +46,7 @@ async def test_public_end_user_identity_is_unique_and_cannot_enter_product_api(t
                 }
             )
 
-        responses = await asyncio.gather(
-            *(test_client.get("/api/v1/agents", headers=headers_by_app[0]) for _ in range(6))
-        )
+        responses = await asyncio.gather(*(test_client.get("/api/v1/agents", headers=headers_by_app[0]) for _ in range(6)))
         assert all(response.status_code == 200 for response in responses), [response.text for response in responses]
         other_app = await test_client.get("/api/v1/agents", headers=headers_by_app[1])
         assert other_app.status_code == 200, other_app.text
@@ -69,15 +67,11 @@ async def test_public_end_user_identity_is_unique_and_cannot_enter_product_api(t
         assert all(row["role"] == "user" and row["user_kind"] == "end_user" for row in rows)
         assert all(row["department_id"] is None for row in rows)
 
-        expected_uids = await conn.fetch(
-            "SELECT uid FROM users WHERE is_deleted = 0 AND user_kind = 'human' ORDER BY id"
-        )
+        expected_uids = await conn.fetch("SELECT uid FROM users WHERE is_deleted = 0 AND user_kind = 'human' ORDER BY id")
         for endpoint in ("/api/auth/users", "/api/auth/users/access-options"):
             directory_uids = []
             for skip in range(0, len(expected_uids) + 2, 2):
-                directory = await test_client.get(
-                    endpoint, headers=admin_headers, params={"skip": skip, "limit": 2}
-                )
+                directory = await test_client.get(endpoint, headers=admin_headers, params={"skip": skip, "limit": 2})
                 assert directory.status_code == 200, directory.text
                 items = directory.json()
                 directory_uids.extend(item["uid"] for item in items)
@@ -111,15 +105,11 @@ async def test_public_end_user_identity_is_unique_and_cannot_enter_product_api(t
             assert [(item["id"], item["user_kind"], item["app_id"]) for item in page["items"]] == [
                 (rows[0]["id"], "end_user", rows[0]["app_id"])
             ]
-        invalid_kind = await test_client.get(
-            "/api/auth/users/page", headers=admin_headers, params={"user_kind": "unknown"}
-        )
+        invalid_kind = await test_client.get("/api/auth/users/page", headers=admin_headers, params={"user_kind": "unknown"})
         assert invalid_kind.status_code == 422, invalid_kind.text
 
         end_user = rows[0]
-        login = await test_client.post(
-            "/api/auth/token", data={"username": end_user["uid"], "password": "not-a-password"}
-        )
+        login = await test_client.post("/api/auth/token", data={"username": end_user["uid"], "password": "not-a-password"})
         assert login.status_code == 401, login.text
         impersonate = await test_client.post(f"/api/auth/impersonate/{end_user['id']}", headers=admin_headers)
         assert impersonate.status_code == 404, impersonate.text
@@ -137,9 +127,7 @@ async def test_public_end_user_identity_is_unique_and_cannot_enter_product_api(t
         disabled = await test_client.get("/api/v1/agents", headers=headers_by_app[0])
         assert disabled.status_code == 403, disabled.text
         assert await conn.fetchval("SELECT is_deleted FROM users WHERE id = $1", end_user["id"]) == 1
-        owner_catalog = await test_client.get(
-            "/api/v1/agents", headers={"Authorization": headers_by_app[0]["Authorization"]}
-        )
+        owner_catalog = await test_client.get("/api/v1/agents", headers={"Authorization": headers_by_app[0]["Authorization"]})
         assert owner_catalog.status_code == 200, owner_catalog.text
     finally:
         for key_id in key_ids:

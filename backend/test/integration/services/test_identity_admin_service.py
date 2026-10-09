@@ -66,9 +66,7 @@ async def test_user_conflict_rolls_back_new_department() -> None:
                 )
 
         async with factory() as db:
-            attempted_department = await db.scalar(
-                select(Department).where(Department.name == attempted_department_name)
-            )
+            attempted_department = await db.scalar(select(Department).where(Department.name == attempted_department_name))
             attempted_admin = await db.scalar(select(User).where(User.uid == conflicting_username))
 
         assert attempted_department is None
@@ -122,9 +120,7 @@ async def test_concurrent_initialization_has_exactly_one_atomic_winner() -> None
         async with factory() as db:
             department_count = await db.scalar(select(func.count(Department.id)))
             user_count = await db.scalar(select(func.count(User.id)))
-            operation_log_table = await db.scalar(
-                text("SELECT to_regclass(:table)"), {"table": f"{schema}.operation_logs"}
-            )
+            operation_log_table = await db.scalar(text("SELECT to_regclass(:table)"), {"table": f"{schema}.operation_logs"})
 
         assert sum(isinstance(result, DepartmentAdminCreation) for result in results) == 1
         assert sum(isinstance(result, SystemAlreadyInitializedError) for result in results) == 1

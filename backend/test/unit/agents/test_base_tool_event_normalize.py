@@ -52,9 +52,7 @@ async def test_final_checkpoint_belongs_to_each_executed_graph():
         """耗尽后保留唯一的最终 checkpoint。"""
         return [
             event
-            async for event in agent.stream_messages_with_state(
-                [uid], context=BaseContext(**{"uid": uid, "thread_id": uid + "-thread"})
-            )
+            async for event in agent.stream_messages_with_state([uid], context=BaseContext(**{"uid": uid, "thread_id": uid + "-thread"}))
         ]
 
     results = await asyncio.gather(run("a"), run("b"))

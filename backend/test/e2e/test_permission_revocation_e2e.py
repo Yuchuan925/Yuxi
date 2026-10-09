@@ -206,10 +206,7 @@ async def test_tool_boundary_rechecks_current_caller_and_retains_history(actors,
     file = user_workspace_dir(user["uid"]) / filename
     mcp_slug = None
     if revocation == "skill":
-        package = (
-            f"---\nname: {skill}\ndescription: permission test\n"
-            "tool_dependencies: [present_artifacts]\n---\n# Permission test\n"
-        )
+        package = f"---\nname: {skill}\ndescription: permission test\ntool_dependencies: [present_artifacts]\n---\n# Permission test\n"
         prepared = await client.post(
             "/api/skills/import/prepare",
             headers=admin["headers"],
@@ -298,9 +295,7 @@ async def test_tool_boundary_rechecks_current_caller_and_retains_history(actors,
         elif revocation == "account":
             response = await client.delete(f"/api/auth/users/{user['id']}", headers=actors["root"])
         elif revocation == "mcp":
-            response = await client.put(
-                f"/api/system/mcp-servers/{mcp_slug}/tools/effect_probe/toggle", headers=actors["root"]
-            )
+            response = await client.put(f"/api/system/mcp-servers/{mcp_slug}/tools/effect_probe/toggle", headers=actors["root"])
         else:
             response = await client.put(
                 f"/api/system/skills/{skill}/share-config",
@@ -390,9 +385,7 @@ async def test_queued_input_after_revocation_fails_without_another_model_call(ac
     """已经接收的 FIFO 输入启动时重查权限，两轮都终结且历史保留。"""
     client, db = actors["client"], actors["db"]
     user = actors["identities"]["user0"]
-    replay["action"].update(
-        name="write_file", arguments={"file_path": f"{VIRTUAL_PATH_PREFIX}/forbidden.txt", "content": "forbidden"}
-    )
+    replay["action"].update(name="write_file", arguments={"file_path": f"{VIRTUAL_PATH_PREFIX}/forbidden.txt", "content": "forbidden"})
     agent, provider, model = await prepared_agent(actors, replay)
     try:
         initial = await client.post(
@@ -408,7 +401,7 @@ async def test_queued_input_after_revocation_fails_without_another_model_call(ac
             await asyncio.sleep(0.1)
         assert replay["entered"].is_set()
         queued = await client.post(
-            f"/api/v1/agents/sessions/{accepted["session_id"]}/events",
+            f"/api/v1/agents/sessions/{accepted['session_id']}/events",
             headers={**user["headers"], "Idempotency-Key": uuid.uuid4().hex},
             json={
                 "events": [
@@ -438,22 +431,20 @@ async def test_queued_input_after_revocation_fails_without_another_model_call(ac
             == 1
         )
         continued = await client.post(
-            f"/api/v1/agents/sessions/{accepted["session_id"]}/events",
+            f"/api/v1/agents/sessions/{accepted['session_id']}/events",
             headers={**user["headers"], "Idempotency-Key": uuid.uuid4().hex},
             json={"events": [{"type": "yuxi.session.input.continue"}]},
         )
         assert continued.status_code == 202, continued.text
         for _ in range(200):
-            rows = await db.fetch(
-                "SELECT status,error_message FROM agent_runs WHERE thread_id=$1", accepted["session_id"]
-            )
+            rows = await db.fetch("SELECT status,error_message FROM agent_runs WHERE thread_id=$1", accepted["session_id"])
             if len(rows) == 2 and all(row["status"] == "failed" for row in rows):
                 break
             await asyncio.sleep(0.1)
         else:
             pytest.fail(f"失权的排队输入未形成明确失败结果：{[dict(row) for row in rows]}")
         assert len(replay["requests"]) == 1, "排队输入失权后仍调用了模型"
-        history = await client.get(f"/api/v1/agents/sessions/{accepted["session_id"]}/items?order=asc&limit=100", headers=user["headers"])
+        history = await client.get(f"/api/v1/agents/sessions/{accepted['session_id']}/items?order=asc&limit=100", headers=user["headers"])
         assert history.status_code == 200 and "Queued" in history.text, history.text
     finally:
         replay["release"].set()
@@ -494,9 +485,7 @@ async def test_due_schedule_rechecks_permission_before_creating_thread(actors, r
         await revoke_agent(actors, agent)
         await db.execute("UPDATE scheduled_agent_jobs SET next_run_at=$1 WHERE id=$2", datetime(2020, 1, 1), job)
         for _ in range(300):
-            record = await db.fetchrow(
-                "SELECT status,error_message,thread_id FROM scheduled_agent_runs WHERE job_id=$1", job
-            )
+            record = await db.fetchrow("SELECT status,error_message,thread_id FROM scheduled_agent_runs WHERE job_id=$1", job)
             if record and record["status"] == "failed":
                 break
             await asyncio.sleep(0.1)
@@ -516,9 +505,7 @@ async def test_waitpoint_resume_after_revocation_cannot_create_new_run(actors, r
     """真实提问等待点失权后拒绝恢复，原会话和暂停结果仍可读取。"""
     client, db = actors["client"], actors["db"]
     user = actors["identities"]["user0"]
-    replay["action"].update(
-        name="ask_user_question", arguments={"questions": [{"question_id": "permission-q", "question": "Continue?"}]}
-    )
+    replay["action"].update(name="ask_user_question", arguments={"questions": [{"question_id": "permission-q", "question": "Continue?"}]})
     replay["release"].set()
     agent, provider, model = await prepared_agent(actors, replay, tools=["ask_user_question"])
     accepted = None
@@ -532,7 +519,7 @@ async def test_waitpoint_resume_after_revocation_cannot_create_new_run(actors, r
         accepted = response.json()["yuxi"]["receipt"]
         for _ in range(200):
             response = await client.get(
-                f"/api/v1/agents/sessions/{accepted["session_id"]}/turns/{accepted['turn_id']}", headers=user["headers"]
+                f"/api/v1/agents/sessions/{accepted['session_id']}/turns/{accepted['turn_id']}", headers=user["headers"]
             )
             assert response.status_code == 200, response.text
             snapshot = response.json()
@@ -548,7 +535,7 @@ async def test_waitpoint_resume_after_revocation_cannot_create_new_run(actors, r
                     await db.fetchval("SELECT id FROM agents WHERE slug=$1 FOR UPDATE", agent["slug"])
                     waiting_request = asyncio.create_task(
                         client.post(
-                            f"/api/v1/agents/sessions/{accepted["session_id"]}/events",
+                            f"/api/v1/agents/sessions/{accepted['session_id']}/events",
                             headers={**user["headers"], "Idempotency-Key": uuid.uuid4().hex},
                             json={
                                 "events": [
@@ -578,9 +565,7 @@ async def test_waitpoint_resume_after_revocation_cannot_create_new_run(actors, r
                     else:
                         pytest.fail("恢复没有在 Agent 锁上等待")
                     # 删除先锁 Agent 再锁 Thread；恢复等待 Agent 时不得先占 Thread。
-                    await db.fetchval(
-                        "SELECT id FROM sessions WHERE thread_id=$1 FOR UPDATE NOWAIT", accepted["session_id"]
-                    )
+                    await db.fetchval("SELECT id FROM sessions WHERE thread_id=$1 FOR UPDATE NOWAIT", accepted["session_id"])
             finally:
                 if waiting_request is not None:
                     invalid = await waiting_request
@@ -590,7 +575,7 @@ async def test_waitpoint_resume_after_revocation_cannot_create_new_run(actors, r
             deleted = await client.delete(f"/api/auth/users/{user['id']}", headers=actors["root"])
             assert deleted.status_code == 200, deleted.text
         response = await client.post(
-            f"/api/v1/agents/sessions/{accepted["session_id"]}/events",
+            f"/api/v1/agents/sessions/{accepted['session_id']}/events",
             headers={**user["headers"], "Idempotency-Key": uuid.uuid4().hex},
             json={
                 "events": [
@@ -608,7 +593,7 @@ async def test_waitpoint_resume_after_revocation_cannot_create_new_run(actors, r
         assert await db.fetchval("SELECT status FROM agent_runs WHERE id=$1", accepted["run_id"]) == "interrupted"
         if revocation == "agent":
             assert (
-                await client.get(f"/api/v1/agents/sessions/{accepted["session_id"]}/items?order=asc&limit=100", headers=user["headers"])
+                await client.get(f"/api/v1/agents/sessions/{accepted['session_id']}/items?order=asc&limit=100", headers=user["headers"])
             ).status_code == 200
         await client.delete(f"/api/system/model-providers/{provider}", headers=actors["root"])
         if revocation == "account":
@@ -682,7 +667,7 @@ async def test_failed_model_response_cannot_start_retry_or_summary_after_revocat
             replay["requests"].clear()
             replay["action"]["failure"] = failure
             response = await client.post(
-                f"/api/v1/agents/sessions/{accepted["session_id"]}/events",
+                f"/api/v1/agents/sessions/{accepted['session_id']}/events",
                 headers={**user["headers"], "Idempotency-Key": suffix + "-overflow"},
                 json={
                     "events": [
@@ -714,9 +699,7 @@ async def test_failed_model_response_cannot_start_retry_or_summary_after_revocat
         assert persisted["read_scope"] is None
         replay["release"].set()
         for _ in range(200):
-            run = await db.fetchrow(
-                "SELECT status,error_message,turn_id FROM agent_runs WHERE id=$1", accepted["run_id"]
-            )
+            run = await db.fetchrow("SELECT status,error_message,turn_id FROM agent_runs WHERE id=$1", accepted["run_id"])
             if run["status"] in {"failed", "completed", "cancelled"}:
                 break
             await asyncio.sleep(0.1)

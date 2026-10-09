@@ -16,9 +16,7 @@ from yuxi.modules.knowledge.services.access import visible_knowledge_bases
 )
 async def test_selection_only_narrows_read_permissions(monkeypatch, uid, selection, expected):
     """全部、指定和空选择都不能扩大用户读取范围。"""
-    readable = [
-        SimpleNamespace(kb_id=kb_id, name="Docs", description=None, kb_type="milvus") for kb_id in ("kb-a", "kb-b")
-    ]
+    readable = [SimpleNamespace(kb_id=kb_id, name="Docs", description=None, kb_type="milvus") for kb_id in ("kb-a", "kb-b")]
     monkeypatch.setattr(knowledge_base, "get_databases_by_uid", AsyncMock(return_value=readable))
 
     result = await visible_knowledge_bases(uid, selection=selection)

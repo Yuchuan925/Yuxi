@@ -205,6 +205,4 @@ def restore_chat_input_message(*, content: str, image_content: str | None, metad
 
 
 def _has_image_url_content_part(content: object) -> bool:
-    return isinstance(content, list) and any(
-        isinstance(part, dict) and part.get("type") == "image_url" for part in content
-    )
+    return isinstance(content, list) and any(isinstance(part, dict) and part.get("type") == "image_url" for part in content)

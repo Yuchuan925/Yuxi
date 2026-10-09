@@ -66,6 +66,19 @@ docker compose logs --tail=100 api
 
 后端代码位于 `backend/`。新增测试放在 `backend/test/unit`、`backend/test/integration` 或 `backend/test/e2e`，按测试实际依赖选择层级。测试分层、fixture 和 skip 规则见[测试规范](./testing-guidelines.md)。
 
+以下排版规则只适用于 `backend/` 的 Python。Ruff 行宽上限为 140，配置由 `backend/pyproject.toml` 拥有；行宽是上限，不是填满目标。
+
+能清楚写在一行的调用保持一行：
+
+```python
+if not await repo.try_lock(turn_id):
+    raise HTTPException(status_code=409, detail={"code": "references_busy", "message": "本轮正在标注来源，请稍后读取结果"})
+```
+
+需要折行的调用按参数分行，关键字参数各占一行；参数内的集合或表达式继续按自身结构展开。只折开括号、多个参数仍挤在同一行的布局，改成清楚的单行调用或按参数分行。多行数据、有说明性注释的参数和复杂调用保留有意义的分组，不为压缩行数强行合并。
+
+不同语义阶段之间留空行，例如授权与读取、事实写入与提交、提交与投递；紧密相关的短语句放在一起。必要注释靠近约束或副作用，说明非显然的事务时序、Owner、路径边界或调用义务；显然的赋值、条件和函数名不逐行复述。保持完整配置、SQL、prompt 与其他字符串内容不变，用等价排版改善阅读。
+
 ### 前端
 
 前端代码位于 `frontend/`，使用 `pnpm` 和 LESS：

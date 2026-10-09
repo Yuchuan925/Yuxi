@@ -81,11 +81,7 @@ async def _seed_thread(session_factory, *, thread_prefix: str) -> dict:
     async with session_factory() as db:
         db.add(User(username=uid, uid=uid, password_hash="test"))
         await db.flush()
-        db.add(
-            Project(
-                id=project_id, uid=uid, selection_status="implicit", workdir_path=workdir_path, directory_mode="managed"
-            )
-        )
+        db.add(Project(id=project_id, uid=uid, selection_status="implicit", workdir_path=workdir_path, directory_mode="managed"))
         agent_session = Session(
             thread_id=thread_id,
             uid=uid,
@@ -119,9 +115,7 @@ async def _seed_thread(session_factory, *, thread_prefix: str) -> dict:
             intent_hash="test",
             input_id=input_id,
         )
-        input_message = Message(
-            session_record_id=agent_session.id, role="user", content="input", delivery_status="queued"
-        )
+        input_message = Message(session_record_id=agent_session.id, role="user", content="input", delivery_status="queued")
         db.add(input_message)
         await db.flush()
         await input_repo.add_messages(input_id=input_id, receipt_id=receipt_id, message_ids=[input_message.id])
@@ -207,17 +201,9 @@ async def test_delete_test_session_rows_removes_history_and_preserves_neighbor(c
             ):
                 assert await db.get(model, target[key]) is None
                 assert await db.get(model, neighbor[key]) is not None
-            assert (
-                await db.scalar(select(AgentInputMessage.id).where(AgentInputMessage.input_id == target["input_id"]))
-                is None
-            )
-            assert (
-                await db.scalar(select(AgentInputMessage.id).where(AgentInputMessage.input_id == neighbor["input_id"]))
-                is not None
-            )
-            assert (
-                await db.scalar(select(ToolCall.id).where(ToolCall.message_id == target["output_message_id"])) is None
-            )
+            assert await db.scalar(select(AgentInputMessage.id).where(AgentInputMessage.input_id == target["input_id"])) is None
+            assert await db.scalar(select(AgentInputMessage.id).where(AgentInputMessage.input_id == neighbor["input_id"])) is not None
+            assert await db.scalar(select(ToolCall.id).where(ToolCall.message_id == target["output_message_id"])) is None
     finally:
         await _cleanup_seed(cleanup_database, [target, neighbor])
 

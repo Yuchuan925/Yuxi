@@ -113,9 +113,7 @@ def _resolve_ocr_source_path(file_path: str, runtime: ToolRuntime) -> str:
 
     clean_virtual_path = "/" + normalized_input.lstrip("/")
     workdir_path = str(runtime_scope_value(runtime, "workdir_path") or "").rstrip("/")
-    allowed = clean_virtual_path.startswith(f"{workdir_path}/") or clean_virtual_path.startswith(
-        f"{VIRTUAL_PATH_PREFIX.rstrip('/')}/"
-    )
+    allowed = clean_virtual_path.startswith(f"{workdir_path}/") or clean_virtual_path.startswith(f"{VIRTUAL_PATH_PREFIX.rstrip('/')}/")
     allowed = allowed or clean_virtual_path.startswith(f"{VIRTUAL_SKILLS_PATH}/")
     if not workdir_path or not allowed:
         raise ValueError("只允许解析当前用户可见范围内的文件")

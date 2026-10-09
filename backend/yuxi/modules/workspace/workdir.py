@@ -87,16 +87,12 @@ class Workdir:
 
     def copy_file_from_stream(self, path: str, source: BinaryIO, *, max_bytes: int, overwrite: bool = True) -> dict:
         """把借用的文件流限量写入当前 Workdir。"""
-        return self.workspace.upload_authorized_file_from_stream(
-            self.resolve_path(path), source, max_bytes=max_bytes, overwrite=overwrite
-        )
+        return self.workspace.upload_authorized_file_from_stream(self.resolve_path(path), source, max_bytes=max_bytes, overwrite=overwrite)
 
     async def acopy_directory_from_path(self, source_path: str | Path, target_path: str) -> None:
         """整体复制服务目录；取消时等复制结束，再回收本次产物。"""
         copy = asyncio.create_task(
-            asyncio.to_thread(
-                self.workspace.copy_authorized_directory_from_path, self.resolve_path(target_path), source_path
-            )
+            asyncio.to_thread(self.workspace.copy_authorized_directory_from_path, self.resolve_path(target_path), source_path)
         )
         try:
             await await_io(copy)

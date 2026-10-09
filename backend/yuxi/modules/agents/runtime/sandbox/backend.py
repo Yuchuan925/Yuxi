@@ -70,9 +70,7 @@ _SKILLS_ROOT = "/" + VIRTUAL_SKILLS_PATH.strip("/")
 _BINARY_PREVIEW_TOO_LARGE_ERROR = f"Binary file exceeds maximum preview size of {MAX_BINARY_BYTES} bytes"
 _IMAGE_EXTENSIONS = frozenset({".gif", ".heic", ".heif", ".jpeg", ".jpg", ".png", ".webp"})
 _DOCUMENT_EXTENSIONS = frozenset({".doc", ".docx", ".pdf", ".ppt", ".pptx", ".xls", ".xlsx"})
-_DOCUMENT_READ_ERROR = (
-    "read_file does not support PDF or Office documents. Use ocr_parse_file to convert the file to Markdown first."
-)
+_DOCUMENT_READ_ERROR = "read_file does not support PDF or Office documents. Use ocr_parse_file to convert the file to Markdown first."
 _BINARY_READ_ERROR = "read_file only supports UTF-8 text and image files. This file type is not supported."
 
 
@@ -276,9 +274,7 @@ class ProvisionerSandboxBackend(BaseSandbox):
         try:
             from agent_sandbox import Sandbox as AgentSandboxClient
         except Exception as exc:  # noqa: BLE001
-            raise RuntimeError(
-                "agent-sandbox is required. Install dependency `agent-sandbox` in the docker image."
-            ) from exc
+            raise RuntimeError("agent-sandbox is required. Install dependency `agent-sandbox` in the docker image.") from exc
 
         return AgentSandboxClient(
             base_url=sandbox_url,
@@ -291,9 +287,7 @@ class ProvisionerSandboxBackend(BaseSandbox):
         try:
             from agent_sandbox import AsyncSandbox as AsyncAgentSandboxClient
         except Exception as exc:  # noqa: BLE001
-            raise RuntimeError(
-                "agent-sandbox is required. Install dependency `agent-sandbox` in the docker image."
-            ) from exc
+            raise RuntimeError("agent-sandbox is required. Install dependency `agent-sandbox` in the docker image.") from exc
 
         return AsyncAgentSandboxClient(
             base_url=sandbox_url,
@@ -719,10 +713,7 @@ finally:
             return EditResult(error=f"Error: String not found in file: '{old_string}'")
         if count > 1 and not replace_all:
             return EditResult(
-                error=(
-                    f"Error: String '{old_string}' appears multiple times. "
-                    "Use replace_all=True to replace all occurrences."
-                )
+                error=(f"Error: String '{old_string}' appears multiple times. Use replace_all=True to replace all occurrences.")
             )
 
         # Use str_replace_editor API
@@ -778,10 +769,7 @@ finally:
             data = FileGrepResult.model_validate(payload["data"])
             if data.truncated is None:
                 return GrepResult(error="Invalid sandbox grep result")
-            matches = [
-                {"path": match.file, "line": match.line_number, "text": match.line_content}
-                for match in data.matches or []
-            ]
+            matches = [{"path": match.file, "line": match.line_number, "text": match.line_content} for match in data.matches or []]
             if len(json.dumps(matches, ensure_ascii=False).encode("utf-8")) > self._max_output_bytes:
                 return GrepResult(error="grep output exceeded sandbox limit")
             return GrepResult(matches=matches, truncated=data.truncated)
@@ -842,12 +830,7 @@ finally:
                 timeout=ASYNC_GREP_TIMEOUT,
             )
         except TimeoutError:
-            return GrepResult(
-                error=(
-                    f"Error: grep timed out after {ASYNC_GREP_TIMEOUT}s. "
-                    "Try a more specific pattern or a narrower path."
-                )
-            )
+            return GrepResult(error=(f"Error: grep timed out after {ASYNC_GREP_TIMEOUT}s. Try a more specific pattern or a narrower path."))
 
     def glob(self, pattern: str, path: str = "/") -> GlobResult:
         """Return files matching a glob pattern under allowed sandbox paths."""
@@ -996,9 +979,7 @@ finally:
         if normalized_path != normalized_root and not _is_same_or_child(normalized_path, normalized_root):
             raise ValueError(f"directory path is outside authorized root: {normalized_path}")
         relative_parts = (
-            ()
-            if normalized_path == normalized_root
-            else tuple(PurePosixPath(normalized_path[len(normalized_root) + 1 :]).parts)
+            () if normalized_path == normalized_root else tuple(PurePosixPath(normalized_path[len(normalized_root) + 1 :]).parts)
         )
         script = f"""
 import base64
@@ -1034,11 +1015,7 @@ finally:
         if result.exit_code not in (0, None):
             raise FileNotFoundError(normalized_path)
         payload = next(
-            (
-                line.removeprefix("YUXI_SAFE_LIST ")
-                for line in (result.output or "").splitlines()
-                if line.startswith("YUXI_SAFE_LIST ")
-            ),
+            (line.removeprefix("YUXI_SAFE_LIST ") for line in (result.output or "").splitlines() if line.startswith("YUXI_SAFE_LIST ")),
             None,
         )
         if payload is None:
@@ -1056,9 +1033,7 @@ finally:
             raise ValueError("parent path is outside authorized root")
         target_path = f"{normalized_parent.rstrip('/')}/{name}"
         relative_parts = (
-            ()
-            if normalized_parent == normalized_root
-            else tuple(PurePosixPath(normalized_parent[len(normalized_root) + 1 :]).parts)
+            () if normalized_parent == normalized_root else tuple(PurePosixPath(normalized_parent[len(normalized_root) + 1 :]).parts)
         )
         script = f"""
 import os
@@ -1267,11 +1242,7 @@ finally:
                         "sandbox snapshot metadata read failed",
                     )
                 snapshot_line = next(
-                    (
-                        line
-                        for line in str(metadata_result.output or "").splitlines()
-                        if line.startswith("YUXI_FILE_SNAPSHOT ")
-                    ),
+                    (line for line in str(metadata_result.output or "").splitlines() if line.startswith("YUXI_FILE_SNAPSHOT ")),
                     None,
                 )
                 if snapshot_line is None:
@@ -1304,9 +1275,7 @@ finally:
             cleanup_path = base64.b64encode(export_path.encode("utf-8")).decode("ascii")
             try:
                 cleanup_result = self.execute(
-                    'python3 -c "import base64,os; '
-                    f"p=base64.b64decode('{cleanup_path}').decode(); "
-                    'os.path.exists(p) and os.unlink(p)"'
+                    f"python3 -c \"import base64,os; p=base64.b64decode('{cleanup_path}').decode(); os.path.exists(p) and os.unlink(p)\""
                 )
                 if cleanup_result.exit_code not in (0, None):
                     raise RuntimeError(f"sandbox file snapshot cleanup failed: {export_path}")
@@ -1324,9 +1293,7 @@ finally:
             try:
                 normalized_path = _normalize_path(path)
                 if not self._can_read_path(normalized_path):
-                    responses.append(
-                        FileDownloadResponse(path=normalized_path, content=None, error="permission_denied")
-                    )
+                    responses.append(FileDownloadResponse(path=normalized_path, content=None, error="permission_denied"))
                     continue
                 content = b"".join(
                     self._get_client().file.download_file(

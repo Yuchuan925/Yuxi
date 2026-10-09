@@ -134,10 +134,7 @@ def main() -> int:
         print(f"初始化种子用户失败：{exc}", file=sys.stderr)
         return 1
 
-    print(
-        f"初始化完成：已创建超级管理员 {SUPERADMIN_NAME}（{SUPERADMIN_UID}）、"
-        "3 个部门、6 个部门管理员和 14 个普通用户。"
-    )
+    print(f"初始化完成：已创建超级管理员 {SUPERADMIN_NAME}（{SUPERADMIN_UID}）、3 个部门、6 个部门管理员和 14 个普通用户。")
     print("超级管理员密码：zwj12138")
     print("部门管理员和普通用户默认密码：yuxi123456")
     return 0

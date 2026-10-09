@@ -51,9 +51,7 @@ async def test_memory_search_includes_public_source_and_excludes_hidden_messages
         [
             Message(session_record_id=visible.id, role="user", content="needle visible", message_type="text"),
             Message(session_record_id=visible.id, role="tool", content="needle tool", message_type="text"),
-            Message(
-                session_record_id=visible.id, role="assistant", content="needle result", message_type="tool_result"
-            ),
+            Message(session_record_id=visible.id, role="assistant", content="needle result", message_type="tool_result"),
             Message(session_record_id=other.id, role="user", content="needle other", message_type="text"),
             Message(session_record_id=public.id, role="user", content="needle public", message_type="text"),
             Message(session_record_id=child.id, role="assistant", content="needle child", message_type="text"),

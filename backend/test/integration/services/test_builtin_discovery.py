@@ -89,8 +89,7 @@ async def test_unknown_backend_prevents_all_preset_writes(tmp_path, monkeypatch)
     modules = [f"a_valid_{suffix}", f"z_invalid_{suffix}"]
     for module, slug, backend in zip(modules, slugs, ["ChatbotAgent", "UnknownBackend"], strict=True):
         (tmp_path / f"{module}.py").write_text(
-            "from yuxi.modules.agents.presets import AgentPreset\n"
-            f'PRESET = AgentPreset(slug="{slug}", name="验证角色", description="测试", backend_id="{backend}")\n'
+            f'from yuxi.modules.agents.presets import AgentPreset\nPRESET = AgentPreset(slug="{slug}", name="验证角色", description="测试", backend_id="{backend}")\n'
         )
     monkeypatch.setattr(presets, "__file__", str(tmp_path / "__init__.py"))
     monkeypatch.setattr(presets, "__path__", [str(tmp_path)])
@@ -112,9 +111,7 @@ async def test_unknown_backend_prevents_all_preset_writes(tmp_path, monkeypatch)
             sys.modules.pop(f"yuxi.modules.agents.presets.{module}", None)
 
 
-async def test_discovered_content_persists_and_preserves_customization(
-    tmp_path, monkeypatch, test_client, admin_headers
-):
+async def test_discovered_content_persists_and_preserves_customization(tmp_path, monkeypatch, test_client, admin_headers):
     """新文件进入持久记录；重启初始化保留角色定制与 Skill 停用状态。"""
     suffix = uuid.uuid4().hex
     role_slug = f"pytest-preset-{suffix}"
@@ -134,8 +131,7 @@ async def test_discovered_content_persists_and_preserves_customization(
     skill_dir.mkdir(parents=True)
     skill_md = skill_dir / "SKILL.md"
     skill_md.write_text(
-        f"---\nname: 测试技能\nslug: {skill_slug}\ndescription: 初始描述\n"
-        'version: "1.0"\ntool_dependencies: [web_search]\n---\n技能正文\n'
+        f'---\nname: 测试技能\nslug: {skill_slug}\ndescription: 初始描述\nversion: "1.0"\ntool_dependencies: [web_search]\n---\n技能正文\n'
     )
     monkeypatch.setattr(skill_service, "BUILTIN_SKILLS_DIR", skill_dir.parent)
     monkeypatch.setattr(skill_service, "get_skill_data_dir", lambda: tmp_path / "skill-sources")

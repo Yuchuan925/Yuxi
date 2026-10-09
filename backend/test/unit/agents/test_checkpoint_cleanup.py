@@ -38,9 +38,7 @@ class FakeCheckpointGraph:
 
 async def test_waitpoint_cleanup_retries_after_message_patch():
     """首次改写成功但未推进节点时，重试仍能收敛。"""
-    graph = FakeCheckpointGraph(
-        AIMessage(id="pending", content="", tool_calls=[{"id": "tool-1", "name": "act", "args": {}}])
-    )
+    graph = FakeCheckpointGraph(AIMessage(id="pending", content="", tool_calls=[{"id": "tool-1", "name": "act", "args": {}}]))
     graph.crash_after_patch = True
     with pytest.raises(RuntimeError, match="进程失联"):
         await cancel_waitpoint_checkpoint(graph, {})
@@ -188,9 +186,8 @@ async def test_parallel_graph_preserves_pending_writes_and_recovers_each_commit(
     saved = await graph.aget_state(config)
     assert saved.next == () and saved.interrupts == ()
     assert saved.values["finished_steps"] == ["once"]
-    assert [
-        (message.tool_call_id, message.content)
-        for message in saved.values["messages"]
-        if isinstance(message, ToolMessage)
-    ] == [("finished", "已有结果"), ("waiting", "[已取消]")]
+    assert [(message.tool_call_id, message.content) for message in saved.values["messages"] if isinstance(message, ToolMessage)] == [
+        ("finished", "已有结果"),
+        ("waiting", "[已取消]"),
+    ]
     assert calls == executed

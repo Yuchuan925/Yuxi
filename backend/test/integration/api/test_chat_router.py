@@ -23,9 +23,7 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
 
 def _postgres_dsn() -> str:
-    return os.getenv("POSTGRES_URL", "postgresql+asyncpg://postgres:postgres@postgres:5432/yuxi").replace(
-        "+asyncpg", ""
-    )
+    return os.getenv("POSTGRES_URL", "postgresql+asyncpg://postgres:postgres@postgres:5432/yuxi").replace("+asyncpg", "")
 
 
 async def _upload_project_file(
@@ -337,9 +335,7 @@ async def test_thread_message_audits_return_persisted_facts_without_leaking_into
     )
     assert retired_response.status_code == 404, retired_response.text
 
-    history = await test_client.get(
-        f"/api/v1/agents/sessions/{thread_id}/items?order=asc&limit=100", headers=admin_headers
-    )
+    history = await test_client.get(f"/api/v1/agents/sessions/{thread_id}/items?order=asc&limit=100", headers=admin_headers)
     assert history.status_code == 200, history.text
     history_items = history.json()["data"]
     # 未进入公开输出链路的原始审计不会因 state_reconciled 或 ToolCall 存在而暴露。
@@ -443,9 +439,7 @@ async def test_thread_artifact_uses_image_signature_for_content_type(test_client
         },
     )
     assert accepted.status_code == 202, accepted.text
-    attachment = (
-        await test_client.get(f"/api/v1/agents/sessions/{thread_id}/attachments", headers=admin_headers)
-    ).json()["attachments"][0]
+    attachment = (await test_client.get(f"/api/v1/agents/sessions/{thread_id}/attachments", headers=admin_headers)).json()["attachments"][0]
     listed = await test_client.get(f"/api/v1/agents/sessions/{thread_id}/attachments", headers=admin_headers)
     assert listed.status_code == 200, listed.text
     assert any(item["file_id"] == attachment["file_id"] for item in listed.json()["attachments"])
@@ -615,10 +609,7 @@ async def test_turn_pages_include_empty_turns_and_keep_viewed_explicit(test_clie
         viewed = await test_client.post(f"/api/v1/agents/sessions/{thread_id}/viewed", headers=admin_headers)
         assert viewed.status_code == 200, viewed.text
         assert viewed.json()["yuxi"]["unread"] is False
-        assert (
-            await conn.fetchval("SELECT last_viewed_run_id FROM sessions WHERE thread_id = $1", thread_id)
-            == f"{prefix}-500"
-        )
+        assert await conn.fetchval("SELECT last_viewed_run_id FROM sessions WHERE thread_id = $1", thread_id) == f"{prefix}-500"
         reread = await test_client.get(f"/api/v1/agents/sessions/{thread_id}", headers=admin_headers)
         assert reread.json()["yuxi"]["unread"] is False
         deleted = await test_client.delete(f"/api/v1/agents/sessions/{thread_id}", headers=admin_headers)
@@ -626,9 +617,7 @@ async def test_turn_pages_include_empty_turns_and_keep_viewed_explicit(test_clie
         archived = await test_client.post(f"/api/v1/agents/sessions/{thread_id}/archive", headers=admin_headers)
         assert archived.status_code == 200, archived.text
         assert archived.json()["yuxi"]["archived"] is True
-        archived_history = await test_client.get(
-            f"/api/v1/agents/sessions/{thread_id}/turns?limit=100", headers=admin_headers
-        )
+        archived_history = await test_client.get(f"/api/v1/agents/sessions/{thread_id}/turns?limit=100", headers=admin_headers)
         assert archived_history.status_code == 200, archived_history.text
         assert len(archived_history.json()["data"]) == 100 and archived_history.json()["has_more"]
     finally:
@@ -910,9 +899,7 @@ async def test_save_thread_artifact_to_workspace_rejects_invalid_paths(test_clie
     assert directory_response.status_code == 400, directory_response.text
 
 
-async def test_standard_user_restores_visible_function_items_without_internal_audit(
-    test_client, admin_headers, standard_user
-):
+async def test_standard_user_restores_visible_function_items_without_internal_audit(test_client, admin_headers, standard_user):
     """真实 worker 生成工具过程；普通用户回读可见 item，同时仍无审计权限。"""
     from test.e2e.test_agent_lifecycle_extended_e2e import (
         _agent,
@@ -945,9 +932,7 @@ async def test_standard_user_restores_visible_function_items_without_internal_au
         assert created.status_code == 201, created.text
         thread_id, turn_id = created.json()["id"], created.json()["yuxi"]["receipt"]["turn_id"]
         assert (await _terminal_turn(test_client, headers, thread_id, turn_id))["status"] == "completed"
-        history = await test_client.get(
-            f"/api/v1/agents/sessions/{thread_id}/items?order=asc&limit=100", headers=headers
-        )
+        history = await test_client.get(f"/api/v1/agents/sessions/{thread_id}/items?order=asc&limit=100", headers=headers)
         assert history.status_code == 200, history.text
         items = history.json()["data"]
         call = next(item for item in items if item["type"] == "function_call")
@@ -958,8 +943,7 @@ async def test_standard_user_restores_visible_function_items_without_internal_au
         audits = await test_client.get(f"/api/v1/agents/sessions/{thread_id}/audits", headers=headers)
         assert audits.status_code == 403
         assert all(
-            field not in history.text
-            for field in ("system_prompt", "checkpoint", "manifest_fingerprint", "source_model_operation_id")
+            field not in history.text for field in ("system_prompt", "checkpoint", "manifest_fingerprint", "source_model_operation_id")
         )
     finally:
         if thread_id:

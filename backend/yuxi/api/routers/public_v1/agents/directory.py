@@ -12,9 +12,7 @@ router = APIRouter(dependencies=[Depends(require_public_context)])
 
 
 @router.get("/")
-async def list_agents(
-    context: PublicAgentContext = Depends(require_public_context), db: AsyncSession = Depends(get_db)
-):
+async def list_agents(context: PublicAgentContext = Depends(require_public_context), db: AsyncSession = Depends(get_db)):
     """列出凭据所有者可见的主 Agent。"""
     agents = await list_public_agents(user=context.user, db=db)
     return {"data": [_agent_response(agent) for agent in agents]}

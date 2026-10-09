@@ -124,6 +124,5 @@ def resolve_chunk_processing_params(
 
 def get_chunk_preset_options() -> list[dict[str, str]]:
     return [
-        {"value": preset_id, "label": preset["label"], "description": preset["description"]}
-        for preset_id, preset in CHUNK_PRESETS.items()
+        {"value": preset_id, "label": preset["label"], "description": preset["description"]} for preset_id, preset in CHUNK_PRESETS.items()
     ]

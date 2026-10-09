@@ -84,9 +84,7 @@ async def create_cli_auth_session(db: AsyncSession, key_name: str | None = None)
     return session, device_code
 
 
-async def get_cli_auth_session_for_user(
-    db: AsyncSession, user_code: str, *, for_update: bool = False
-) -> CLIAuthSession:
+async def get_cli_auth_session_for_user(db: AsyncSession, user_code: str, *, for_update: bool = False) -> CLIAuthSession:
     stmt = select(CLIAuthSession).filter(CLIAuthSession.user_code == user_code.strip().upper())
     if for_update:
         stmt = stmt.with_for_update()
@@ -151,9 +149,7 @@ async def _build_cli_exchange_result(db: AsyncSession, session: CLIAuthSession) 
 
 
 async def exchange_cli_auth_token(db: AsyncSession, device_code: str) -> dict:
-    result = await db.execute(
-        select(CLIAuthSession).filter(CLIAuthSession.device_code_hash == _hash_secret(device_code)).with_for_update()
-    )
+    result = await db.execute(select(CLIAuthSession).filter(CLIAuthSession.device_code_hash == _hash_secret(device_code)).with_for_update())
     session = result.scalar_one_or_none()
     if session is None:
         raise CLIAuthError("invalid_request", "授权会话不存在", status_code=404)

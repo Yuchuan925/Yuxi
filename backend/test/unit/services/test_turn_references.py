@@ -156,9 +156,7 @@ def test_invalid_model_matches_fail_for_the_correct_boundary(values):
 
 def test_multiple_sources_and_no_evidence_are_valid_results():
     """同一结论允许多个来源，缺乏证据时不强补引用。"""
-    raw = json.dumps(
-        {"citations": [json.loads(match())["citations"][0], json.loads(match(source_id="s2"))["citations"][0]]}
-    )
+    raw = json.dumps({"citations": [json.loads(match())["citations"][0], json.loads(match(source_id="s2"))["citations"][0]]})
     sources = [{"id": "s1", "content": "证据"}, {"id": "s2", "content": "其他证据"}]
     assert [item["source_id"] for item in validate_reference_matches(raw, "回答", sources)] == ["s1", "s2"]
     assert validate_reference_matches('{"citations":[]}', "回答", sources) == []

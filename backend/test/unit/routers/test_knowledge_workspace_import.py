@@ -57,9 +57,7 @@ async def test_import_workspace_files_uploads_workspace_file_to_minio(monkeypatc
     assert result["status"] == "success"
     assert len(result["items"]) == 1
     item = result["items"][0]
-    assert item["file_path"].startswith(
-        f"http://minio/{knowledge_router.MinIOClient.KB_BUCKETS['documents']}/db_1/upload/note_"
-    )
+    assert item["file_path"].startswith(f"http://minio/{knowledge_router.MinIOClient.KB_BUCKETS['documents']}/db_1/upload/note_")
     assert item["content_hash"]
     assert item["filename"] == "note.md"
     assert item["size"] == len(b"# workspace note\n")

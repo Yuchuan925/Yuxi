@@ -13,12 +13,14 @@ from yuxi.modules.extensions.tools.registry import tool
 
 class InstallSkillInput(BaseModel):
     source: str = Field(
-        description="Skill 来源，支持两种格式:\n"
-        "1. Sandbox 路径: 当前 Project Workdir 或 /home/gem/user-data/ 下的绝对路径\n"
-        "2. Git 仓库: owner/repo 或完整 GitHub URL"
+        description=(
+            "Skill 来源，支持两种格式:\n1. Sandbox 路径: 当前 Project Workdir 或 "
+            "/home/gem/user-data/ 下的绝对路径\n2. Git 仓库: owner/repo 或完整 GitHub URL"
+        )
     )
     skill_names: list[str] | None = Field(
-        default=None, description="Git 安装时指定要安装的 skill slug 列表（至少一个）。Sandbox 路径安装时忽略此参数。"
+        default=None,
+        description="Git 安装时指定要安装的 skill slug 列表（至少一个）。Sandbox 路径安装时忽略此参数。",
     )
 
 
@@ -43,13 +45,9 @@ async def install_skill(
     logger.info(f"install_skill called with uid={uid}, thread_id={thread_id}, source={source}")
 
     if not uid or not thread_id:
-        return Command(
-            update={"messages": [ToolMessage(content="错误：无法获取当前会话信息", tool_call_id=tool_call_id)]}
-        )
+        return Command(update={"messages": [ToolMessage(content="错误：无法获取当前会话信息", tool_call_id=tool_call_id)]})
     if not source:
-        return Command(
-            update={"messages": [ToolMessage(content="错误：Skill 来源不能为空", tool_call_id=tool_call_id)]}
-        )
+        return Command(update={"messages": [ToolMessage(content="错误：Skill 来源不能为空", tool_call_id=tool_call_id)]})
 
     try:
         from yuxi.modules.extensions.skills.personal import install_personal_skills_from_source

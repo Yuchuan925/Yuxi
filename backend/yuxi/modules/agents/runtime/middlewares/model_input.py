@@ -77,9 +77,7 @@ def _bridge_openai_tool_images(request: ModelRequest) -> ModelRequest:
     def flush_pending_images() -> None:
         if not pending_images:
             return
-        bridged_messages.append(
-            HumanMessage(content_blocks=[{"type": "text", "text": _TOOL_IMAGE_USER_TEXT}, *pending_images])
-        )
+        bridged_messages.append(HumanMessage(content_blocks=[{"type": "text", "text": _TOOL_IMAGE_USER_TEXT}, *pending_images]))
         pending_images.clear()
 
     for index, message in enumerate(request.messages):
@@ -98,9 +96,7 @@ def _bridge_openai_tool_images(request: ModelRequest) -> ModelRequest:
         if not ocr_fallback_requested:
             pending_images.extend(image_blocks)
         text = "\n".join(
-            block["text"]
-            for block in message.content_blocks
-            if block.get("type") == "text" and isinstance(block.get("text"), str)
+            block["text"] for block in message.content_blocks if block.get("type") == "text" and isinstance(block.get("text"), str)
         )
         bridged_messages.append(
             message.model_copy(

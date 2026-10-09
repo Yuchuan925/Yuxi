@@ -85,11 +85,7 @@ def parse_skill_markdown(content: str) -> tuple[str, str, str, dict[str, Any]]:
 
     name = _validate_skill_display_name(str(data.get("name", "")))
     raw_slug = str(data.get("slug", "")).strip()
-    slug = (
-        _validate_skill_slug_value(raw_slug, field_name="slug")
-        if raw_slug
-        else _validate_skill_slug_value(name, field_name="name")
-    )
+    slug = _validate_skill_slug_value(raw_slug, field_name="slug") if raw_slug else _validate_skill_slug_value(name, field_name="name")
     description = str(data.get("description", "")).strip()
     if not description:
         raise ValueError("SKILL.md frontmatter 缺少 description")
@@ -289,8 +285,5 @@ def compute_skill_directory_hash(path: Path) -> bytes:
 def validate_content_budget(target: Path) -> None:
     """内容预算限制在完整包边界执行，避免在线编辑绕过上传限制。"""
     entries = list(target.rglob("*"))
-    if (
-        len(entries) > MAX_SKILL_ENTRIES
-        or sum(entry.stat().st_size for entry in entries if entry.is_file()) > MAX_SKILL_BYTES
-    ):
+    if len(entries) > MAX_SKILL_ENTRIES or sum(entry.stat().st_size for entry in entries if entry.is_file()) > MAX_SKILL_BYTES:
         raise ValueError("Skill 内容不能超过 50 MiB 或 2000 个条目")

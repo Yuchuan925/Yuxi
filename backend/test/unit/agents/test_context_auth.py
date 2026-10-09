@@ -235,9 +235,7 @@ async def test_normalize_agent_context_config_defaults_mcps_off_and_filters_expl
         sys.modules,
         "yuxi.modules.extensions.skills.repository",
         types.SimpleNamespace(
-            SkillRepository=lambda db: types.SimpleNamespace(
-                list_enabled_readable=lambda user: fake_list_skills(db, user)
-            )
+            SkillRepository=lambda db: types.SimpleNamespace(list_enabled_readable=lambda user: fake_list_skills(db, user))
         ),
     )
 
@@ -404,9 +402,7 @@ async def test_prepare_agent_runtime_context_filters_resources_and_derives_runti
         sys.modules,
         "yuxi.modules.extensions.tools.catalog",
         types.SimpleNamespace(
-            get_tool_metadata=lambda category=None: [
-                {"slug": "ask_user_question", "name": "Ask User", "description": ""}
-            ]
+            get_tool_metadata=lambda category=None: [{"slug": "ask_user_question", "name": "Ask User", "description": ""}]
         ),
     )
     monkeypatch.setitem(
@@ -428,9 +424,7 @@ async def test_prepare_agent_runtime_context_filters_resources_and_derives_runti
         sys.modules,
         "yuxi.modules.extensions.skills.repository",
         types.SimpleNamespace(
-            SkillRepository=lambda db: types.SimpleNamespace(
-                list_enabled_readable=lambda user: fake_list_skills(db, user)
-            )
+            SkillRepository=lambda db: types.SimpleNamespace(list_enabled_readable=lambda user: fake_list_skills(db, user))
         ),
     )
     context = ChatBotContext(

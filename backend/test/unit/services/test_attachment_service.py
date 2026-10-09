@@ -10,9 +10,7 @@ from types import SimpleNamespace
 import pytest
 
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
-os.environ.setdefault(
-    "YUXI_RUNTIME_DIR", os.path.join(os.environ.get("CLAUDE_JOB_DIR", tempfile.gettempdir()), "yuxi-test-saves")
-)
+os.environ.setdefault("YUXI_RUNTIME_DIR", os.path.join(os.environ.get("CLAUDE_JOB_DIR", tempfile.gettempdir()), "yuxi-test-saves"))
 
 from yuxi.modules.agents.runtime.sandbox.paths import workdir_scope_from_runtime_path
 import yuxi.modules.agents.services.attachments as service
@@ -125,9 +123,7 @@ class FakeWorkdir:
     def copy_directory_from(self, source, target_path, *, max_file_bytes):
         for item in source.list_directory("/"):
             if not item["is_dir"]:
-                self.storage.files[f"{target_path}/{item['name']}"] = source.read_file(
-                    f"/{item['name']}", max_file_bytes
-                )
+                self.storage.files[f"{target_path}/{item['name']}"] = source.read_file(f"/{item['name']}", max_file_bytes)
 
 
 @pytest.mark.asyncio
@@ -143,10 +139,7 @@ async def test_store_attachment_normalizes_persisted_file_name(monkeypatch):
     )
 
     assert backend.files["/uploads/file-1_report.txt"] == b"content"
-    assert (
-        record["original_path"]
-        == "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/uploads/file-1_report.txt"
-    )
+    assert record["original_path"] == "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/uploads/file-1_report.txt"
     assert backend.files[_scope_path(record["original_path"])] == b"content"
 
 
@@ -295,9 +288,7 @@ async def test_draft_isolated_by_user_and_app_and_rejects_expiry(draft_env):
     """拒绝其他作用域和过期草稿，不依赖对象路径猜测归属。"""
     _, db = draft_env
     scope = service.ActorScope("user-1", "app-a")
-    result = await service.upload_draft_file(
-        file_content=b"pdf", filename="report.pdf", content_type="application/pdf", scope=scope, db=db
-    )
+    result = await service.upload_draft_file(file_content=b"pdf", filename="report.pdf", content_type="application/pdf", scope=scope, db=db)
     for other in (
         service.ActorScope("user-2", "app-a"),
         service.ActorScope("user-1", "app-b"),
@@ -317,9 +308,7 @@ async def test_bound_draft_cannot_be_deleted_or_reparsed(draft_env):
     """绑定后的来源只能由统一准备链路消费。"""
     client, db = draft_env
     scope = service.ActorScope("user-1", None)
-    result = await service.upload_draft_file(
-        file_content=b"pdf", filename="report.pdf", content_type="application/pdf", scope=scope, db=db
-    )
+    result = await service.upload_draft_file(file_content=b"pdf", filename="report.pdf", content_type="application/pdf", scope=scope, db=db)
     db.records[result["id"]].status = "preparing"
     before = dict(client.objects)
     for operation in (
@@ -337,9 +326,7 @@ async def test_private_parse_records_complete_directory_and_preserves_failure(dr
     """解析只更新附件行；失败保留原件与上一份成功解析内容。"""
     _, db = draft_env
     scope = service.ActorScope("user-1", None)
-    uploaded = await service.upload_draft_file(
-        file_content=b"pdf", filename="q1?.pdf", content_type="application/pdf", scope=scope, db=db
-    )
+    uploaded = await service.upload_draft_file(file_content=b"pdf", filename="q1?.pdf", content_type="application/pdf", scope=scope, db=db)
     sources = []
 
     async def parse(source, output, params):

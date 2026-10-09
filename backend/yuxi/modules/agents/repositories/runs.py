@@ -97,9 +97,7 @@ class AgentRunRepository:
         )
         return result.scalar_one_or_none()
 
-    async def get_latest_top_level_runs_for_threads(
-        self, uid: str, thread_ids: list[str]
-    ) -> dict[str, tuple[str, str]]:
+    async def get_latest_top_level_runs_for_threads(self, uid: str, thread_ids: list[str]) -> dict[str, tuple[str, str]]:
         """批量读取各线程最新顶层 chat/resume run，返回 thread_id -> (run_id, status)。
 
         使用窗口函数一次查询完成，避免对每个线程执行 N+1 查询。
@@ -540,9 +538,7 @@ class AgentRunRepository:
         await self.db.flush()
         return True
 
-    async def list_expired_lease_candidates(
-        self, *, now: datetime | None = None
-    ) -> list[tuple[str, str, str, str | None]]:
+    async def list_expired_lease_candidates(self, *, now: datetime | None = None) -> list[tuple[str, str, str, str | None]]:
         """只读失联候选，供 worker 按 Thread→Turn→Run 锁顺序处理。"""
         current_time = now or utc_now()
         result = await self.db.execute(
@@ -736,9 +732,7 @@ class AgentRunRepository:
             for tool_call in tool_calls:
                 metadata = tool_metadata[tool_call.id]
                 tool_call.status = "error"
-                tool_call.error_message = metadata.get("error_message") or (
-                    f"Tool 审计由 Run 终态收敛为 {execution_status}"
-                )
+                tool_call.error_message = metadata.get("error_message") or (f"Tool 审计由 Run 终态收敛为 {execution_status}")
         await self.db.execute(
             update(Message)
             .where(
@@ -759,13 +753,9 @@ class AgentRunRepository:
             return
         if run.input_id is not None:
             message_ids = select(AgentInputMessage.message_id).where(AgentInputMessage.input_id == run.input_id)
-            await self.db.execute(
-                update(Message).where(Message.id.in_(message_ids)).values(delivery_status=delivery_status)
-            )
+            await self.db.execute(update(Message).where(Message.id.in_(message_ids)).values(delivery_status=delivery_status))
         elif run.input_message_id is not None:
-            await self.db.execute(
-                update(Message).where(Message.id == run.input_message_id).values(delivery_status=delivery_status)
-            )
+            await self.db.execute(update(Message).where(Message.id == run.input_message_id).values(delivery_status=delivery_status))
 
     async def record_run_manifest(
         self,
@@ -976,19 +966,11 @@ class AgentRunRepository:
 
     @staticmethod
     def _require_lease_owner(run: AgentRun, *, worker_id: str, now: datetime, action: str) -> None:
-        if (
-            run.status != "running"
-            or run.worker_id != worker_id
-            or run.lease_expires_at is None
-            or run.lease_expires_at <= now
-        ):
+        if run.status != "running" or run.worker_id != worker_id or run.lease_expires_at is None or run.lease_expires_at <= now:
             raise ValueError(f"只有当前有效 AgentRun lease owner 可以{action}")
 
     async def _lock_run(self, run_id: str) -> AgentRun | None:
         result = await self.db.execute(
-            select(AgentRun)
-            .where(AgentRun.id == run_id)
-            .with_for_update(key_share=True)
-            .execution_options(populate_existing=True)
+            select(AgentRun).where(AgentRun.id == run_id).with_for_update(key_share=True).execution_options(populate_existing=True)
         )
         return result.scalar_one_or_none()

@@ -171,9 +171,7 @@ class APIKey(Base):
     """API Key 模型"""
 
     __tablename__ = "api_keys"
-    __table_args__ = (
-        CheckConstraint("access_level IN ('full', 'agents', 'knowledge')", name="ck_api_keys_access_level"),
-    )
+    __table_args__ = (CheckConstraint("access_level IN ('full', 'agents', 'knowledge')", name="ck_api_keys_access_level"),)
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     key_hash = Column(String(64), nullable=False, unique=True, index=True)

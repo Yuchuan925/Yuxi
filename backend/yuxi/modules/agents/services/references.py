@@ -56,23 +56,22 @@ async def annotate_turn_references(*, db: AsyncSession, scope: ActorScope, threa
     """在有时限的独立调用中匹配证据，成功提交后返回可重放结果。"""
     await require_thread(db=db, scope=scope, thread_id=thread_id)
     repo = TurnReferenceRepository(db)
+
+    # 事务级锁覆盖模型调用与保存，避免同一 Turn 并发重复标注。
     if not await repo.try_lock(turn_id):
-        raise HTTPException(
-            status_code=409, detail={"code": "references_busy", "message": "本轮正在标注来源，请稍后读取结果"}
-        )
+        raise HTTPException(status_code=409, detail={"code": "references_busy", "message": "本轮正在标注来源，请稍后读取结果"})
+
     message, run, sources = await _load_reference_input(db, scope, thread_id, turn_id)
     if message is None or not message.content.strip():
-        raise HTTPException(
-            status_code=409, detail={"code": "answer_not_completed", "message": "本轮尚无已完成的最终回答"}
-        )
+        raise HTTPException(status_code=409, detail={"code": "answer_not_completed", "message": "本轮尚无已完成的最终回答"})
+
     saved = (message.extra_metadata or {}).get("references")
     if saved and saved.get("answer_hash") == _answer_hash(message.content):
         return _visible_references(saved, sources, message.content)
     if not sources:
-        raise HTTPException(
-            status_code=409, detail={"code": "reference_sources_empty", "message": "本轮没有可用的检索内容"}
-        )
+        raise HTTPException(status_code=409, detail={"code": "reference_sources_empty", "message": "本轮没有可用的检索内容"})
 
+    # 使用最终 Run 的执行快照，后续 Session 默认配置的修改不影响本轮标注。
     snapshot = run.input_payload.get("context_snapshot")
     if not isinstance(snapshot, dict) or not isinstance(snapshot.get("model"), str) or not snapshot["model"].strip():
         raise HTTPException(
@@ -80,6 +79,7 @@ async def annotate_turn_references(*, db: AsyncSession, scope: ActorScope, threa
             detail={"code": "references_config_missing", "message": "本轮缺少执行模型配置，无法标注来源"},
         )
     model_spec = snapshot["model"]
+
     prompt = json.dumps(
         {
             "answer": [{"line": index + 1, "text": line} for index, line in enumerate(message.content.splitlines())],
@@ -92,6 +92,7 @@ async def annotate_turn_references(*, db: AsyncSession, scope: ActorScope, threa
             status_code=413,
             detail={"code": "references_input_too_large", "message": "本轮回答与检索内容过长，暂不支持标注来源"},
         )
+
     try:
         model = load_chat_model(model_spec, uid=scope.uid, session_id=f"references-{turn_id}", max_retries=0)
         async with asyncio.timeout(90):
@@ -111,17 +112,11 @@ async def annotate_turn_references(*, db: AsyncSession, scope: ActorScope, threa
             )
         references = validate_reference_matches(response.text, message.content, sources)
     except (ValidationError, ValueError) as exc:
-        raise HTTPException(
-            status_code=502, detail={"code": "references_invalid", "message": "来源标注返回无效结果，请重试"}
-        ) from exc
+        raise HTTPException(status_code=502, detail={"code": "references_invalid", "message": "来源标注返回无效结果，请重试"}) from exc
     except TimeoutError as exc:
-        raise HTTPException(
-            status_code=504, detail={"code": "references_timeout", "message": "来源标注超时，请重试"}
-        ) from exc
+        raise HTTPException(status_code=504, detail={"code": "references_timeout", "message": "来源标注超时，请重试"}) from exc
     except Exception as exc:
-        raise HTTPException(
-            status_code=502, detail={"code": "references_call_failed", "message": "来源标注调用失败，请重试"}
-        ) from exc
+        raise HTTPException(status_code=502, detail={"code": "references_call_failed", "message": "来源标注调用失败，请重试"}) from exc
 
     result = {
         "turn_id": turn_id,
@@ -136,6 +131,7 @@ async def annotate_turn_references(*, db: AsyncSession, scope: ActorScope, threa
     }
     await repo.save(message, result)
     await db.commit()
+
     return result
 
 
@@ -199,11 +195,7 @@ def validate_reference_matches(raw: str, answer: str, sources: list[dict]) -> li
     seen = set()
     for match in matches.citations:
         source = by_id.get(match.source_id)
-        if (
-            source is None
-            or match.answer_end_line < match.answer_start_line
-            or match.answer_end_line > len(answer_lines)
-        ):
+        if source is None or match.answer_end_line < match.answer_start_line or match.answer_end_line > len(answer_lines):
             raise ValueError("引用来源或回答范围无效")
         if not "".join(answer_lines[match.answer_start_line - 1 : match.answer_end_line]).strip():
             raise ValueError("不能引用空白回答")
@@ -226,9 +218,7 @@ def validate_reference_matches(raw: str, answer: str, sources: list[dict]) -> li
 async def _load_reference_input(db, scope, thread_id, turn_id):
     """先执行资源授权，再从同一 Turn 的持久工具结果构建输入。"""
     await require_thread(db=db, scope=scope, thread_id=thread_id)
-    turn = await AgentTurnRepository(db).get_for_scope(
-        turn_id=turn_id, thread_id=thread_id, uid=scope.uid, app_id=scope.app_id
-    )
+    turn = await AgentTurnRepository(db).get_for_scope(turn_id=turn_id, thread_id=thread_id, uid=scope.uid, app_id=scope.app_id)
     if turn is None:
         raise HTTPException(status_code=404, detail="Turn 不存在")
     repo = TurnReferenceRepository(db)
@@ -239,9 +229,7 @@ async def _load_reference_input(db, scope, thread_id, turn_id):
     sources = collect_reference_sources(await repo.list_retrievals(turn_id), {item["kb_id"] for item in visible})
     from yuxi.modules.knowledge.runtime import knowledge_base
 
-    document_support = {
-        item["kb_id"]: knowledge_base.database_type_supports_documents(item["kb_type"]) for item in visible
-    }
+    document_support = {item["kb_id"]: knowledge_base.database_type_supports_documents(item["kb_type"]) for item in visible}
     for source in sources:
         if source["kind"] == "knowledge":
             source["supports_documents"] = document_support[source["kb_id"]]
@@ -253,9 +241,7 @@ def _visible_references(saved, sources, answer):
     if not saved or saved.get("answer_hash") != _answer_hash(answer):
         return None
     visible_keys = {(source["tool_message_id"], source["content_hash"]) for source in sources}
-    visible_sources = [
-        source for source in saved["sources"] if (source["tool_message_id"], source["content_hash"]) in visible_keys
-    ]
+    visible_sources = [source for source in saved["sources"] if (source["tool_message_id"], source["content_hash"]) in visible_keys]
     ids = {source["id"] for source in visible_sources}
     return {
         **saved,
@@ -311,11 +297,7 @@ def _knowledge_sources(payload: dict | list, tool_name: str, kb_id: str) -> list
         if not isinstance(content, str) or not content.strip():
             continue
         metadata = item.get("metadata") or {}
-        file_id = (
-            item.get("file_id")
-            or metadata.get("file_id")
-            or (payload.get("file_id") if isinstance(payload, dict) else "")
-        )
+        file_id = item.get("file_id") or metadata.get("file_id") or (payload.get("file_id") if isinstance(payload, dict) else "")
         start = metadata.get("start_line") or item.get("start_line")
         end = metadata.get("end_line") or item.get("end_line")
         numbered = tool_name != "query_kb"

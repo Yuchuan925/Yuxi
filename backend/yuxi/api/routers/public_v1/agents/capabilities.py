@@ -52,21 +52,25 @@ async def upload_file(
         raise HTTPException(status_code=400, detail="无法识别的文件名")
     try:
         content = await read_upload_with_limit(
-            file, max_size_bytes=MAX_ATTACHMENT_SIZE_BYTES, too_large_message="附件过大，当前仅支持 5 MB 以内的文件"
+            file,
+            max_size_bytes=MAX_ATTACHMENT_SIZE_BYTES,
+            too_large_message="附件过大，当前仅支持 5 MB 以内的文件",
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     result = await upload_draft_file(
-        file_content=content, filename=file.filename, content_type=file.content_type, scope=context.scope, db=db
+        file_content=content,
+        filename=file.filename,
+        content_type=file.content_type,
+        scope=context.scope,
+        db=db,
     )
     await db.commit()
     return result
 
 
 @router.get("/files/{file_id}", response_model=FileResponse, summary="读取未提交文件草稿")
-async def retrieve_file(
-    file_id: str, context: PublicAgentContext = Depends(require_public_context), db: AsyncSession = Depends(get_db)
-):
+async def retrieve_file(file_id: str, context: PublicAgentContext = Depends(require_public_context), db: AsyncSession = Depends(get_db)):
     """读取当前用户/APP 尚未提交的文件信息，不暴露存储地址。
 
     不可见返回 404，已过期返回 422，已提交返回 409；正式文件通过 Session attachments 回读。
@@ -75,9 +79,7 @@ async def retrieve_file(
 
 
 @router.delete("/files/{file_id}", summary="删除未提交文件草稿")
-async def delete_file(
-    file_id: str, context: PublicAgentContext = Depends(require_public_context), db: AsyncSession = Depends(get_db)
-):
+async def delete_file(file_id: str, context: PublicAgentContext = Depends(require_public_context), db: AsyncSession = Depends(get_db)):
     """删除未提交的 draft 及派生资源；已提交文件由 Workdir 管理。"""
     return await delete_draft_file(file_id=file_id, scope=context.scope, db=db)
 
@@ -129,9 +131,7 @@ async def list_thread_attachments(
 ):
     """读取当前资源用户的 Thread 附件。"""
     await require_thread(db=db, scope=context.scope, thread_id=session_id)
-    return await list_thread_attachments_view(
-        thread_id=session_id, db=db, current_uid=context.scope.uid, app_id=context.scope.app_id
-    )
+    return await list_thread_attachments_view(thread_id=session_id, db=db, current_uid=context.scope.uid, app_id=context.scope.app_id)
 
 
 @router.delete("/sessions/{session_id}/attachments/{file_id}")

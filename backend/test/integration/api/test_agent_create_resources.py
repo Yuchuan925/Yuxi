@@ -62,12 +62,7 @@ async def assert_absent(sessions, agent_slug, mcp_slug):
     async with sessions() as db:
         assert await db.scalar(select(Agent.id).where(Agent.slug == agent_slug)) is None
         assert await db.scalar(select(MCPServer.id).where(MCPServer.slug == mcp_slug)) is None
-        assert (
-            await db.scalar(
-                select(Skill.id).join(Agent, Skill.bound_agent_id == Agent.id).where(Agent.slug == agent_slug)
-            )
-            is None
-        )
+        assert await db.scalar(select(Skill.id).join(Agent, Skill.bound_agent_id == Agent.id).where(Agent.slug == agent_slug)) is None
 
 
 async def test_create_with_skill_and_existing_mcp(test_client, admin_headers, standard_user, sessions):
@@ -128,9 +123,7 @@ async def test_create_with_skill_and_existing_mcp(test_client, admin_headers, st
         assert ordinary.status_code == 200, ordinary.text
         read = await test_client.get(f"/api/agent/{other_slug}", headers=standard_user["headers"])
         assert read.json()["agent"]["config_json"]["context"]["mcps"] == [mcp_slug]
-        assert (await test_client.get(f"/api/agent/{other_slug}/self-skill", headers=standard_user["headers"])).json()[
-            "skill"
-        ] is None
+        assert (await test_client.get(f"/api/agent/{other_slug}/self-skill", headers=standard_user["headers"])).json()["skill"] is None
     finally:
         for agent_slug in (slug, other_slug):
             result = await test_client.delete(f"/api/agent/{agent_slug}", headers=admin_headers)
@@ -170,9 +163,7 @@ async def test_disabled_mcp_cannot_be_selected(test_client, admin_headers, sessi
     result = await test_client.post("/api/system/mcp-servers", headers=admin_headers, json=remote_config(existing))
     assert result.status_code == 200, result.text
     try:
-        result = await test_client.put(
-            f"/api/system/mcp-servers/{existing}/status", headers=admin_headers, json={"enabled": False}
-        )
+        result = await test_client.put(f"/api/system/mcp-servers/{existing}/status", headers=admin_headers, json={"enabled": False})
         assert result.status_code == 200, result.text
         rejected = await test_client.post(
             "/api/agent",
@@ -189,9 +180,7 @@ async def test_disabled_mcp_cannot_be_selected(test_client, admin_headers, sessi
         await test_client.delete(f"/api/system/mcp-servers/{existing}", headers=admin_headers)
 
 
-@pytest.mark.parametrize(
-    "failure", ["zip", "dependency", "config", "config-shape", "removed-import", "oversize", "payload"]
-)
+@pytest.mark.parametrize("failure", ["zip", "dependency", "config", "config-shape", "removed-import", "oversize", "payload"])
 async def test_invalid_creation_leaves_no_partial_resources(test_client, admin_headers, sessions, failure):
     """失败不留下 Agent 或专属包，Agent 请求不能创建 MCP。"""
     root = get_skill_data_dir() / "packages"
@@ -222,15 +211,11 @@ async def test_invalid_creation_leaves_no_partial_resources(test_client, admin_h
 
 
 @pytest.mark.parametrize("role", ["user", "admin", "superadmin"])
-async def test_mcp_is_created_only_by_its_management_endpoint(
-    test_client, admin_headers, standard_user, sessions, role
-):
+async def test_mcp_is_created_only_by_its_management_endpoint(test_client, admin_headers, standard_user, sessions, role):
     """独立创建权限保持不变，所有角色都不能在 Agent 请求内导入。"""
     headers = admin_headers if role == "superadmin" else standard_user["headers"]
     if role == "admin":
-        result = await test_client.put(
-            f"/api/auth/users/{standard_user['user']['id']}", headers=admin_headers, json={"role": "admin"}
-        )
+        result = await test_client.put(f"/api/auth/users/{standard_user['user']['id']}", headers=admin_headers, json={"role": "admin"})
         assert result.status_code == 200, result.text
     suffix = uuid.uuid4().hex[:10]
     slug, mcp_slug = f"pytest-role-{suffix}", f"pytest-role-mcp-{suffix}"
@@ -243,17 +228,13 @@ async def test_mcp_is_created_only_by_its_management_endpoint(
         result = await test_client.post("/api/system/mcp-servers", headers=headers, json=remote_config(mcp_slug))
         assert result.status_code == (200 if role == "superadmin" else 403), result.text
         async with sessions() as db:
-            assert (await db.scalar(select(MCPServer.id).where(MCPServer.slug == mcp_slug)) is not None) == (
-                role == "superadmin"
-            )
+            assert (await db.scalar(select(MCPServer.id).where(MCPServer.slug == mcp_slug)) is not None) == (role == "superadmin")
     finally:
         await test_client.delete(f"/api/system/mcp-servers/{mcp_slug}", headers=admin_headers)
 
 
 @pytest.mark.parametrize("with_skill", [False, True])
-async def test_final_commit_failure_rolls_back_all_creation(
-    test_client, admin_headers, sessions, monkeypatch, with_skill
-):
+async def test_final_commit_failure_rolls_back_all_creation(test_client, admin_headers, sessions, monkeypatch, with_skill):
     """Agent/专属包提交失败回滚自身，已经独立发布的 MCP 保留。"""
     me = await test_client.get("/api/auth/me", headers=admin_headers)
     suffix = uuid.uuid4().hex[:10]
@@ -296,15 +277,11 @@ async def test_final_commit_failure_rolls_back_all_creation(
 
 
 @pytest.mark.parametrize("role", ["user", "admin"])
-async def test_shared_skill_creation_has_its_own_permission_and_lifetime(
-    test_client, admin_headers, standard_user, sessions, role
-):
+async def test_shared_skill_creation_has_its_own_permission_and_lifetime(test_client, admin_headers, standard_user, sessions, role):
     """共享 Skill 仅管理员发布，Agent 失败不会回滚已发布的 Skill。"""
     headers = standard_user["headers"]
     if role == "admin":
-        changed = await test_client.put(
-            f"/api/auth/users/{standard_user['user']['id']}", headers=admin_headers, json={"role": "admin"}
-        )
+        changed = await test_client.put(f"/api/auth/users/{standard_user['user']['id']}", headers=admin_headers, json={"role": "admin"})
         assert changed.status_code == 200, changed.text
     suffix = uuid.uuid4().hex[:10]
     skill_slug, agent_slug = f"pytest-shared-{suffix}", f"pytest-select-{suffix}"

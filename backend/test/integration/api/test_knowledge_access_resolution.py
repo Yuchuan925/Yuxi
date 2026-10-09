@@ -51,9 +51,7 @@ async def test_knowledge_tools_reject_access_after_http_revocation(test_client, 
         persisted = await repository.get_by_kb_id(kb_id)
         assert persisted is not None and persisted.share_config == share_config
 
-        assert await tools.query_kb.coroutine(kb_id=kb_id, query_text="private", runtime=runtime) == (
-            "无法获取当前会话可访问的知识库"
-        )
+        assert await tools.query_kb.coroutine(kb_id=kb_id, query_text="private", runtime=runtime) == ("无法获取当前会话可访问的知识库")
         denied = await test_client.post(
             "/api/v1/knowledge/tools/query_kb",
             headers=standard_user["headers"],

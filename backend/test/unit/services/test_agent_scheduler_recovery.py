@@ -46,9 +46,7 @@ async def test_recovery_republishes_owned_child_after_parent_completion(
         runtime_scope_id="root-thread",
     )
     root = SimpleNamespace(id=1, thread_id="root-thread", uid="user-1", app_id=None, status="active")
-    child_thread = SimpleNamespace(
-        thread_id="child-thread", uid="user-1", app_id=None, agent_id="child", status="active"
-    )
+    child_thread = SimpleNamespace(thread_id="child-thread", uid="user-1", app_id=None, agent_id="child", status="active")
     delivered = []
     terminal = []
 

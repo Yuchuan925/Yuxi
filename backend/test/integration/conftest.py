@@ -102,8 +102,7 @@ async def admin_token() -> str:
             first_run_response = await bootstrap_client.get("/api/auth/check-first-run")
             if first_run_response.status_code == 200 and first_run_response.json().get("first_run", False):
                 pytest.fail(
-                    "Super admin account has not been initialized. Complete `/api/auth/initialize` before "
-                    "running integration tests."
+                    "Super admin account has not been initialized. Complete `/api/auth/initialize` before running integration tests."
                 )
 
     if response.status_code != 200:
@@ -141,9 +140,7 @@ def cleanup_test_knowledge_resources():
                     data={"username": ADMIN_LOGIN, "password": ADMIN_PASSWORD},
                 )
                 if response.status_code != 200:
-                    raise RuntimeError(
-                        f"Test resource cleanup login failed (status={response.status_code}): {response.text}"
-                    )
+                    raise RuntimeError(f"Test resource cleanup login failed (status={response.status_code}): {response.text}")
                 token = response.json().get("access_token")
                 if not token:
                     raise RuntimeError("Test resource cleanup login succeeded but no access token was returned")
@@ -215,9 +212,7 @@ async def standard_user(test_client: httpx.AsyncClient, admin_headers: dict[str,
         data={"username": user_payload["uid"], "password": password},
     )
     if login_response.status_code != 200:
-        pytest.fail(
-            f"Failed to authenticate as standard user (status={login_response.status_code}): {login_response.text}"
-        )
+        pytest.fail(f"Failed to authenticate as standard user (status={login_response.status_code}): {login_response.text}")
 
     access_token = login_response.json().get("access_token")
     if not access_token:
@@ -253,9 +248,7 @@ async def standard_user(test_client: httpx.AsyncClient, admin_headers: dict[str,
             cleanup_error = response
             await anyio.sleep(0.3)
         if cleanup_error is not None:
-            assert cleanup_error.status_code == 200, (
-                f"Failed to cleanup test user {user_payload['uid']}: {cleanup_error.text}"
-            )
+            assert cleanup_error.status_code == 200, f"Failed to cleanup test user {user_payload['uid']}: {cleanup_error.text}"
 
 
 @pytest_asyncio.fixture(scope="function")
@@ -290,9 +283,7 @@ async def knowledge_database(
             error_detail = create_response.json().get("detail", "")
             pytest.fail(f"Knowledge database name conflict: {error_detail}. Please clean up old test databases first.")
         else:
-            pytest.fail(
-                f"Failed to create knowledge database (status={create_response.status_code}): {create_response.text}"
-            )
+            pytest.fail(f"Failed to create knowledge database (status={create_response.status_code}): {create_response.text}")
 
         yield db_payload
 

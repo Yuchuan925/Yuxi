@@ -141,9 +141,7 @@ def get_ocr_engines_for_extension(extension: str) -> tuple[str, ...]:
     normalized = extension.lower()
     if not normalized.startswith("."):
         normalized = f".{normalized}"
-    return tuple(
-        engine_id for engine_id, capability in ENGINE_SPECS.items() if normalized in capability.supported_extensions
-    )
+    return tuple(engine_id for engine_id, capability in ENGINE_SPECS.items() if normalized in capability.supported_extensions)
 
 
 _ENGINE_CACHE: dict[str, tuple[str, DocumentEngine]] = {}

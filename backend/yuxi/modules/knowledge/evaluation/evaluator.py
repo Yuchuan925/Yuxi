@@ -82,9 +82,7 @@ async def evaluate_question(
     answer_scores = {}
 
     if has_gold_chunks and question_data.get("gold_chunk_ids"):
-        retrieval_scores = EvaluationMetricsCalculator.calculate_retrieval_metrics(
-            retrieved_chunks, question_data["gold_chunk_ids"]
-        )
+        retrieval_scores = EvaluationMetricsCalculator.calculate_retrieval_metrics(retrieved_chunks, question_data["gold_chunk_ids"])
         current_metrics.update(retrieval_scores)
 
     if has_gold_answers and question_data.get("gold_answer"):

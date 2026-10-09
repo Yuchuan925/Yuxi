@@ -84,9 +84,7 @@ async def get_userinfo(metadata: OIDCProviderMetadata, access_token: str) -> dic
         return None
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.get(
-                metadata.userinfo_endpoint, headers={"Authorization": f"Bearer {access_token}"}, timeout=30.0
-            )
+            response = await client.get(metadata.userinfo_endpoint, headers={"Authorization": f"Bearer {access_token}"}, timeout=30.0)
             response.raise_for_status()
             return response.json()
     except Exception as exc:

@@ -51,16 +51,12 @@ def serialize_attachment(attachment: AgentAttachment, *, thread_id: str) -> dict
         "path": attachment.path,
         "artifact_url": _artifact_url(thread_id, attachment.path) if attachment.path else None,
         "original_path": attachment.original_path,
-        "original_artifact_url": _artifact_url(thread_id, attachment.original_path)
-        if attachment.original_path
-        else None,
+        "original_artifact_url": _artifact_url(thread_id, attachment.original_path) if attachment.original_path else None,
         "input_id": attachment.input_id,
     }
 
 
-async def upload_draft_file(
-    *, file_content: bytes, filename: str, content_type: str | None, scope: ActorScope, db
-) -> dict:
+async def upload_draft_file(*, file_content: bytes, filename: str, content_type: str | None, scope: ActorScope, db) -> dict:
     """上传只保存文件内容与 draft 行，不创建 Session 或 Workdir。"""
     if not filename:
         raise HTTPException(status_code=400, detail="无法识别的文件名")
@@ -94,9 +90,7 @@ async def upload_draft_file(
         await db.commit()
     except BaseException:
         await db.rollback()
-        await client.adelete_objects_by_prefix(
-            client.KB_BUCKETS["documents"], f"{_tmp_attachment_prefix(owner, file_id)}/"
-        )
+        await client.adelete_objects_by_prefix(client.KB_BUCKETS["documents"], f"{_tmp_attachment_prefix(owner, file_id)}/")
         raise
     result = _file_response(attachment)
     await _cleanup_expired_drafts(scope, db)
@@ -200,9 +194,7 @@ async def prepare_input_attachments(*, db, agent_session, input_item, binding) -
 
     try:
         async with db.begin_nested():
-            await ensure_session_workdir_available(
-                agent_session=agent_session, uid=agent_session.uid, db=db, workdir_binding=binding
-            )
+            await ensure_session_workdir_available(agent_session=agent_session, uid=agent_session.uid, db=db, workdir_binding=binding)
             workdir = Workdir.open_existing(agent_session.uid, binding.workdir_path)
             client = get_minio_client()
             for attachment in preparing:
@@ -212,14 +204,14 @@ async def prepare_input_attachments(*, db, agent_session, input_item, binding) -
                 except FileNotFoundError:
                     pass
                 content = await client.adownload_file(
-                    client.KB_BUCKETS["documents"], attachment.object_name, max_bytes=MAX_ATTACHMENT_SIZE_BYTES
+                    client.KB_BUCKETS["documents"],
+                    attachment.object_name,
+                    max_bytes=MAX_ATTACHMENT_SIZE_BYTES,
                 )
                 if len(content) != attachment.size_bytes:
                     raise ValueError("附件来源字节数与上传记录不符")
                 parsed_source = (
-                    Workdir(str(Path(attachment.parsed_source).parent), Workspace(agent_session.uid))
-                    if attachment.parsed_source
-                    else None
+                    Workdir(str(Path(attachment.parsed_source).parent), Workspace(agent_session.uid)) if attachment.parsed_source else None
                 )
                 record = await _store_attachment(
                     workdir=workdir,
@@ -260,9 +252,7 @@ async def cleanup_prepared_sources(*, db, thread_id: str) -> None:
     await db.flush()
 
 
-async def list_thread_attachments_view(
-    *, thread_id: str, db: AsyncSession, current_uid: str, app_id: str | None = None
-) -> dict:
+async def list_thread_attachments_view(*, thread_id: str, db: AsyncSession, current_uid: str, app_id: str | None = None) -> dict:
     """附件列表直接读取该 Session 的附件关系。"""
     await _require_user_session(SessionRepository(db), thread_id, str(current_uid), app_id)
     attachments = await AttachmentRepository(db).list_for_thread(thread_id, str(current_uid), app_id)
@@ -285,21 +275,24 @@ async def delete_thread_attachment_view(
     if attachment is None or attachment.input_id is None:
         raise HTTPException(status_code=404, detail="附件不存在或已被删除")
     input_item = await AgentInputRepository(db).get_for_scope(
-        input_id=attachment.input_id, thread_id=thread_id, uid=str(current_uid), app_id=app_id
+        input_id=attachment.input_id,
+        thread_id=thread_id,
+        uid=str(current_uid),
+        app_id=app_id,
     )
     if input_item is None:
         raise HTTPException(status_code=404, detail="附件不存在或已被删除")
     if input_item.status == "pending" or attachment.status != "ready":
         raise HTTPException(status_code=409, detail="附件正在被输入使用，暂时不能删除")
     if await AgentRunRepository(db).get_active_run_by_thread_for_user(
-        agent_slug=agent_session.agent_id, thread_id=thread_id, uid=str(current_uid)
+        agent_slug=agent_session.agent_id,
+        thread_id=thread_id,
+        uid=str(current_uid),
     ):
         raise HTTPException(status_code=409, detail="对话正在运行，暂时不能删除附件")
     from yuxi.modules.workspace.services.bindings import resolve_authorized_session_workdir
 
-    binding = await resolve_authorized_session_workdir(
-        agent_session=agent_session, uid=str(current_uid), db=db, app_id=app_id
-    )
+    binding = await resolve_authorized_session_workdir(agent_session=agent_session, uid=str(current_uid), db=db, app_id=app_id)
     paths = {attachment.original_path}
     if attachment.path != attachment.original_path:
         paths.add(str(Path(attachment.path).parent))
@@ -320,15 +313,8 @@ async def delete_thread_attachment_view(
 
 async def _require_user_session(session_repo, thread_id, uid, app_id=None, *, lock=False):
     """附件副作用在实际 Session 用户与 APP 边界校验。"""
-    agent_session = await (
-        session_repo.lock_session_by_thread_id(thread_id) if lock else session_repo.get_session_by_thread_id(thread_id)
-    )
-    if (
-        not agent_session
-        or agent_session.uid != uid
-        or agent_session.app_id != app_id
-        or agent_session.status == "deleted"
-    ):
+    agent_session = await (session_repo.lock_session_by_thread_id(thread_id) if lock else session_repo.get_session_by_thread_id(thread_id))
+    if not agent_session or agent_session.uid != uid or agent_session.app_id != app_id or agent_session.status == "deleted":
         raise HTTPException(status_code=404, detail="对话线程不存在")
     return agent_session
 
@@ -486,11 +472,7 @@ async def _store_attachment(
         for link in local_image_links(markdown.decode("utf-8")):
             relative = resource_path(unquote(link))
             await asyncio.to_thread(parsed_source.read_file, f"/{relative}", 100 * 1024 * 1024)
-        await await_io(
-            asyncio.to_thread(
-                workdir.copy_directory_from, parsed_source, directory_scope, max_file_bytes=100 * 1024 * 1024
-            )
-        )
+        await await_io(asyncio.to_thread(workdir.copy_directory_from, parsed_source, directory_scope, max_file_bytes=100 * 1024 * 1024))
     except BaseException:
         try:
             await asyncio.to_thread(workdir.delete, original_scope)

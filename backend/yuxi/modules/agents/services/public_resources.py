@@ -16,12 +16,8 @@ def turn_core(turn, run, *, started_at: datetime | None, status: str | None = No
         "status": status,
         "created_at": turn.created_at.timestamp(),
         "started_at": started_at.timestamp() if started_at else None,
-        "completed_at": turn.finished_at.timestamp()
-        if turn.finished_at and status in {"completed", "failed", "cancelled"}
-        else None,
-        "error": {"code": "internal_error", "message": run.error_message or "执行失败"}
-        if status == "failed" and run
-        else None,
+        "completed_at": turn.finished_at.timestamp() if turn.finished_at and status in {"completed", "failed", "cancelled"} else None,
+        "error": {"code": "internal_error", "message": run.error_message or "执行失败"} if status == "failed" and run else None,
         "usage": None,
     }
 
@@ -38,9 +34,7 @@ def session_resource(session, turn, run, queued_count, last_active_at, unread, *
             "waitpoint": turn.waitpoint,
         }
     status = current["status"] if current else "idle"
-    if status == "queued" or (
-        queued_count and not session.queue_paused and status in {"idle", "completed", "failed", "cancelled"}
-    ):
+    if status == "queued" or (queued_count and not session.queue_paused and status in {"idle", "completed", "failed", "cancelled"}):
         status = "in_progress"
     config = session.config_snapshot
     if config is None:

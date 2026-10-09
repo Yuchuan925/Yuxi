@@ -50,9 +50,7 @@ class PaddleOCRAPIParser(DocumentEngine):
 
         file_ext = self._file_extension(file_path)
         if file_ext and not self.supports_file_type(file_ext):
-            raise DocumentParserException(
-                f"不支持的文件类型: {file_ext}", self.get_service_name(), "unsupported_file_type"
-            )
+            raise DocumentParserException(f"不支持的文件类型: {file_ext}", self.get_service_name(), "unsupported_file_type")
 
         self._require_api_token()
         params = params or {}
@@ -70,10 +68,7 @@ class PaddleOCRAPIParser(DocumentEngine):
             text = self._extract_markdown(rows, output_dir, params)
 
             processing_time = time.time() - start_time
-            logger.info(
-                f"PaddleOCR API 处理成功: {Path(file_path).name} ({self.model}) - "
-                f"{len(text)} 字符 ({processing_time:.2f}s)"
-            )
+            logger.info(f"PaddleOCR API 处理成功: {Path(file_path).name} ({self.model}) - {len(text)} 字符 ({processing_time:.2f}s)")
             return text
         except DocumentParserException:
             raise
@@ -171,9 +166,7 @@ class PaddleOCRAPIParser(DocumentEngine):
             if state == "done":
                 json_url = ((data.get("resultUrl") or {}).get("jsonUrl") or "").strip()
                 if not json_url:
-                    raise DocumentParserException(
-                        "PaddleOCR 任务完成但未返回 jsonUrl", self.get_service_name(), "missing_result_url"
-                    )
+                    raise DocumentParserException("PaddleOCR 任务完成但未返回 jsonUrl", self.get_service_name(), "missing_result_url")
                 return json_url
 
             if state == "failed":
@@ -181,9 +174,7 @@ class PaddleOCRAPIParser(DocumentEngine):
                 raise DocumentParserException(f"PaddleOCR 任务失败: {error_msg}", self.get_service_name(), "job_failed")
 
             if state not in {"pending", "running"}:
-                raise DocumentParserException(
-                    f"PaddleOCR 任务状态异常: {state}", self.get_service_name(), "unknown_job_state"
-                )
+                raise DocumentParserException(f"PaddleOCR 任务状态异常: {state}", self.get_service_name(), "unknown_job_state")
 
             time.sleep(poll_interval_seconds)
 

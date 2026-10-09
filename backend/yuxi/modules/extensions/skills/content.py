@@ -230,9 +230,7 @@ def apply_content_changes(target: Path, changes: list[dict]) -> None:
             for key in ("tool_dependencies", "mcp_dependencies", "skill_dependencies"):
                 meta[key] = change[key]
             _, body = split_skill_frontmatter(previous)
-            root.write_text(
-                "---\n" + yaml.safe_dump(meta, allow_unicode=True, sort_keys=False) + "---\n" + body, encoding="utf-8"
-            )
+            root.write_text("---\n" + yaml.safe_dump(meta, allow_unicode=True, sort_keys=False) + "---\n" + body, encoding="utf-8")
             continue
         parts = validated_skill_file_parts(change["path"])
         path = target.joinpath(*parts)

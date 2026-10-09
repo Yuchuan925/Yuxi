@@ -32,9 +32,7 @@ def _mock_runtime_sources(monkeypatch, accessible):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("selection", [[], ["shared"], "all"])
 @pytest.mark.parametrize("preloads", [[], "all"])
-async def test_personal_skills_are_available_independently_of_shared_selection(
-    tmp_path, monkeypatch, selection, preloads
-):
+async def test_personal_skills_are_available_independently_of_shared_selection(tmp_path, monkeypatch, selection, preloads):
     """真实个人目录始终参与运行，选项仅共享且其他用户目录不可见。"""
     from yuxi.modules.agents.runtime.context import normalize_agent_context_config, resolve_agent_resource_options
     from yuxi.modules.extensions.skills import shared as service
@@ -98,9 +96,7 @@ async def test_personal_skills_are_available_independently_of_shared_selection(
     for uid, slug in [("user-a", "personal"), ("user-a", "shared"), ("user-b", "other-user")]:
         directory = user_workspace_dir(uid) / "agents" / "skills" / slug
         directory.mkdir(parents=True)
-        (directory / "SKILL.md").write_text(
-            f"---\nname: {slug}\ndescription: personal {slug}\n---\nPersonal body", encoding="utf-8"
-        )
+        (directory / "SKILL.md").write_text(f"---\nname: {slug}\ndescription: personal {slug}\n---\nPersonal body", encoding="utf-8")
     user = SimpleNamespace(uid="user-a", role="user", department_id=None)
     options = await resolve_agent_resource_options({"skills"}, db=None, user=user)
     assert options["skills"] == [
@@ -333,9 +329,7 @@ async def test_preload_all_reads_only_enabled_authorized_skill_closure(tmp_path,
         db=None,
         user=None,
     )
-    scope = await resolve_runtime_skills_for_context(
-        SimpleNamespace(**normalized), db=None, user=SimpleNamespace(uid="test")
-    )
+    scope = await resolve_runtime_skills_for_context(SimpleNamespace(**normalized), db=None, user=SimpleNamespace(uid="test"))
     assert scope["preloaded_skills"] == expected
     assert scope["preloaded_skill_contents"] == {slug: f"# {slug}" for slug in expected}
     assert scope["context_preload_skills"] == normalized["skills"]

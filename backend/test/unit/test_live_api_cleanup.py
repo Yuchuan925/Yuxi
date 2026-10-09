@@ -43,9 +43,7 @@ async def test_cleanup_deletes_every_sandbox_through_provisioner_api():
             },
         )
 
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(handle_request), base_url="http://provisioner"
-    ) as client:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle_request), base_url="http://provisioner") as client:
         await cleanup_provisioned_sandboxes(client, {"Authorization": "Bearer test-token"})
 
     assert deleted_paths == ["/api/sandboxes/sandbox-one", "/api/sandboxes/sandbox-two"]
@@ -60,9 +58,7 @@ async def test_cleanup_rejects_delete_that_does_not_remove_sandbox():
             return httpx.Response(200, json={"ok": True})
         return httpx.Response(200, json={"sandboxes": [{"sandbox_id": "sandbox-stale"}], "count": 1})
 
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(handle_request), base_url="http://provisioner"
-    ) as client:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle_request), base_url="http://provisioner") as client:
         with pytest.raises(RuntimeError, match="left sandboxes behind: sandbox-stale"):
             await cleanup_provisioned_sandboxes(client, {"Authorization": "Bearer test-token"})
 
@@ -73,9 +69,7 @@ async def test_cleanup_rejects_invalid_provisioner_list_payload():
     def handle_request(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"count": 0})
 
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(handle_request), base_url="http://provisioner"
-    ) as client:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle_request), base_url="http://provisioner") as client:
         with pytest.raises(RuntimeError, match="missing a sandboxes list"):
             await cleanup_provisioned_sandboxes(client, {"Authorization": "Bearer test-token"})
 
@@ -500,9 +494,7 @@ async def test_cleanup_stops_when_cancelled_input_remains_pending(tmp_path, monk
     def handle_request(request: httpx.Request) -> httpx.Response:
         if request.method == "POST" and request.url.path == "/api/v1/agents/sessions/thread-marked/events":
             assert request.headers["Idempotency-Key"] == "cleanup:YUXI_TEST_pending_input"
-            assert request.content == (
-                b'{"events":[{"type":"yuxi.session.input.cancel_input","input_id":"YUXI_TEST_pending_input"}]}'
-            )
+            assert request.content == (b'{"events":[{"type":"yuxi.session.input.cancel_input","input_id":"YUXI_TEST_pending_input"}]}')
             return httpx.Response(202, json={"status": "cancelled"})
         if request.method == "DELETE":
             destructive_paths.append(request.url.path)

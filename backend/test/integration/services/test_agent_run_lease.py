@@ -495,9 +495,7 @@ async def test_root_failure_preserves_independent_child_turn(lease_database, mon
             )
             db.add(child_thread)
             await db.flush()
-            message = Message(
-                session_record_id=child_thread.id, role="user", content="child input", delivery_status="dispatched"
-            )
+            message = Message(session_record_id=child_thread.id, role="user", content="child input", delivery_status="dispatched")
             db.add(message)
             await db.flush()
             child_turn = AgentTurn(
@@ -535,9 +533,7 @@ async def test_root_failure_preserves_independent_child_turn(lease_database, mon
             await db.commit()
 
         monkeypatch.setattr(run_worker.pg_manager, "get_async_session_context", lambda: _session_context(sessions))
-        transition = await run_worker.mark_run_terminal(
-            parent_id, "failed", error_type="parent_failed", worker_id="parent-owner"
-        )
+        transition = await run_worker.mark_run_terminal(parent_id, "failed", error_type="parent_failed", worker_id="parent-owner")
         assert transition.changed is True
         async with sessions() as db:
             parent = await db.get(AgentRun, parent_id)

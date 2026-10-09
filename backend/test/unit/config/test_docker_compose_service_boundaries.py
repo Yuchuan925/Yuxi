@@ -47,9 +47,7 @@ WORKSPACE_PERMISSION_OWNER_PATHS = (
     "backend/yuxi/modules/workspace/services/files.py",
     "docker/sandbox_provisioner/app.py",
 )
-LEGACY_WORKSPACE_PERMISSION_MARKERS = frozenset(
-    {"0o777", "0o666", "chmod a+rwx", "_ensure_user_data_writable", "_chmod_writable"}
-)
+LEGACY_WORKSPACE_PERMISSION_MARKERS = frozenset({"0o777", "0o666", "chmod a+rwx", "_ensure_user_data_writable", "_chmod_writable"})
 
 
 def _project_root() -> Path:
@@ -144,9 +142,7 @@ def test_api_worker_and_provisioner_use_explicit_storage_domains(filename: str):
         assert REQUIRED_STORAGE_TARGETS[service_name] <= targets
         assert "/app/saves" not in targets
         assert "/app/.env" not in targets
-    provisioner_targets = {
-        _volume_target(volume) for volume in compose["services"]["sandbox-provisioner"].get("volumes") or []
-    }
+    provisioner_targets = {_volume_target(volume) for volume in compose["services"]["sandbox-provisioner"].get("volumes") or []}
     assert {"/app/user-data", "/app/skill-projections"} <= provisioner_targets
     assert "/app/projects" not in provisioner_targets
     assert "/app/saves" not in provisioner_targets

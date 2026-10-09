@@ -95,9 +95,7 @@ class MilvusGraphVectorStore:
         top_k: int,
     ) -> list[dict[str, Any]]:
         collection_name = graph_entity_collection_name(kb_id)
-        has_collection = await _run_milvus_query_io(
-            utility.has_collection, collection_name, using=self.connection_alias
-        )
+        has_collection = await _run_milvus_query_io(utility.has_collection, collection_name, using=self.connection_alias)
         if not has_collection:
             return []
         return await self._search_graph_collection(
@@ -117,9 +115,7 @@ class MilvusGraphVectorStore:
         top_k: int,
     ) -> list[dict[str, Any]]:
         collection_name = graph_triple_collection_name(kb_id)
-        has_collection = await _run_milvus_query_io(
-            utility.has_collection, collection_name, using=self.connection_alias
-        )
+        has_collection = await _run_milvus_query_io(utility.has_collection, collection_name, using=self.connection_alias)
         if not has_collection:
             return []
         return await self._search_graph_collection(
@@ -236,9 +232,7 @@ class MilvusGraphVectorStore:
         ]
         return self._get_or_create_collection(collection_name, fields, embedding_info)
 
-    def _get_or_create_collection(
-        self, collection_name: str, fields: list[FieldSchema], embedding_info: Any
-    ) -> Collection:
+    def _get_or_create_collection(self, collection_name: str, fields: list[FieldSchema], embedding_info: Any) -> Collection:
         if utility.has_collection(collection_name, using=self.connection_alias):
             return Collection(name=collection_name, using=self.connection_alias)
 
@@ -254,9 +248,7 @@ class MilvusGraphVectorStore:
             functions=[bm25_function],
         )
         collection = Collection(name=collection_name, schema=schema, using=self.connection_alias)
-        collection.create_index(
-            "embedding", {"metric_type": VECTOR_METRIC_TYPE, "index_type": "IVF_FLAT", "params": {"nlist": 1024}}
-        )
+        collection.create_index("embedding", {"metric_type": VECTOR_METRIC_TYPE, "index_type": "IVF_FLAT", "params": {"nlist": 1024}})
         collection.create_index(
             CONTENT_SPARSE_FIELD,
             {

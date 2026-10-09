@@ -12,7 +12,5 @@ async def knowledge_projection_lock(kb_id: str, *, shared: bool = False):
     """索引持有共享锁，清理持有排他锁；外部写完成前不能宣布清理完成。"""
     function = "pg_advisory_xact_lock_shared" if shared else "pg_advisory_xact_lock"
     async with pg_manager.get_async_session_context() as session:
-        await session.execute(
-            text(f"SELECT {function}(hashtextextended(:key, 0))"), {"key": f"knowledge-projection:{kb_id}"}
-        )
+        await session.execute(text(f"SELECT {function}(hashtextextended(:key, 0))"), {"key": f"knowledge-projection:{kb_id}"})
         yield

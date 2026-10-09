@@ -137,11 +137,7 @@ def test_legacy_permission_config_is_rejected_at_runtime():
         {"version": 2, "read_scope": {"access_level": "department", "department_ids": 1}},
         {"version": 2, "manage_scope": {"access_level": "user", "user_uids": 1}},
         {"version": 2, "read_scope": {"access_level": ["global"]}},
-        *[
-            {"version": 2, scope: {"access_level": value}}
-            for scope in ("read_scope", "manage_scope")
-            for value in ([], {}, False, 0)
-        ],
+        *[{"version": 2, scope: {"access_level": value}} for scope in ("read_scope", "manage_scope") for value in ([], {}, False, 0)],
         *[
             {"version": 2, "read_scope": {"access_level": "department", "department_ids": value}}
             for value in ("1", {"1": True}, [True], [1.5], [float("inf")])
@@ -171,9 +167,7 @@ def test_valid_default_scope_preserves_global_read(scope):
 
 def test_department_integer_strings_remain_valid():
     """合法的整数字符串部门成员仍按部门匹配。"""
-    resource = _resource(
-        share_config={"version": 2, "read_scope": {"access_level": "department", "department_ids": ["1", 1]}}
-    )
+    resource = _resource(share_config={"version": 2, "read_scope": {"access_level": "department", "department_ids": ["1", 1]}})
     assert resolve_agent_permission(_user(department_id=1), resource) == ResourcePermission.READ
     assert resolve_agent_permission(_user(department_id=2), resource) == ResourcePermission.NONE
 
@@ -222,10 +216,7 @@ def test_require_knowledge_base_permission_uses_resolved_resource_permission():
         }
     )
 
-    assert (
-        require_knowledge_base_permission(_user(role="admin"), resource, ResourcePermission.READ)
-        == ResourcePermission.READ
-    )
+    assert require_knowledge_base_permission(_user(role="admin"), resource, ResourcePermission.READ) == ResourcePermission.READ
     with pytest.raises(ResourcePermissionDenied):
         require_knowledge_base_permission(_user(role="admin"), resource, ResourcePermission.MANAGE)
 
@@ -258,6 +249,4 @@ def test_empty_read_scope_rejects_nonempty_management():
     from yuxi.modules.identity.permissions import normalize_permission_config
 
     with pytest.raises(ValueError, match="管理范围"):
-        normalize_permission_config(
-            {"version": 2, "read_scope": None, "manage_scope": {"access_level": "global"}}, strict=True
-        )
+        normalize_permission_config({"version": 2, "read_scope": None, "manage_scope": {"access_level": "global"}}, strict=True)

@@ -113,9 +113,7 @@ async def get_v2_models(
 
     grouped = model_cache.get_specs_grouped_by_provider(model_type)
     providers = await get_all_model_providers(db)
-    provider_name_by_id = {
-        provider.provider_id: provider.display_name or provider.provider_id for provider in providers
-    }
+    provider_name_by_id = {provider.provider_id: provider.display_name or provider.provider_id for provider in providers}
 
     result = {}
     for provider_id, models in grouped.items():

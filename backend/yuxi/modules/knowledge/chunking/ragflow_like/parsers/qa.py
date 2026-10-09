@@ -79,9 +79,7 @@ def _extract_pairs_from_csv(lines: list[str], delimiter: str) -> list[tuple[str,
             pairs.append((question, answer))
         if isinstance(raw_line, SourceText):
             # CSV 解码删除结构引号、合并转义字符，来源属于 reader 消费的完整 record。
-            question = LocatedText(
-                row[0], (lines[record_start].source_range[0], lines[reader.line_num - 1].source_range[1])
-            )
+            question = LocatedText(row[0], (lines[record_start].source_range[0], lines[reader.line_num - 1].source_range[1]))
             answer = row[1]
         else:
             question, answer = row
@@ -466,7 +464,5 @@ def chunk_markdown(filename: str, markdown_content: str, parser_config: dict[str
     result = []
     for chunk in chunks:
         parts = _split_long_qa_chunks([chunk])
-        result.extend(
-            LocatedText(str(part), chunk.source_range) if isinstance(chunk, LocatedText) else part for part in parts
-        )
+        result.extend(LocatedText(str(part), chunk.source_range) if isinstance(chunk, LocatedText) else part for part in parts)
     return result

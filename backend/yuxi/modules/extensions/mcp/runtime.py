@@ -122,9 +122,7 @@ async def get_mcp_tools(
 
             if cache:
                 async with _mcp_lock:
-                    stale_keys = [
-                        key for key in _mcp_tools_cache if key.startswith(f"{server_slug}:") and key != cache_key
-                    ]
+                    stale_keys = [key for key in _mcp_tools_cache if key.startswith(f"{server_slug}:") and key != cache_key]
                     for stale_key in stale_keys:
                         _mcp_tools_cache.pop(stale_key, None)
                     _mcp_tools_cache[cache_key] = all_processed_tools
@@ -138,8 +136,7 @@ async def get_mcp_tools(
                 }
 
                 logger.info(
-                    f"Refreshed MCP tools cache for '{server_slug}' with key '{cache_key}': "
-                    f"{len(all_processed_tools)} tools loaded."
+                    f"Refreshed MCP tools cache for '{server_slug}' with key '{cache_key}': {len(all_processed_tools)} tools loaded."
                 )
 
         except ExceptionGroup as e:

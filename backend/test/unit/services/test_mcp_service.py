@@ -307,9 +307,7 @@ async def test_get_enabled_mcp_tools_loads_latest_config_from_db(monkeypatch):
     assert captured == [
         {
             "server_name": "demo",
-            "additional_servers": {
-                "demo": {"transport": "streamable_http", "url": "demo", "disabled_tools": ["tool_b"]}
-            },
+            "additional_servers": {"demo": {"transport": "streamable_http", "url": "demo", "disabled_tools": ["tool_b"]}},
             "disabled_tools": ["tool_b"],
         }
     ]
@@ -463,9 +461,7 @@ async def test_sync_deepwiki_idempotently_preserves_other_servers(monkeypatch, m
         ]
     )
     await mcp_session.commit()
-    monkeypatch.setattr(
-        postgres_manager.pg_manager, "get_async_session_context", lambda: _AsyncSessionContext(mcp_session)
-    )
+    monkeypatch.setattr(postgres_manager.pg_manager, "get_async_session_context", lambda: _AsyncSessionContext(mcp_session))
     await mcp_service.ensure_builtin_mcp_servers_in_db()
     await mcp_service.ensure_builtin_mcp_servers_in_db()
     assert await mcp_session.scalar(select(MCPServer).where(MCPServer.slug == "mcp-server-chart")) is not None

@@ -190,9 +190,7 @@ async def create_uploaded_skill_draft_route(
         )
         allowed = get_allowed_skill_access_levels(current_user)
         data["allowed_access_levels"] = allowed
-        data["default_share_config"] = normalize_skill_share_config(
-            None, operator_uid=current_user.uid, allowed_access_levels=set(allowed)
-        )
+        data["default_share_config"] = normalize_skill_share_config(None, operator_uid=current_user.uid, allowed_access_levels=set(allowed))
         return {"success": True, "data": data}
     except ValueError as e:
         _raise_from_value_error(e)
@@ -220,9 +218,7 @@ async def list_remote_skills_route(
 
 
 @user_skills.post("/remote/search")
-async def search_remote_skills_route(
-    payload: RemoteSkillSearchRequest, _current_user: User = Depends(get_required_user)
-):
+async def search_remote_skills_route(payload: RemoteSkillSearchRequest, _current_user: User = Depends(get_required_user)):
     try:
         return {"success": True, "data": await search_remote_skills(payload.query)}
     except ValueError as e:
@@ -247,9 +243,7 @@ async def prepare_remote_skills_route(
         )
         allowed = get_allowed_skill_access_levels(current_user)
         data["allowed_access_levels"] = allowed
-        data["default_share_config"] = normalize_skill_share_config(
-            None, operator_uid=current_user.uid, allowed_access_levels=set(allowed)
-        )
+        data["default_share_config"] = normalize_skill_share_config(None, operator_uid=current_user.uid, allowed_access_levels=set(allowed))
         return {"success": True, "data": data}
     except ValueError as e:
         _raise_from_value_error(e)
@@ -678,9 +672,7 @@ async def update_skill_dependencies_route(
 
 
 @skills.get("/{slug}/versions")
-async def list_skill_versions_route(
-    slug: str, current_user: User = Depends(get_required_user), db: AsyncSession = Depends(get_db)
-):
+async def list_skill_versions_route(slug: str, current_user: User = Depends(get_required_user), db: AsyncSession = Depends(get_db)):
     """读取专属 Skill 历史与 latest 修订。"""
     try:
         return {"success": True, "data": await list_skill_versions(db, slug=slug, operator=current_user)}
@@ -697,9 +689,7 @@ async def release_skill_version_route(
 ):
     """为已保存的 latest 发版。"""
     try:
-        result = await release_skill_version(
-            db, slug=slug, expected_revision=payload.expected_revision, operator=current_user
-        )
+        result = await release_skill_version(db, slug=slug, expected_revision=payload.expected_revision, operator=current_user)
         return {"success": True, "data": result}
     except SkillEditConflict as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -718,7 +708,11 @@ async def restore_skill_version_route(
     """覆盖 latest，保留当前绑定 slug。"""
     try:
         result = await restore_skill_version(
-            db, slug=slug, version=version, expected_revision=payload.expected_revision, operator=current_user
+            db,
+            slug=slug,
+            version=version,
+            expected_revision=payload.expected_revision,
+            operator=current_user,
         )
         return {"success": True, "data": result}
     except SkillEditConflict as exc:

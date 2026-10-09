@@ -73,7 +73,7 @@ dependencies = [
 
 
 [tool.ruff]
-line-length = 120  # 代码最大行宽
+line-length = 140  # 代码最大行宽
 lint.select = [         # 选择的规则
     "F",
     "E",

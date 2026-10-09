@@ -34,9 +34,7 @@ async def test_role_downgrade_and_concurrent_last_superadmin_deletion():
         pending = asyncio.create_task(second.execute("UPDATE users SET is_deleted=1 WHERE id=2"))
         try:
             for _ in range(100):
-                waiting = await owner.fetchval(
-                    "SELECT wait_event = 'advisory' FROM pg_stat_activity WHERE pid=$1", second.get_server_pid()
-                )
+                waiting = await owner.fetchval("SELECT wait_event = 'advisory' FROM pg_stat_activity WHERE pid=$1", second.get_server_pid())
                 if waiting:
                     break
                 await asyncio.sleep(0.01)

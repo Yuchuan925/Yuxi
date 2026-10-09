@@ -41,9 +41,7 @@ async def resume_turn(
     event_type = "yuxi.session.input.resume"
     intent_hash = _hash_intent(event_type, turn_id, waitpoint_id, response)
     receipt_repo = AgentInputReceiptRepository(db)
-    existing = await receipt_repo.get_for_scope(
-        uid=scope.uid, app_id=scope.app_id, thread_id=thread_id, idempotency_key=idempotency_key
-    )
+    existing = await receipt_repo.get_for_scope(uid=scope.uid, app_id=scope.app_id, thread_id=thread_id, idempotency_key=idempotency_key)
     if existing is not None:
         _require_replay(existing, event_type, intent_hash)
         return _accepted(existing)
@@ -69,14 +67,10 @@ async def resume_turn(
     if agent_session.status != "active":
         raise HTTPException(status_code=409, detail="Thread 已归档")
     turn_repo = AgentTurnRepository(db)
-    turn = await turn_repo.get_for_scope(
-        turn_id=turn_id, thread_id=thread_id, uid=scope.uid, app_id=scope.app_id, for_update=True
-    )
+    turn = await turn_repo.get_for_scope(turn_id=turn_id, thread_id=thread_id, uid=scope.uid, app_id=scope.app_id, for_update=True)
     if turn is None:
         raise HTTPException(status_code=404, detail="Turn 不存在")
-    existing = await receipt_repo.get_for_scope(
-        uid=scope.uid, app_id=scope.app_id, thread_id=thread_id, idempotency_key=idempotency_key
-    )
+    existing = await receipt_repo.get_for_scope(uid=scope.uid, app_id=scope.app_id, thread_id=thread_id, idempotency_key=idempotency_key)
     if existing is not None:
         _require_replay(existing, event_type, intent_hash)
         return _accepted(existing)
@@ -165,25 +159,19 @@ async def cancel_turn(
     event_type = "agent.session.input.cancel"
     intent_hash = _hash_intent(event_type, turn_id, expected_run_id)
     receipt_repo = AgentInputReceiptRepository(db)
-    existing = await receipt_repo.get_for_scope(
-        uid=scope.uid, app_id=scope.app_id, thread_id=thread_id, idempotency_key=idempotency_key
-    )
+    existing = await receipt_repo.get_for_scope(uid=scope.uid, app_id=scope.app_id, thread_id=thread_id, idempotency_key=idempotency_key)
     if existing is not None:
         _require_replay(existing, event_type, intent_hash)
         return _accepted(existing)
 
     agent_session = await require_thread(db=db, scope=scope, thread_id=thread_id, lock=True)
-    existing = await receipt_repo.get_for_scope(
-        uid=scope.uid, app_id=scope.app_id, thread_id=thread_id, idempotency_key=idempotency_key
-    )
+    existing = await receipt_repo.get_for_scope(uid=scope.uid, app_id=scope.app_id, thread_id=thread_id, idempotency_key=idempotency_key)
     if existing is not None:
         _require_replay(existing, event_type, intent_hash)
         return _accepted(existing)
     turn_repo = AgentTurnRepository(db)
     turn = (
-        await turn_repo.get_for_scope(
-            turn_id=turn_id, thread_id=thread_id, uid=scope.uid, app_id=scope.app_id, for_update=True
-        )
+        await turn_repo.get_for_scope(turn_id=turn_id, thread_id=thread_id, uid=scope.uid, app_id=scope.app_id, for_update=True)
         if turn_id is not None
         else await turn_repo.lock_active_for_thread(thread_id=thread_id, uid=scope.uid, app_id=scope.app_id)
     )
@@ -302,10 +290,7 @@ def _summarize_turn_usage(audits: list[Message]) -> dict:
         valid = (
             bool(audit.operation_id)
             and audit.execution_status == "completed"
-            and all(
-                isinstance(usage.get(key), int) and not isinstance(usage[key], bool) and usage[key] >= 0
-                for key in totals
-            )
+            and all(isinstance(usage.get(key), int) and not isinstance(usage[key], bool) and usage[key] >= 0 for key in totals)
         )
         if not valid:
             missing += 1
@@ -335,14 +320,10 @@ async def list_turn_page(
     await require_thread(db=db, scope=scope, thread_id=thread_id)
     repo = AgentTurnRepository(db)
     try:
-        rows = await repo.list_page(
-            thread_id=thread_id, uid=scope.uid, app_id=scope.app_id, after=after, limit=limit, order=order
-        )
+        rows = await repo.list_page(thread_id=thread_id, uid=scope.uid, app_id=scope.app_id, after=after, limit=limit, order=order)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    starts = await repo.get_start_times(
-        turn_ids=[turn.id for turn, _run in rows[:limit]], uid=scope.uid, app_id=scope.app_id
-    )
+    starts = await repo.get_start_times(turn_ids=[turn.id for turn, _run in rows[:limit]], uid=scope.uid, app_id=scope.app_id)
     from yuxi.modules.agents.services.public_resources import turn_core
 
     data = [
@@ -380,9 +361,7 @@ async def settle_waiting_cancel(*, thread_id: str, turn_id: str, uid: str, app_i
 
     async with pg_manager.get_async_session_context() as db:
         agent_session = await require_thread(db=db, scope=scope, thread_id=thread_id, lock=True)
-        turn = await AgentTurnRepository(db).get_for_scope(
-            turn_id=turn_id, thread_id=thread_id, uid=uid, app_id=app_id, for_update=True
-        )
+        turn = await AgentTurnRepository(db).get_for_scope(turn_id=turn_id, thread_id=thread_id, uid=uid, app_id=app_id, for_update=True)
         if turn is None or turn.status != "cancelling" or turn.current_run_id != run.id:
             return False
         if not agent_session.queue_paused:

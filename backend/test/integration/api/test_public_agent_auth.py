@@ -64,9 +64,7 @@ async def test_removed_agent_session_entrypoints_are_unreachable(test_client, ad
 
 
 @pytest.mark.parametrize("attachment_kind", ["unknown", "bound_elsewhere"])
-async def test_public_input_rejects_unbound_attachment_without_persisting_receipt(
-    test_client, admin_headers, attachment_kind
-):
+async def test_public_input_rejects_unbound_attachment_without_persisting_receipt(test_client, admin_headers, attachment_kind):
     """显式附件 ID 无法属于本次 Input 时，不能确认接收或投递 Run。"""
     directory = await test_client.get("/api/v1/agents", headers=admin_headers)
     assert directory.status_code == 200, directory.text
@@ -149,6 +147,4 @@ async def test_public_input_rejects_unbound_attachment_without_persisting_receip
         if uploaded is not None and uploaded.status_code == 201:
             uid = str((await test_client.get("/api/auth/me", headers=admin_headers)).json()["uid"])
             minio = get_minio_client()
-            await minio.adelete_objects_by_prefix(
-                minio.KB_BUCKETS["documents"], f"tmp/chat_attachments/{uid}/{file_id}/"
-            )
+            await minio.adelete_objects_by_prefix(minio.KB_BUCKETS["documents"], f"tmp/chat_attachments/{uid}/{file_id}/")

@@ -126,9 +126,7 @@ class DifyKB(ReadOnlyConnectors):
                 )
                 logger.warning(f"Dify query fallback to query-only succeeded for kb_id={kb_id}")
             except Exception as fallback_error:  # noqa: BLE001
-                logger.error(
-                    f"Dify query fallback failed for kb_id={kb_id}: {fallback_error}, {traceback.format_exc()}"
-                )
+                logger.error(f"Dify query fallback failed for kb_id={kb_id}: {fallback_error}, {traceback.format_exc()}")
                 raise RuntimeError(f"Dify query failed for kb_id={kb_id}") from fallback_error
 
         records = response_json.get("records", []) if isinstance(response_json, dict) else []

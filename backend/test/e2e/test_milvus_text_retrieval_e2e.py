@@ -77,9 +77,7 @@ async def test_worker_index_and_all_search_modes_use_text_constraints(e2e_client
             body = json.dumps(
                 {
                     "object": "list",
-                    "data": [
-                        {"object": "embedding", "index": i, "embedding": [1, 0, 0, 0]} for i in range(len(inputs))
-                    ],
+                    "data": [{"object": "embedding", "index": i, "embedding": [1, 0, 0, 0]} for i in range(len(inputs))],
                     "model": "replay-embedding",
                     "usage": {"prompt_tokens": 1, "total_tokens": 1},
                 }
@@ -114,9 +112,7 @@ async def test_worker_index_and_all_search_modes_use_text_constraints(e2e_client
                 "api_key": "ci-replay-key",
                 "capabilities": ["embedding"],
                 "is_enabled": True,
-                "enabled_models": [
-                    {"id": "replay-embedding", "display_name": "Replay embedding", "type": "embedding", "dimension": 4}
-                ],
+                "enabled_models": [{"id": "replay-embedding", "display_name": "Replay embedding", "type": "embedding", "dimension": 4}],
             },
         )
         assert created.status_code == 200, created.text
@@ -191,9 +187,7 @@ async def test_worker_index_and_all_search_modes_use_text_constraints(e2e_client
             [chunk] = await repository.list_by_file_id(file_id)
             assert chunk.content == samples[name]
             assert (chunk.start_line, chunk.end_line) == expected_lines[name]
-            content_response = await e2e_client.get(
-                f"/api/knowledge/databases/{kb_id}/documents/{file_id}/content", headers=e2e_headers
-            )
+            content_response = await e2e_client.get(f"/api/knowledge/databases/{kb_id}/documents/{file_id}/content", headers=e2e_headers)
             assert content_response.status_code == 200, content_response.text
             [preview_chunk] = content_response.json()["lines"]
             assert (preview_chunk["start_line"], preview_chunk["end_line"]) == expected_lines[name]
@@ -266,8 +260,7 @@ async def test_worker_index_and_all_search_modes_use_text_constraints(e2e_client
             results = response.json()
             expected_by_file = {file_ids[name]: lines for name, lines in expected_lines.items()}
             assert all(
-                (row["metadata"]["start_line"], row["metadata"]["end_line"])
-                == expected_by_file[row["metadata"]["file_id"]]
+                (row["metadata"]["start_line"], row["metadata"]["end_line"]) == expected_by_file[row["metadata"]["file_id"]]
                 for row in results
             )
             return results
@@ -314,9 +307,7 @@ async def test_worker_index_and_all_search_modes_use_text_constraints(e2e_client
 
         assert len(await query("vector")) == 5
         for mode in ("vector", "keyword", "hybrid"):
-            [result] = await query(
-                mode, required_terms="Milvus", excluded_terms="legacy", exact_phrase="vector database"
-            )
+            [result] = await query(mode, required_terms="Milvus", excluded_terms="legacy", exact_phrase="vector database")
             assert result["metadata"]["file_id"] == file_ids["match.md"]
             assert result["content"] == samples["match.md"]
             assert result["score_type"] == {"vector": "cosine", "keyword": "bm25", "hybrid": "hybrid"}[mode]
@@ -415,26 +406,20 @@ async def test_worker_index_and_all_search_modes_use_text_constraints(e2e_client
                 (graph_entity_collection_name(kb_id), {e["entity_id"] for e in entities}),
                 (graph_triple_collection_name(kb_id), {t["triple_id"] for t in triples}),
             ):
-                projected = Collection(name, using=alias).query(
-                    expr='id != ""', output_fields=["id"], consistency_level="Strong"
-                )
+                projected = Collection(name, using=alias).query(expr='id != ""', output_fields=["id"], consistency_level="Strong")
                 assert expected_ids <= {row["id"] for row in projected}
             assert await graph_repo.count_by_kb_id(kb_id) == (2, 1)
 
         def graph_node_count():
             """回读 Neo4j，而不是相信清理回调的返回值。"""
             with graph_service.driver.session() as session:
-                return session.run("MATCH (n:MilvusKB {kb_id: $kb_id}) RETURN count(n) AS count", kb_id=kb_id).single()[
-                    "count"
-                ]
+                return session.run("MATCH (n:MilvusKB {kb_id: $kb_id}) RETURN count(n) AS count", kb_id=kb_id).single()["count"]
 
         await seed_file_graph()
         assert await asyncio.to_thread(graph_node_count) == 3
         [seeded_chunk] = await repository.list_by_file_id(file_ids["match.md"])
         with monkeypatch.context() as scoped:
-            scoped.setattr(
-                graph_store, "delete_graph_records", AsyncMock(side_effect=RuntimeError("temporary cleanup failure"))
-            )
+            scoped.setattr(graph_store, "delete_graph_records", AsyncMock(side_effect=RuntimeError("temporary cleanup failure")))
             with pytest.raises(RuntimeError, match="temporary cleanup failure"):
                 await graph_service.delete_file_graph(kb_id, file_ids["match.md"], generation=seeded_chunk.generation)
         assert await graph_repo.count_by_kb_id(kb_id) == (2, 1)
@@ -475,9 +460,7 @@ async def test_worker_index_and_all_search_modes_use_text_constraints(e2e_client
         assert len(before.json()["data"]["nodes"]) == 4
         assert "PRIVATE_SOURCE_B" in json.dumps(before.json())
         async with knowledge_projection_lock(kb_id, shared=True):
-            deleted = await e2e_client.delete(
-                f"/api/knowledge/databases/{kb_id}/documents/{removed_file}", headers=e2e_headers
-            )
+            deleted = await e2e_client.delete(f"/api/knowledge/databases/{kb_id}/documents/{removed_file}", headers=e2e_headers)
             assert deleted.status_code == 200, deleted.text
             assert await asyncio.to_thread(graph_node_count) == 4, "清理被锁阻塞，外部旧内容确实还在"
             hidden = await e2e_client.get("/api/graph/subgraph", headers=e2e_headers, params={"kb_id": kb_id})
@@ -494,10 +477,7 @@ async def test_worker_index_and_all_search_modes_use_text_constraints(e2e_client
         shared = await e2e_client.get("/api/graph/subgraph", headers=e2e_headers, params={"kb_id": kb_id})
         assert len(shared.json()["data"]["nodes"]) == 3
         assert "PRIVATE_SOURCE_B" not in json.dumps(shared.json())
-        assert (
-            collection.query(expr=f'file_id == "{removed_file}"', output_fields=["file_id"], consistency_level="Strong")
-            == []
-        )
+        assert collection.query(expr=f'file_id == "{removed_file}"', output_fields=["file_id"], consistency_level="Strong") == []
         deleted = await e2e_client.delete(f"/api/knowledge/databases/{kb_id}", headers=e2e_headers)
         assert deleted.status_code == 200, deleted.text
         assert await repository.list_by_kb_id(kb_id) == []

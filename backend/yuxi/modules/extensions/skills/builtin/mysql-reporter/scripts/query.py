@@ -92,9 +92,7 @@ class MySQLSecurityChecker:
         return isinstance(timeout, int) and 1 <= timeout <= 600
 
 
-def execute_query_with_timeout(
-    connection: pymysql.Connection, sql: str, params: tuple | None = None, timeout: int = 10
-):
+def execute_query_with_timeout(connection: pymysql.Connection, sql: str, params: tuple | None = None, timeout: int = 10):
     """使用线程池实现超时控制，避免信号导致的生成器问题"""
 
     def query_worker():

@@ -109,9 +109,7 @@ def test_wire_rejects_unknown_fields_and_remote_images():
                 ]
             }
         )
-    message = InputMessage.model_validate(
-        {"role": "user", "content": [{"type": "input_image", "image_url": "https://example.com/a.png"}]}
-    )
+    message = InputMessage.model_validate({"role": "user", "content": [{"type": "input_image", "image_url": "https://example.com/a.png"}]})
     with pytest.raises(HTTPException) as exc:
         input_messages_to_domain([message])
     assert exc.value.status_code == 422

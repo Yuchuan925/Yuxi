@@ -201,10 +201,7 @@ class SessionRepository:
         """锁定线程根记录，串行化同一对话的调度决策。"""
         # 身份键不变；允许树通知的外键键共享锁，避免 Session → 树锁反向等待。
         result = await self.db.execute(
-            select(Session)
-            .where(Session.thread_id == thread_id)
-            .with_for_update(key_share=True)
-            .execution_options(populate_existing=True)
+            select(Session).where(Session.thread_id == thread_id).with_for_update(key_share=True).execution_options(populate_existing=True)
         )
         return result.scalar_one_or_none()
 
@@ -378,13 +375,9 @@ class SessionRepository:
         agent_session = await self.get_session_by_thread_id(thread_id)
         if agent_session is None:
             return set()
-        result = await self.db.execute(
-            select(Message.extra_metadata).where(Message.session_record_id == agent_session.id)
-        )
+        result = await self.db.execute(select(Message.extra_metadata).where(Message.session_record_id == agent_session.id))
         return {
-            str(metadata["id"])
-            for metadata in result.scalars().all()
-            if isinstance(metadata, dict) and isinstance(metadata.get("id"), str)
+            str(metadata["id"]) for metadata in result.scalars().all() if isinstance(metadata, dict) and isinstance(metadata.get("id"), str)
         }
 
     async def list_message_audits(self, session_record_id: int, *, limit: int) -> tuple[list[Message], bool]:
@@ -442,9 +435,7 @@ class SessionRepository:
         query = select(Session).where(*conditions)
         if after:
             anchor = (
-                await self.db.execute(
-                    select(Session).where(Session.uid == uid, Session.app_id == app_id, Session.thread_id == after)
-                )
+                await self.db.execute(select(Session).where(Session.uid == uid, Session.app_id == app_id, Session.thread_id == after))
             ).scalar_one_or_none()
             if anchor is None:
                 raise ValueError("after 不属于当前会话作用域")
@@ -454,9 +445,7 @@ class SessionRepository:
             boundary = (anchor.created_at, anchor.thread_id)
             query = query.where(position > boundary if order == "asc" else position < boundary)
         sort = (
-            [Session.created_at.asc(), Session.thread_id.asc()]
-            if order == "asc"
-            else [Session.created_at.desc(), Session.thread_id.desc()]
+            [Session.created_at.asc(), Session.thread_id.asc()] if order == "asc" else [Session.created_at.desc(), Session.thread_id.desc()]
         )
         rows = list((await self.db.execute(query.order_by(*sort).limit(limit + 1))).scalars())
         return rows[:limit], len(rows) > limit
@@ -672,9 +661,7 @@ class SessionRepository:
             rows.reverse()
         else:
             anchor_id = int(message_id)
-            anchor_result = await self.db.execute(
-                select(Message.id).where(Message.id == anchor_id, *message_conditions)
-            )
+            anchor_result = await self.db.execute(select(Message.id).where(Message.id == anchor_id, *message_conditions))
             if anchor_result.scalar_one_or_none() is None:
                 raise ValueError("历史消息不存在或不属于该线程")
 
@@ -793,10 +780,7 @@ class SessionRepository:
             if input_truncated or output_truncated or error_truncated:
                 tool_item["truncated"] = True
             item_size = _json_size(tool_item)
-            if (
-                item_size > MEMORY_HISTORY_TOOL_CALL_MAX_BYTES
-                or used_bytes + item_size > MEMORY_HISTORY_TOOL_CALLS_MAX_BYTES
-            ):
+            if item_size > MEMORY_HISTORY_TOOL_CALL_MAX_BYTES or used_bytes + item_size > MEMORY_HISTORY_TOOL_CALLS_MAX_BYTES:
                 truncated = True
                 break
             used_bytes += item_size

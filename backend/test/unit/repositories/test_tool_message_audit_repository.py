@@ -80,12 +80,8 @@ async def test_resume_source_run_ids_reject_cross_session_parent():
 @pytest.mark.asyncio
 async def test_resume_source_run_ids_reject_adjacent_turn_even_in_same_thread():
     """相同 Thread 不能把邻近 Turn 的工具声明当作恢复来源。"""
-    parent = SimpleNamespace(
-        id="parent", resume_from_run_id=None, session_record_id=7, turn_id="other", uid="user", app_id=None
-    )
-    current = SimpleNamespace(
-        id="current", resume_from_run_id="parent", session_record_id=7, turn_id="turn", uid="user", app_id=None
-    )
+    parent = SimpleNamespace(id="parent", resume_from_run_id=None, session_record_id=7, turn_id="other", uid="user", app_id=None)
+    current = SimpleNamespace(id="current", resume_from_run_id="parent", session_record_id=7, turn_id="turn", uid="user", app_id=None)
     with pytest.raises(ValueError, match="Turn"):
         await ToolMessageAuditRepository(_FakeDb({"parent": parent}))._source_run_ids(current)
 
@@ -98,9 +94,7 @@ async def test_rejection_requires_accepted_approval_bound_to_same_turn(monkeypat
     class Db:
         async def get(self, model, identity):
             assert model is Message and identity == 10
-            return SimpleNamespace(
-                run_id="resume", turn_id=input_turn, extra_metadata={"rejected_tool_calls": rejected}
-            )
+            return SimpleNamespace(run_id="resume", turn_id=input_turn, extra_metadata={"rejected_tool_calls": rejected})
 
     repository = ToolMessageAuditRepository(Db())
 

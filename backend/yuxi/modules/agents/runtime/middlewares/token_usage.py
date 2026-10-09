@@ -126,8 +126,7 @@ class TokenUsageMiddleware(AgentMiddleware[TokenUsageState]):
             latest_bucket_key = latest.get("bucket_key")
             latest_provider_id = latest_model.get("provider_id") if isinstance(latest_model, Mapping) else None
             if latest_provider_id in TOKEN_USAGE_PROVIDER_BLACKLIST or (
-                isinstance(latest_bucket_key, str)
-                and latest_bucket_key.split(":", 1)[0] in TOKEN_USAGE_PROVIDER_BLACKLIST
+                isinstance(latest_bucket_key, str) and latest_bucket_key.split(":", 1)[0] in TOKEN_USAGE_PROVIDER_BLACKLIST
             ):
                 latest = None
         return {
@@ -195,13 +194,9 @@ class TokenUsageMiddleware(AgentMiddleware[TokenUsageState]):
 
         summary_message = llm_messages[0] if llm_messages and _is_summary_message(llm_messages[0]) else None
         llm_tool_messages = [message for message in llm_messages if _is_tool_message(message)]
-        llm_content_messages = [
-            message for message in llm_messages if not _is_tool_message(message) and not _is_summary_message(message)
-        ]
+        llm_content_messages = [message for message in llm_messages if not _is_tool_message(message) and not _is_summary_message(message)]
         summary_trigger_tokens = _summary_trigger_tokens(getattr(request.runtime, "context", None))
-        summary_pressure_ratio = (
-            round(next_llm_input_tokens / summary_trigger_tokens, 4) if summary_trigger_tokens else None
-        )
+        summary_pressure_ratio = round(next_llm_input_tokens / summary_trigger_tokens, 4) if summary_trigger_tokens else None
         previous_snapshot = request.state.get("token_usage")
         previous_snapshot = previous_snapshot if isinstance(previous_snapshot, Mapping) else {}
         model_usage = _model_usage_from_response(response)
@@ -211,9 +206,7 @@ class TokenUsageMiddleware(AgentMiddleware[TokenUsageState]):
         previous_run = previous_snapshot.get("run") if previous_snapshot.get("current_run_id") == run_id else None
         measured_at = datetime.now(UTC).isoformat()
         latest_usage = None
-        run_usage = _without_blacklisted_providers(
-            previous_run if isinstance(previous_run, Mapping) else _empty_aggregate()
-        )
+        run_usage = _without_blacklisted_providers(previous_run if isinstance(previous_run, Mapping) else _empty_aggregate())
         thread_usage = _without_blacklisted_providers(previous_snapshot.get("thread"))
 
         if identity.get("provider_id") not in TOKEN_USAGE_PROVIDER_BLACKLIST:
@@ -238,9 +231,7 @@ class TokenUsageMiddleware(AgentMiddleware[TokenUsageState]):
                 "bucket_key": bucket_key,
                 "model": identity,
                 "usage": model_usage or {},
-                "uncached_input_tokens": (
-                    max(input_tokens - cache_read_tokens, 0) if cache_read_tokens is not None else None
-                ),
+                "uncached_input_tokens": (max(input_tokens - cache_read_tokens, 0) if cache_read_tokens is not None else None),
                 "cache_hit_ratio": (_ratio(cache_read_tokens, input_tokens) if cache_read_tokens is not None else None),
                 "measured_at": measured_at,
             }
@@ -338,20 +329,14 @@ def _aggregate_from_state(value: Any) -> dict[str, Any]:
 def _recompute_aggregate_totals(aggregate: dict[str, Any]) -> None:
     """根据当前 models 重算聚合级计数和 total。"""
     models = aggregate["models"]
-    model_call_count = sum(
-        _safe_int(bucket.get("model_call_count")) or 0 for bucket in models.values() if isinstance(bucket, Mapping)
-    )
+    model_call_count = sum(_safe_int(bucket.get("model_call_count")) or 0 for bucket in models.values() if isinstance(bucket, Mapping))
     usage_reported_call_count = sum(
-        _safe_int(bucket.get("usage_reported_call_count")) or 0
-        for bucket in models.values()
-        if isinstance(bucket, Mapping)
+        _safe_int(bucket.get("usage_reported_call_count")) or 0 for bucket in models.values() if isinstance(bucket, Mapping)
     )
     usage_unavailable_call_count = _safe_int(aggregate.get("usage_unavailable_call_count")) or 0
     aggregate["model_call_count"] = model_call_count + usage_unavailable_call_count
     aggregate["usage_reported_call_count"] = usage_reported_call_count
-    aggregate["complete"] = aggregate["model_call_count"] > 0 and (
-        usage_reported_call_count == aggregate["model_call_count"]
-    )
+    aggregate["complete"] = aggregate["model_call_count"] > 0 and (usage_reported_call_count == aggregate["model_call_count"])
     total = dict(ZERO_TOTAL)
     for bucket in models.values():
         if not isinstance(bucket, Mapping):
@@ -378,10 +363,7 @@ def _without_blacklisted_providers(aggregate: Mapping[str, Any]) -> dict[str, An
     result["models"] = {
         key: bucket
         for key, bucket in result["models"].items()
-        if not (
-            isinstance(bucket.get("model"), Mapping)
-            and bucket["model"].get("provider_id") in TOKEN_USAGE_PROVIDER_BLACKLIST
-        )
+        if not (isinstance(bucket.get("model"), Mapping) and bucket["model"].get("provider_id") in TOKEN_USAGE_PROVIDER_BLACKLIST)
     }
     _recompute_aggregate_totals(result)
     return result
@@ -432,9 +414,7 @@ def _add_call_to_aggregate(
     cache_read = _cache_read_tokens(usage)
     cache_observed = cache_read is not None
     cache_observed_calls = (_safe_int(previous_bucket.get("cache_observed_call_count")) or 0) + int(cache_observed)
-    cache_hit_calls = (_safe_int(previous_bucket.get("cache_hit_call_count")) or 0) + int(
-        cache_read is not None and cache_read > 0
-    )
+    cache_hit_calls = (_safe_int(previous_bucket.get("cache_hit_call_count")) or 0) + int(cache_read is not None and cache_read > 0)
     observed_input = (_safe_int(previous_bucket.get("cache_observed_input_tokens")) or 0) + (
         _usage_input_tokens(usage) if cache_observed else 0
     )
@@ -444,8 +424,7 @@ def _add_call_to_aggregate(
         "model": model_identity,
         "usage": cumulative_usage or {},
         "model_call_count": (_safe_int(previous_bucket.get("model_call_count")) or 0) + 1,
-        "usage_reported_call_count": (_safe_int(previous_bucket.get("usage_reported_call_count")) or 0)
-        + int(usage_increment is not None),
+        "usage_reported_call_count": (_safe_int(previous_bucket.get("usage_reported_call_count")) or 0) + int(usage_increment is not None),
         "cache_observed_call_count": cache_observed_calls,
         "cache_hit_call_count": cache_hit_calls,
         "cache_observed_input_tokens": observed_input,

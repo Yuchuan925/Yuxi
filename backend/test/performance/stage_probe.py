@@ -161,9 +161,7 @@ def install(probe, app=None):
 
     replacements = {}
     for module_name, module in list(sys.modules.items()):
-        if module is None or not (
-            module_name in modules or ".repositories." in module_name and module_name.startswith("yuxi.modules.")
-        ):
+        if module is None or not (module_name in modules or ".repositories." in module_name and module_name.startswith("yuxi.modules.")):
             continue
         for value in vars(module).copy().values():
             if inspect.isfunction(value) and value.__module__ == module_name:

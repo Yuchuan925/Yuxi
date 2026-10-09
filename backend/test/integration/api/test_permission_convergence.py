@@ -84,9 +84,7 @@ async def actors(test_client, admin_headers):
 
 async def create_agent(actors, owner, **payload):
     """创建定义并登记清理目标。"""
-    response = await actors["client"].post(
-        "/api/agent", headers=owner["headers"], json={"name": "Permission bot", **payload}
-    )
+    response = await actors["client"].post("/api/agent", headers=owner["headers"], json={"name": "Permission bot", **payload})
     assert response.status_code == 200, response.text
     agent = response.json()["agent"]
     actors["agents"].append(agent["slug"])
@@ -103,15 +101,12 @@ async def test_department_member_update_rechecks_after_concurrent_promotion(acto
     try:
         await db.execute("UPDATE users SET role='admin' WHERE id=$1", member["id"])
         pending = asyncio.create_task(
-            client.put(
-                f"/api/auth/users/{member['id']}", headers=admin["headers"], json={"username": "forbidden_race_edit"}
-            )
+            client.put(f"/api/auth/users/{member['id']}", headers=admin["headers"], json={"username": "forbidden_race_edit"})
         )
         for _ in range(100):
             await db.execute("SELECT pg_stat_clear_snapshot()")
             if await db.fetchval(
-                "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock' "
-                "AND query LIKE '%users%' AND pid<>pg_backend_pid())"
+                "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock' AND query LIKE '%users%' AND pid<>pg_backend_pid())"
             ):
                 break
             await asyncio.sleep(0.02)
@@ -133,9 +128,7 @@ async def test_shared_transfer_requires_superadmin_and_active_admin_recipient(ac
     """共享配置不能改所有者，专用转移路径保留定义身份并拒绝普通接收者。"""
     client, db = actors["client"], actors["db"]
     first, second, user = (actors["identities"][key] for key in ("admin0", "admin1", "user0"))
-    agent = await create_agent(
-        actors, first, visibility="shared", share_config={"version": 2, "read_scope": None, "manage_scope": None}
-    )
+    agent = await create_agent(actors, first, visibility="shared", share_config={"version": 2, "read_scope": None, "manage_scope": None})
     path = f"/api/system/resources/agent/{agent['slug']}/owner"
     for headers, recipient, status in [(first["headers"], second["uid"], 403), (actors["root"], user["uid"], 422)]:
         response = await client.put(path, headers=headers, json={"owner_uid": recipient})
@@ -165,9 +158,7 @@ async def test_ordinary_shared_knowledge_and_skill_creation_is_rejected_without_
     prepared = await client.post(
         "/api/skills/import/prepare",
         headers=user["headers"],
-        files={
-            "file": ("SKILL.md", f"---\nname: {name}\ndescription: rejected\n---\nTest\n".encode(), "text/markdown")
-        },
+        files={"file": ("SKILL.md", f"---\nname: {name}\ndescription: rejected\n---\nTest\n".encode(), "text/markdown")},
     )
     assert prepared.status_code == 200, prepared.text
     draft = prepared.json()["data"]["draft_id"]
@@ -294,9 +285,7 @@ async def test_share_private_agent_preserves_identity_owner_and_config(actors, p
     headers = owner["headers"] if publisher == "admin" else actors["root"]
     agent = await create_agent(actors, owner, config_json={"context": {"system_prompt": "retain original role"}})
     path = f"/api/agent/{agent['slug']}"
-    before = await db.fetchrow(
-        "SELECT id,slug,created_by,config_json,share_config FROM agents WHERE slug=$1", agent["slug"]
-    )
+    before = await db.fetchrow("SELECT id,slug,created_by,config_json,share_config FROM agents WHERE slug=$1", agent["slug"])
     detail = await client.get(path, headers=headers)
     assert detail.json()["agent"]["can_share"] is True
     for invalid in (
@@ -313,9 +302,7 @@ async def test_share_private_agent_preserves_identity_owner_and_config(actors, p
 
     shared = await client.put(path, headers=headers, json={"visibility": "shared", "share_config": SHARED})
     assert shared.status_code == 200, shared.text
-    after = await db.fetchrow(
-        "SELECT id,slug,created_by,config_json,visibility FROM agents WHERE slug=$1", agent["slug"]
-    )
+    after = await db.fetchrow("SELECT id,slug,created_by,config_json,visibility FROM agents WHERE slug=$1", agent["slug"])
     assert after["visibility"] == "shared"
     assert {key: after[key] for key in before.keys() if key != "share_config"} == {
         key: before[key] for key in before.keys() if key != "share_config"
@@ -374,14 +361,10 @@ async def test_department_admin_limits_role_promotion_and_deleted_owner_retentio
     for payload in ({"password": actors["password"]}, {"role": "admin"}, {"department_id": other["department_id"]}):
         response = await client.put(f"/api/auth/users/{user['id']}", headers=admin["headers"], json=payload)
         assert response.status_code == 403, response.text
-    assert (
-        await client.put(f"/api/auth/users/{other['id']}", headers=admin["headers"], json={"username": "forged"})
-    ).status_code == 403
+    assert (await client.put(f"/api/auth/users/{other['id']}", headers=admin["headers"], json={"username": "forged"})).status_code == 403
     for old, target in (("admin", "user"), ("superadmin", "admin"), ("superadmin", "user")):
         if old == "superadmin":
-            response = await client.put(
-                f"/api/auth/users/{admin['id']}", headers=actors["root"], json={"role": "superadmin"}
-            )
+            response = await client.put(f"/api/auth/users/{admin['id']}", headers=actors["root"], json={"role": "superadmin"})
             assert response.status_code == 200, response.text
         response = await client.put(f"/api/auth/users/{admin['id']}", headers=actors["root"], json={"role": target})
         assert response.status_code == 422, response.text
@@ -436,8 +419,7 @@ async def test_member_write_rechecks_actor_after_waiting_for_target(actors, oper
         for _ in range(200):
             await observer.execute("SELECT pg_stat_clear_snapshot()")
             waiting = await observer.fetchval(
-                "SELECT EXISTS (SELECT 1 FROM pg_stat_activity "
-                "WHERE $1 = ANY(pg_blocking_pids(pid)) AND query LIKE '%users%')",
+                "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid)) AND query LIKE '%users%')",
                 db.get_server_pid(),
             )
             if waiting:
@@ -595,9 +577,7 @@ async def test_agent_write_rechecks_actor_after_waiting_for_resource(actors, ope
             ),
             owner["uid"],
         )
-    before = await db.fetchrow(
-        "SELECT name,visibility,created_by,share_config,config_json FROM agents WHERE slug=$1", slug
-    )
+    before = await db.fetchrow("SELECT name,visibility,created_by,share_config,config_json FROM agents WHERE slug=$1", slug)
     observer = await asyncpg.connect(os.environ["POSTGRES_URL"].replace("+asyncpg", ""))
     transaction = db.transaction()
     await transaction.start()
@@ -612,15 +592,12 @@ async def test_agent_write_rechecks_actor_after_waiting_for_resource(actors, ope
         elif operation == "delete":
             request = client.delete(path, headers=actor["headers"])
         else:
-            request = client.put(
-                f"/api/system/resources/agent/{slug}/owner", headers=actor["headers"], json={"owner_uid": actor["uid"]}
-            )
+            request = client.put(f"/api/system/resources/agent/{slug}/owner", headers=actor["headers"], json={"owner_uid": actor["uid"]})
         pending = asyncio.create_task(request)
         for _ in range(200):
             await observer.execute("SELECT pg_stat_clear_snapshot()")
             if await observer.fetchval(
-                "SELECT EXISTS (SELECT 1 FROM pg_stat_activity "
-                "WHERE $1 = ANY(pg_blocking_pids(pid)) AND query LIKE '%agents%')",
+                "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid)) AND query LIKE '%agents%')",
                 db.get_server_pid(),
             ):
                 break
@@ -633,9 +610,7 @@ async def test_agent_write_rechecks_actor_after_waiting_for_resource(actors, ope
             await observer.execute("UPDATE users SET is_deleted=1 WHERE id=$1", actor["id"])
         await transaction.commit()
         response = await asyncio.wait_for(pending, 5)
-        after = await observer.fetchrow(
-            "SELECT name,visibility,created_by,share_config,config_json FROM agents WHERE slug=$1", slug
-        )
+        after = await observer.fetchrow("SELECT name,visibility,created_by,share_config,config_json FROM agents WHERE slug=$1", slug)
         assert response.status_code == (422 if operation == "config" else 403) and after == before, (
             response.status_code,
             response.text,

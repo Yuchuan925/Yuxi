@@ -27,9 +27,7 @@ async def list_skill_versions(db: AsyncSession, *, slug: str, operator: User) ->
 async def release_skill_version(db: AsyncSession, *, slug: str, expected_revision: str, operator: User) -> dict:
     """为当前已保存内容建立历史记录。"""
     item = await get_manageable_skill_or_raise(db, operator, slug, for_update=True)
-    result = await commit_skill_content(
-        db, item=item, operator=operator, expected_revision=expected_revision, release=True
-    )
+    result = await commit_skill_content(db, item=item, operator=operator, expected_revision=expected_revision, release=True)
     return result.published_version
 
 

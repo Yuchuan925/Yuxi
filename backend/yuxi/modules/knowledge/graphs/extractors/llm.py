@@ -75,8 +75,7 @@ class LLMGraphExtractor(GraphExtractor):
         # AsyncCompletions.create() 上，接口直接报未知参数，每块抽取都失败。
         if model_params and "enable_thinking" in model_params:
             raise ValueError(
-                "LLM 抽取器 model_params 不支持顶层 enable_thinking，请写在 extra_body 中，"
-                '例如 {"extra_body": {"enable_thinking": false}}'
+                'LLM 抽取器 model_params 不支持顶层 enable_thinking，请写在 extra_body 中，例如 {"extra_body": {"enable_thinking": false}}'
             )
 
     async def extract(self, text: str, *, chunk_metadata: dict[str, Any] | None = None) -> dict[str, Any]:

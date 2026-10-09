@@ -61,9 +61,7 @@ def test_layout_images_preserve_titles_and_reference_links(tmp_path, monkeypatch
         text = parser._extract_markdown([{"result": {"layoutParsingResults": [item]}}], tmp_path, {})
     else:
         parser = PPStructureV3Parser(server_url="https://ocr.example.test")
-        text = parser._parse_api_result({"result": {"layoutParsingResults": [item]}}, "source.pdf", tmp_path)[
-            "full_text"
-        ]
+        text = parser._parse_api_result({"result": {"layoutParsingResults": [item]}}, "source.pdf", tmp_path)["full_text"]
     links = local_image_links(text)
     assert len(links) == 1
     assert (tmp_path / links[0]).read_bytes() == b"chart"
@@ -86,11 +84,7 @@ def test_paddleocr_vl_submits_model_specific_payload(tmp_path: Path, monkeypatch
         if url.endswith("/job-vl"):
             return FakeResponse(200, {"data": {"state": "done", "resultUrl": {"jsonUrl": "https://result.test/vl"}}})
         row = {
-            "result": {
-                "layoutParsingResults": [
-                    {"markdown": {"text": "VL markdown", "images": {}}, "outputImages": {"debug": "ignored"}}
-                ]
-            }
+            "result": {"layoutParsingResults": [{"markdown": {"text": "VL markdown", "images": {}}, "outputImages": {"debug": "ignored"}}]}
         }
         return FakeResponse(200, text=json.dumps(row))
 
@@ -131,11 +125,7 @@ def test_paddleocr_pp_ocrv6_submits_model_specific_payload(tmp_path: Path, monke
     def fake_get(url, headers=None, timeout=None):
         if url.endswith("/job-ocr"):
             return FakeResponse(200, {"data": {"state": "done", "resultUrl": {"jsonUrl": "https://result.test/ocr"}}})
-        row = {
-            "result": {
-                "ocrResults": [{"prunedResult": {"rec_texts": ["PaddleOCR API Test", "", "Invoice total: 123.45"]}}]
-            }
-        }
+        row = {"result": {"ocrResults": [{"prunedResult": {"rec_texts": ["PaddleOCR API Test", "", "Invoice total: 123.45"]}}]}}
         return FakeResponse(200, text=json.dumps(row))
 
     monkeypatch.setattr(paddleocr_api.requests, "post", fake_post)

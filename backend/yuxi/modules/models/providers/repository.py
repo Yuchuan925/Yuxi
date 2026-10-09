@@ -8,9 +8,7 @@ from yuxi.modules.models.tables import ModelProvider
 
 async def list_model_providers(db: AsyncSession) -> list[ModelProvider]:
     """获取全部模型供应商配置。"""
-    result = await db.execute(
-        select(ModelProvider).order_by(ModelProvider.is_enabled.desc(), ModelProvider.provider_id.asc())
-    )
+    result = await db.execute(select(ModelProvider).order_by(ModelProvider.is_enabled.desc(), ModelProvider.provider_id.asc()))
     return list(result.scalars().all())
 
 

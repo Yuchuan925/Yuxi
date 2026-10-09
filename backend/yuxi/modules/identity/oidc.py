@@ -386,18 +386,14 @@ async def find_user_by_oidc_sub(db, sub: str) -> User | None:
     # 方法1: 检查是否有用户的 uid 直接等于 "oidc:{sub}"（标准 OIDC 用户）
     standard_oidc_uid = f"oidc:{sub}"
     # 占位绑定记录会被标记为 is_deleted=1，但我们仍需要查询它们来获取绑定关系
-    result = await db.execute(
-        select(User).filter(User.uid == standard_oidc_uid, User.is_deleted == 0, User.user_kind == "human")
-    )
+    result = await db.execute(select(User).filter(User.uid == standard_oidc_uid, User.is_deleted == 0, User.user_kind == "human"))
     user = result.scalar_one_or_none()
     if user:
         return user
 
     # 绑定占位用户被标记为 is_deleted=1，需要包括deleted来查询
     binding_result = await db.execute(
-        select(User)
-        .filter(User.uid.like(f"{standard_oidc_uid}:%"), User.is_deleted.in_([0, 1]))
-        .order_by(User.id.asc())
+        select(User).filter(User.uid.like(f"{standard_oidc_uid}:%"), User.is_deleted.in_([0, 1])).order_by(User.id.asc())
     )
     binding_users = list(binding_result.scalars().all())
     if binding_users:
@@ -405,9 +401,7 @@ async def find_user_by_oidc_sub(db, sub: str) -> User | None:
             target_user_id = _extract_oidc_placeholder_target_user_id(placeholder.uid)
             if target_user_id is None:
                 continue
-            result = await db.execute(
-                select(User).filter(User.id == target_user_id, User.is_deleted == 0, User.user_kind == "human")
-            )
+            result = await db.execute(select(User).filter(User.id == target_user_id, User.is_deleted == 0, User.user_kind == "human"))
             target_user = result.scalar_one_or_none()
             if target_user:
                 logger.debug(f"Resolved OIDC binding placeholder {placeholder.uid} to user {target_user_id}")
@@ -420,25 +414,19 @@ async def find_deleted_oidc_user_by_sub(db, sub: str) -> User | None:
     """查找已注销的 OIDC 账户（直接 uid 记录或绑定占位记录）"""
     oidc_uid = f"oidc:{sub}"
 
-    result = await db.execute(
-        select(User).filter(User.uid == oidc_uid, User.is_deleted == 1, User.user_kind == "human")
-    )
+    result = await db.execute(select(User).filter(User.uid == oidc_uid, User.is_deleted == 1, User.user_kind == "human"))
     deleted_user = result.scalar_one_or_none()
     if deleted_user:
         return deleted_user
 
-    binding_result = await db.execute(
-        select(User).filter(User.uid.like(f"{oidc_uid}:%"), User.is_deleted == 1).order_by(User.id.asc())
-    )
+    binding_result = await db.execute(select(User).filter(User.uid.like(f"{oidc_uid}:%"), User.is_deleted == 1).order_by(User.id.asc()))
     binding_users = list(binding_result.scalars().all())
     if binding_users:
         for placeholder in binding_users:
             target_user_id = _extract_oidc_placeholder_target_user_id(placeholder.uid)
             if target_user_id is None:
                 continue
-            result = await db.execute(
-                select(User).filter(User.id == target_user_id, User.is_deleted == 1, User.user_kind == "human")
-            )
+            result = await db.execute(select(User).filter(User.id == target_user_id, User.is_deleted == 1, User.user_kind == "human"))
             target_user = result.scalar_one_or_none()
             if target_user:
                 return target_user
@@ -500,9 +488,7 @@ async def create_oidc_binding_placeholder(db, sub: str, target_user: User) -> No
     try:
         db.add(placeholder_user)
         await db.commit()
-        logger.info(
-            f"Created OIDC binding placeholder (deleted) for sub {sub} -> user {target_user.id} ({target_user.uid})"
-        )
+        logger.info(f"Created OIDC binding placeholder (deleted) for sub {sub} -> user {target_user.id} ({target_user.uid})")
     except IntegrityError:
         # 并发创建冲突，回滚后忽略
         await db.rollback()
@@ -569,8 +555,7 @@ async def create_oidc_user(db, user_info: dict, department_id: int | None = None
             else:
                 # sub 已经绑定到另一个用户，冲突，拒绝创建
                 logger.warning(
-                    f"Cannot create OIDC user with raw uid {uid}: "
-                    f"sub {sub} is already bound to another user {user_by_sub.id}, conflict"
+                    f"Cannot create OIDC user with raw uid {uid}: sub {sub} is already bound to another user {user_by_sub.id}, conflict"
                 )
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,

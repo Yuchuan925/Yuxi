@@ -82,9 +82,7 @@ def test_provisioner_client_sends_project_workdir_contract(monkeypatch):
         token="test-provisioner-token-that-is-long-enough",
     )
 
-    record = client.create(
-        "sandbox-1", "root-thread", "user-1", workdir_path="projects/11111111-1111-4111-8111-111111111111"
-    )
+    record = client.create("sandbox-1", "root-thread", "user-1", workdir_path="projects/11111111-1111-4111-8111-111111111111")
 
     assert calls[0]["json"]["workdir_path"] == "projects/11111111-1111-4111-8111-111111111111"
     assert record.generation == "generation-1"

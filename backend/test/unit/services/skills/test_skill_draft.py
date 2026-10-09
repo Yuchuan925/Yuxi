@@ -49,9 +49,7 @@ def _write_draft(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, items: list[di
         ([{"slug": " demo ", "source_dir": f"items/{'a' * 32}"}], "条目非法"),
     ],
 )
-def test_invalid_draft_item_never_reaches_install(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, items: list[dict], message: str
-):
+def test_invalid_draft_item_never_reaches_install(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, items: list[dict], message: str):
     """失败状态、重复身份和不可信路径在草稿边界拒绝。"""
     draft_id = _write_draft(tmp_path, monkeypatch, items)
 
@@ -95,16 +93,11 @@ async def test_partial_install_preserves_failed_and_unselected_snapshots(tmp_pat
     """部分成功后重读磁盘，失败和未选条目仍可确认且成功项不再出现。"""
     from yuxi.modules.extensions.skills import personal
 
-    items = [
-        {"slug": slug, "source_dir": f"items/{letter * 32}"}
-        for slug, letter in [("alpha", "a"), ("beta", "b"), ("gamma", "c")]
-    ]
+    items = [{"slug": slug, "source_dir": f"items/{letter * 32}"} for slug, letter in [("alpha", "a"), ("beta", "b"), ("gamma", "c")]]
     draft_id = _write_draft(tmp_path, monkeypatch, items)
     for item in items:
         directory = tmp_path / "skill_import_drafts" / draft_id / item["source_dir"]
-        (directory / "SKILL.md").write_text(
-            f"---\nname: {item['slug']}\ndescription: example\n---\nBody", encoding="utf-8"
-        )
+        (directory / "SKILL.md").write_text(f"---\nname: {item['slug']}\ndescription: example\n---\nBody", encoding="utf-8")
     from yuxi.modules.workspace import paths
 
     monkeypatch.setattr(paths, "get_user_data_dir", lambda: tmp_path / "users")
@@ -113,9 +106,7 @@ async def test_partial_install_preserves_failed_and_unselected_snapshots(tmp_pat
     existing.mkdir(parents=True)
     (existing / "sentinel.txt").write_text("existing", encoding="utf-8")
 
-    results = await personal.confirm_personal_skill_install_draft(
-        draft_id=draft_id, slugs=["alpha", "beta"], operator=operator
-    )
+    results = await personal.confirm_personal_skill_install_draft(draft_id=draft_id, slugs=["alpha", "beta"], operator=operator)
 
     assert [item["success"] for item in results] == [True, False]
     root, metadata, remaining = skill_draft.load_and_select_draft_items(draft_id, None, operator)
@@ -144,9 +135,7 @@ async def test_zip_rejects_unsafe_entries_before_publish(tmp_path, monkeypatch, 
         archive.writestr(entry, "outside")
     monkeypatch.setattr(skill_draft, "get_runtime_dir", lambda: tmp_path)
     with pytest.raises(ValueError, match="ZIP 包含"):
-        await skill_draft.create_uploaded_skill_draft(
-            filename="skill.zip", file_bytes=data.getvalue(), operator=User(uid="owner")
-        )
+        await skill_draft.create_uploaded_skill_draft(filename="skill.zip", file_bytes=data.getvalue(), operator=User(uid="owner"))
     assert not list((tmp_path / "skill_import_drafts").iterdir())
 
 
@@ -161,7 +150,5 @@ async def test_zip_rejects_expanded_size_before_extract(tmp_path, monkeypatch):
         archive.writestr("oversized.txt", b"a" * (50 * 1024 * 1024 + 1))
     monkeypatch.setattr(skill_draft, "get_runtime_dir", lambda: tmp_path)
     with pytest.raises(ValueError, match="展开后"):
-        await skill_draft.create_uploaded_skill_draft(
-            filename="skill.zip", file_bytes=data.getvalue(), operator=User(uid="owner")
-        )
+        await skill_draft.create_uploaded_skill_draft(filename="skill.zip", file_bytes=data.getvalue(), operator=User(uid="owner"))
     assert not list((tmp_path / "skill_import_drafts").iterdir())

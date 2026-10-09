@@ -84,8 +84,7 @@ def test_keeps_non_openai_tool_images_unchanged() -> None:
         ("This model does not support image input", 400),
         ("No endpoints found that support image input", 404),
         (
-            "Error code: 400 - {'code': 20041, 'message': "
-            "'The model is not a VLM (Vision Language Model). Please use text-only prompts.'}",
+            "Error code: 400 - {'code': 20041, 'message': 'The model is not a VLM (Vision Language Model). Please use text-only prompts.'}",
             400,
         ),
     ],

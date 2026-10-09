@@ -27,9 +27,7 @@ def load_mysql_config() -> dict[str, Any]:
     required_keys = ["host", "user", "password", "database"]
     for key in required_keys:
         if not config[key]:
-            raise MySQLConnectionError(
-                f"MySQL configuration missing required key: {key}, please check your environment variables."
-            )
+            raise MySQLConnectionError(f"MySQL configuration missing required key: {key}, please check your environment variables.")
 
     return config
 

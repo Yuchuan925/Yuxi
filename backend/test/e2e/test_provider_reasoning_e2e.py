@@ -83,9 +83,7 @@ async def test_reasoning_stream_matches_persisted_history(e2e_client, e2e_header
                                     {
                                         "type": "input_text",
                                         "text": (
-                                            "Review def double(x): return x + 1. "
-                                            "Is it correct for doubling all integers? "
-                                            "Give a counterexample and the corrected return statement."
+                                            "Review def double(x): return x + 1. Is it correct for doubling all integers? Give a counterexample and the corrected return statement."
                                         ),
                                     }
                                 ],
@@ -104,10 +102,7 @@ async def test_reasoning_stream_matches_persisted_history(e2e_client, e2e_header
             """只收集本 Run 的 Public SSE 推理增量。"""
             parts: list[str] = []
             async for event in iter_public_thread_events(client, headers, thread_id):
-                if (
-                    event["type"] == "yuxi.session.turn.reasoning.delta"
-                    and event.get("yuxi", {}).get("run_id") == run_id
-                ):
+                if event["type"] == "yuxi.session.turn.reasoning.delta" and event.get("yuxi", {}).get("run_id") == run_id:
                     parts.append(event["delta"])
                 if event["turn_id"] == turn_id and event["type"] in {
                     "agent.session.turn.completed",
@@ -127,9 +122,7 @@ async def test_reasoning_stream_matches_persisted_history(e2e_client, e2e_header
         history = await client.get(f"/api/v1/agents/sessions/{thread_id}/items?order=asc&limit=100", headers=headers)
         assert history.status_code == 200
         messages = [
-            m
-            for m in history.json()["data"]
-            if m["type"] == "message" and m["role"] == "assistant" and m["yuxi"]["run_id"] == run_id
+            m for m in history.json()["data"] if m["type"] == "message" and m["role"] == "assistant" and m["yuxi"]["run_id"] == run_id
         ]
         assert len(messages) == 1
         assert "".join(messages[0]["yuxi"].get("reasoning", {}).values()) == reasoning
@@ -141,9 +134,7 @@ async def test_reasoning_stream_matches_persisted_history(e2e_client, e2e_header
                 messages[0]["yuxi"]["message_id"],
                 run_id,
             )
-            metadata = (
-                json.loads(row["extra_metadata"]) if isinstance(row["extra_metadata"], str) else row["extra_metadata"]
-            )
+            metadata = json.loads(row["extra_metadata"]) if isinstance(row["extra_metadata"], str) else row["extra_metadata"]
             blocks = metadata["content"]
             assert isinstance(blocks, list)
             assert "".join(b["reasoning"] for b in blocks if b["type"] == "reasoning") == reasoning

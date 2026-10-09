@@ -74,11 +74,7 @@ class RunMessageRecorder:
                 operation.content_parts.append(delta["text"])
             else:
                 fields = delta.get("fields")
-                if (
-                    isinstance(fields, dict)
-                    and fields.get("type") == "text-delta"
-                    and isinstance(fields.get("text"), str)
-                ):
+                if isinstance(fields, dict) and fields.get("type") == "text-delta" and isinstance(fields.get("text"), str):
                     operation.content_parts.append(fields["text"])
         elif event_name == "content-block-finish":
             content = message.get("content")

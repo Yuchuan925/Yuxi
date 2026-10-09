@@ -257,10 +257,7 @@ class MilvusGraphService:
         vector_wakeup = asyncio.Event()
         started_at = time.monotonic()
 
-        logger.info(
-            f"图谱构建开始 kb_id={kb_id} pending={total_pending} "
-            f"extraction_concurrency={worker_count} fetch_size={fetch_size}"
-        )
+        logger.info(f"图谱构建开始 kb_id={kb_id} pending={total_pending} extraction_concurrency={worker_count} fetch_size={fetch_size}")
 
         async def put_queue_item(queue: asyncio.Queue, item) -> None:
             while True:
@@ -288,9 +285,7 @@ class MilvusGraphService:
                         await put_queue_item(write_queue, chunk.chunk_id)
                     except Exception as exc:
                         extraction_failed += 1
-                        logger.error(
-                            f"Chunk 图谱抽取失败 kb_id={kb_id} chunk_id={chunk.chunk_id} worker={worker_index}: {exc}"
-                        )
+                        logger.error(f"Chunk 图谱抽取失败 kb_id={kb_id} chunk_id={chunk.chunk_id} worker={worker_index}: {exc}")
                     finally:
                         active_extractions -= 1
                         extraction_completed += 1
@@ -315,9 +310,7 @@ class MilvusGraphService:
                         raise ValueError(f"图谱写入找不到 chunk: {chunk_id}")
                     extraction_result = await self._get_chunk_extraction_result(kb_id, chunk, extractor)
                     write_started_at = time.monotonic()
-                    entities, triples = await await_io(
-                        asyncio.to_thread(self.write_chunk_graph, kb_id, chunk, extraction_result)
-                    )
+                    entities, triples = await await_io(asyncio.to_thread(self.write_chunk_graph, kb_id, chunk, extraction_result))
                     await self.graph_repo.upsert_chunk_graph(
                         kb_id=kb_id,
                         file_id=chunk.file_id,
@@ -440,15 +433,12 @@ class MilvusGraphService:
                     indexed_chunks = await self.chunk_repo.count_graph_indexed_by_kb_id(kb_id)
                     newly_indexed = max(indexed_chunks - initially_indexed, 0)
                     vector_progress = newly_indexed / max(total_pending, 1) * 35.0
-                    await context.set_progress(
-                        5.0 + min(extraction_progress + structure_progress + vector_progress, 95.0), message
-                    )
+                    await context.set_progress(5.0 + min(extraction_progress + structure_progress + vector_progress, 95.0), message)
                 if reporter_stop.is_set():
                     return
 
         extraction_workers = [
-            asyncio.create_task(extraction_worker(index + 1), name=f"graph-extractor-{index + 1}")
-            for index in range(worker_count)
+            asyncio.create_task(extraction_worker(index + 1), name=f"graph-extractor-{index + 1}") for index in range(worker_count)
         ]
         writer_task = asyncio.create_task(write_worker(), name="graph-writer")
         vector_task = asyncio.create_task(vector_worker(), name="graph-vector-indexer")
@@ -515,8 +505,7 @@ class MilvusGraphService:
         }
         if incomplete or write_failed or vector_counts["failed"]:
             raise RuntimeError(
-                f"图谱构建执行异常：chunk_incomplete={incomplete}, "
-                f"write_failed={write_failed}, vector_failed={vector_counts['failed']}"
+                f"图谱构建执行异常：chunk_incomplete={incomplete}, write_failed={write_failed}, vector_failed={vector_counts['failed']}"
             )
         return result
 
@@ -584,9 +573,7 @@ class MilvusGraphService:
         relations = graph_payload["relations"]
         entity_by_id = {entity["id"]: entity for entity in entities}
         entity_records = self._build_entity_records(kb_id, entities)
-        entity_record_by_local_id = {
-            entity["id"]: record for entity, record in zip(entities, entity_records, strict=True)
-        }
+        entity_record_by_local_id = {entity["id"]: record for entity, record in zip(entities, entity_records, strict=True)}
         triple_records = self._build_triple_records(kb_id, relations, entity_record_by_local_id, graph_payload)
         content_preview = (chunk.content or "")[:300]
 
@@ -854,39 +841,26 @@ class MilvusGraphService:
         """Neo4j 尚未完成清理时，也不能发布 PG 已不可见的内容。"""
         chunk_ids = {n["properties"]["chunk_id"] for n in result["nodes"] if n["properties"].get("chunk_id")}
         chunk_ids.update(e["properties"]["chunk_id"] for e in result["edges"] if e["properties"].get("chunk_id"))
-        chunk_ids.update(
-            n["properties"]["source_chunk_id"] for n in result["nodes"] if n["properties"].get("source_chunk_id")
-        )
+        chunk_ids.update(n["properties"]["source_chunk_id"] for n in result["nodes"] if n["properties"].get("source_chunk_id"))
         entity_ids = {n["properties"]["entity_id"] for n in result["nodes"] if n["properties"].get("entity_id")}
-        visible_chunks, visible_entities = await self.graph_repo.visible_graph_ids(
-            kb_id, list(chunk_ids), list(entity_ids)
-        )
+        visible_chunks, visible_entities = await self.graph_repo.visible_graph_ids(kb_id, list(chunk_ids), list(entity_ids))
         nodes = [
             n
             for n in result["nodes"]
-            if (
-                n["properties"].get("chunk_id") in visible_chunks
-                or n["properties"].get("entity_id") in visible_entities
-            )
+            if (n["properties"].get("chunk_id") in visible_chunks or n["properties"].get("entity_id") in visible_entities)
         ]
         for node in nodes:
             properties = node["properties"]
             if properties.get("entity_id") and properties.get("source_chunk_id") not in visible_chunks:
                 node["properties"] = {
-                    key: properties[key]
-                    for key in ("entity_id", "normalized_name", "label", "kb_id")
-                    if key in properties
+                    key: properties[key] for key in ("entity_id", "normalized_name", "label", "kb_id") if key in properties
                 }
                 node["name"] = properties["normalized_name"]
         node_ids = {n["id"] for n in nodes}
         edges = [
             e
             for e in result["edges"]
-            if (
-                e["source_id"] in node_ids
-                and e["target_id"] in node_ids
-                and e["properties"].get("chunk_id") in visible_chunks
-            )
+            if (e["source_id"] in node_ids and e["target_id"] in node_ids and e["properties"].get("chunk_id") in visible_chunks)
         ]
         return {"nodes": nodes, "edges": edges}
 
@@ -1231,15 +1205,11 @@ class MilvusGraphService:
         return self._finalize_subgraph_result(nodes, edges, limit)
 
     @staticmethod
-    def _finalize_subgraph_result(
-        nodes: list[dict[str, Any]], edges: list[dict[str, Any]], limit: int
-    ) -> dict[str, Any]:
+    def _finalize_subgraph_result(nodes: list[dict[str, Any]], edges: list[dict[str, Any]], limit: int) -> dict[str, Any]:
         limit = max(0, limit)
         final_nodes = nodes[:limit]
         node_ids = {node["id"] for node in final_nodes}
-        final_edges = [
-            edge for edge in edges if edge.get("source_id") in node_ids and edge.get("target_id") in node_ids
-        ]
+        final_edges = [edge for edge in edges if edge.get("source_id") in node_ids and edge.get("target_id") in node_ids]
         return {"nodes": final_nodes, "edges": final_edges[: limit * 2]}
 
     def _normalize_node(self, raw_node: Any, kb_id: str | None = None) -> dict[str, Any]:

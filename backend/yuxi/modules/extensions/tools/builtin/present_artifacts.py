@@ -72,13 +72,9 @@ def _normalize_presented_artifact_path(filepath: str, runtime: ToolRuntime) -> s
     if not normalized_input:
         raise ValueError("文件路径不能为空")
 
-    normalized_path = str(
-        PurePosixPath(normalized_input if normalized_input.startswith("/") else f"/{normalized_input}")
-    )
+    normalized_path = str(PurePosixPath(normalized_input if normalized_input.startswith("/") else f"/{normalized_input}"))
     workdir_path = str(getattr(runtime_context, "workdir_path", "") or "").rstrip("/")
-    allowed = normalized_path.startswith(f"{workdir_path}/") or normalized_path.startswith(
-        f"{VIRTUAL_PATH_PREFIX.rstrip('/')}/"
-    )
+    allowed = normalized_path.startswith(f"{workdir_path}/") or normalized_path.startswith(f"{VIRTUAL_PATH_PREFIX.rstrip('/')}/")
     allowed = allowed or normalized_path.startswith(f"{VIRTUAL_SKILLS_PATH}/")
     if not workdir_path or not allowed:
         raise ValueError(f"文件不在当前用户可见范围内: {normalized_input}")

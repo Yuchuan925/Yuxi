@@ -26,10 +26,7 @@ def is_sensitive_config_key(key: str) -> bool:
 def _redact_value(value: Any) -> Any:
     """递归遮蔽动态配置中的凭据字段。"""
     if isinstance(value, dict):
-        return {
-            key: "[REDACTED]" if is_sensitive_config_key(str(key)) else _redact_value(item)
-            for key, item in value.items()
-        }
+        return {key: "[REDACTED]" if is_sensitive_config_key(str(key)) else _redact_value(item) for key, item in value.items()}
     if isinstance(value, list):
         return [_redact_value(item) for item in value]
     return value

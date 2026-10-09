@@ -71,9 +71,7 @@ async def process_knowledge_projections(_context: dict | None = None) -> list[st
                         executor = await knowledge_base.get_cleanup_executor(event.kb_id)
                         if executor is not None:
                             generation = event.generation if event.operation == "generation_cleanup" else None
-                            await executor.delete_file_chunks_only(
-                                event.kb_id, event.aggregate_id, generation=generation
-                            )
+                            await executor.delete_file_chunks_only(event.kb_id, event.aggregate_id, generation=generation)
                             if event.operation == "file_deleted":
                                 await executor.cleanup_file_resources(event.kb_id, event.aggregate_id)
                     else:
@@ -97,11 +95,7 @@ async def run_knowledge_ingest(context: BackgroundJobContext) -> dict:
     params = dict(payload.get("params") or {})
     operator_id = payload["operator_id"]
     auto_index = bool(params.get("auto_index", False))
-    indexing_params = {
-        key: params[key]
-        for key in ("chunk_preset_id", "chunk_parser_config")
-        if key in params and params[key] is not None
-    }
+    indexing_params = {key: params[key] for key in ("chunk_preset_id", "chunk_parser_config") if key in params and params[key] is not None}
     processing_owner = {
         "processing_job_id": context.job_id,
         "processing_owner": context.worker_id,

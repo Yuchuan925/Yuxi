@@ -55,9 +55,7 @@ class RuntimeAuthorizationMiddleware(AgentMiddleware):
                     },
                 )
                 context._capability_warning_sent = True
-            return ToolMessage(
-                content="能力受限：当前调用者无权使用该工具。", tool_call_id=request.tool_call["id"], status="error"
-            )
+            return ToolMessage(content="能力受限：当前调用者无权使用该工具。", tool_call_id=request.tool_call["id"], status="error")
         return await handler(request)
 
 
@@ -124,7 +122,10 @@ async def refresh_execution_authorization(context) -> None:
         context._enabled_mcps = {slug: set(disabled or []) for slug, disabled in rows}
         limited = any(
             isinstance(selections[name], list) and set(selections[name]) - set(normalized[name]) for name in resources
-        ) or context._skill_runtime_snapshot.get("capability_limited", False)
+        ) or context._skill_runtime_snapshot.get(
+            "capability_limited",
+            False,
+        )
         if limited and not getattr(context, "_capability_warning_sent", False) and run is not None:
             await append_run_event_best_effort(
                 run.id,

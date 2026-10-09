@@ -105,9 +105,7 @@ def filter_declared_config(
     """读取持久配置时仅保留 Schema 可配置字段，不按角色修改权限裁剪。"""
     if not isinstance(config_json, dict):
         return {}
-    declared_fields = {
-        item.name for item in fields(context_schema or BaseContext) if item.metadata.get("configurable", True)
-    }
+    declared_fields = {item.name for item in fields(context_schema or BaseContext) if item.metadata.get("configurable", True)}
     filtered = dict(config_json)
     context = filtered.get("context")
     if isinstance(context, dict):
@@ -264,9 +262,7 @@ class BaseContext:
         metadata={
             "name": "Skills",
             "options": [],
-            "description": (
-                "选择共享和内置 Skill；个人 Skill 始终可用。本地工具和 MCP 依赖在激活后开放，预加载从首轮开放。"
-            ),
+            "description": ("选择共享和内置 Skill；个人 Skill 始终可用。本地工具和 MCP 依赖在激活后开放，预加载从首轮开放。"),
             "type": "list",
             "kind": "skills",
         },
@@ -288,10 +284,7 @@ class BaseContext:
         default=DEFAULT_SUMMARY_THRESHOLD_K,
         metadata={
             "name": "上下文摘要触发阈值 (K)",
-            "description": (
-                f"当上下文大小超过该值时，启用摘要功能以优化上下文使用。单位为 K，默认值为 "
-                f"{DEFAULT_SUMMARY_THRESHOLD_K}K。"
-            ),
+            "description": (f"当上下文大小超过该值时，启用摘要功能以优化上下文使用。单位为 K，默认值为 {DEFAULT_SUMMARY_THRESHOLD_K}K。"),
             "type": "number",
             "auth": "admin",
         },
@@ -301,9 +294,7 @@ class BaseContext:
         default=DEFAULT_SUMMARY_KEEP_MESSAGES,
         metadata={
             "name": "摘要后保留消息数",
-            "description": (
-                f"上下文摘要触发后，除摘要消息外保留最近的消息数量，默认 {DEFAULT_SUMMARY_KEEP_MESSAGES} 条。"
-            ),
+            "description": (f"上下文摘要触发后，除摘要消息外保留最近的消息数量，默认 {DEFAULT_SUMMARY_KEEP_MESSAGES} 条。"),
             "type": "number",
             "auth": "admin",
         },
@@ -338,10 +329,7 @@ class BaseContext:
         default=DEFAULT_MAX_EXECUTION_STEPS,
         metadata={
             "name": "最大执行步数",
-            "description": (
-                "单次 Agent 运行允许的最大 LangGraph 执行步数，对应 recursion_limit，默认 "
-                f"{DEFAULT_MAX_EXECUTION_STEPS}。"
-            ),
+            "description": (f"单次 Agent 运行允许的最大 LangGraph 执行步数，对应 recursion_limit，默认 {DEFAULT_MAX_EXECUTION_STEPS}。"),
             "type": "number",
             "auth": "admin",
         },
@@ -446,9 +434,7 @@ async def resolve_agent_resource_options(
         from yuxi.modules.knowledge.runtime import knowledge_base
 
         databases = await knowledge_base.get_databases_by_user(user)
-        options["knowledges"] = [
-            _resource_option(item.kb_id, item.name, item.description) for item in databases if item.kb_id
-        ]
+        options["knowledges"] = [_resource_option(item.kb_id, item.name, item.description) for item in databases if item.kb_id]
     if "mcps" in fields_to_load:
         from yuxi.modules.extensions.mcp.repository import get_all_mcp_servers
         from yuxi.modules.extensions.mcp.service import get_enabled_mcp_server_slugs
@@ -456,17 +442,13 @@ async def resolve_agent_resource_options(
         servers = await get_all_mcp_servers(db)
         enabled_slugs = set(await get_enabled_mcp_server_slugs(db=db))
         options["mcps"] = [
-            _resource_option(server.slug, server.name, server.description)
-            for server in servers
-            if server.slug in enabled_slugs
+            _resource_option(server.slug, server.name, server.description) for server in servers if server.slug in enabled_slugs
         ]
     if "skills" in fields_to_load:
         from yuxi.modules.extensions.skills.repository import SkillRepository
 
         skills = await SkillRepository(db).list_enabled_readable(user)
-        options["skills"] = [
-            _resource_option(skill.slug, skill.name, skill.description) for skill in skills if skill.slug
-        ]
+        options["skills"] = [_resource_option(skill.slug, skill.name, skill.description) for skill in skills if skill.slug]
 
     return options
 
@@ -486,22 +468,16 @@ async def normalize_agent_context_config(
     normalized = dict(filtered.get("context") or {})
     resource_fields = schema.get_resource_fields()
     for field_name in resource_fields:
-        normalized[field_name] = validate_resource_selection(
-            field_name, normalized.get(field_name, getattr(defaults, field_name))
-        )
+        normalized[field_name] = validate_resource_selection(field_name, normalized.get(field_name, getattr(defaults, field_name)))
     fields_to_load = {kind for name, kind in resource_fields.items() if name != "preload_skills" and normalized[name]}
     if fields_to_load:
         resource_options = await resolve_agent_resource_options(fields_to_load, db=db, user=user)
         for name, kind in resource_fields.items():
             if name != "preload_skills" and normalized[name]:
-                normalized[name] = _resolve_resource_selection(
-                    normalized[name], [option["key"] for option in resource_options[kind]]
-                )
+                normalized[name] = _resolve_resource_selection(normalized[name], [option["key"] for option in resource_options[kind]])
 
     if "preload_skills" in resource_fields:
-        normalized["preload_skills"] = _resolve_resource_selection(
-            normalized["preload_skills"], normalized.get("skills", [])
-        )
+        normalized["preload_skills"] = _resolve_resource_selection(normalized["preload_skills"], normalized.get("skills", []))
 
     return normalized
 
@@ -540,8 +516,7 @@ async def prepare_agent_runtime_context(
         )
         context._resource_selections = raw_resources
         context._capability_limited = any(
-            isinstance(raw_resources[name], list) and set(raw_resources[name]) - set(normalized[name])
-            for name in resource_fields
+            isinstance(raw_resources[name], list) and set(raw_resources[name]) - set(normalized[name]) for name in resource_fields
         )
         for field_name in resource_fields:
             setattr(context, field_name, normalized[field_name])

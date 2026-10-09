@@ -456,11 +456,7 @@ class ToolMessageAuditRepository:
         sequence: int,
     ) -> None:
         metadata = message.extra_metadata if isinstance(message.extra_metadata, dict) else {}
-        if (
-            metadata.get("tool_name") != tool_name
-            or metadata.get("input") != tool_input
-            or message.sequence != sequence
-        ):
+        if metadata.get("tool_name") != tool_name or metadata.get("input") != tool_input or message.sequence != sequence:
             raise ValueError("重复 Tool start 与已持久化事实不一致")
 
 

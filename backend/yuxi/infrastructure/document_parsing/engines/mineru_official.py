@@ -68,9 +68,7 @@ class MinerUOfficialParser(DocumentEngine):
 
         file_ext = Path(file_path).suffix.lower()
         if not self.supports_file_type(file_ext):
-            raise DocumentParserException(
-                f"不支持的文件类型: {file_ext}", self.get_service_name(), "unsupported_file_type"
-            )
+            raise DocumentParserException(f"不支持的文件类型: {file_ext}", self.get_service_name(), "unsupported_file_type")
 
         # 处理参数
         params = params or {}
@@ -105,9 +103,7 @@ class MinerUOfficialParser(DocumentEngine):
                     pass
 
             processing_time = time.time() - start_time
-            logger.info(
-                f"MinerU Official 处理成功: {os.path.basename(file_path)} - {len(text)} 字符 ({processing_time:.2f}s)"
-            )
+            logger.info(f"MinerU Official 处理成功: {os.path.basename(file_path)} - {len(text)} 字符 ({processing_time:.2f}s)")
 
             return text
 
@@ -145,15 +141,15 @@ class MinerUOfficialParser(DocumentEngine):
         response = requests.post(f"{self.api_base}/file-urls/batch", headers=self.headers, json=upload_data, timeout=30)
 
         if response.status_code != 200:
-            raise DocumentParserException(
-                f"申请上传链接失败: HTTP {response.status_code}", self.get_service_name(), "upload_url_failed"
-            )
+            raise DocumentParserException(f"申请上传链接失败: HTTP {response.status_code}", self.get_service_name(), "upload_url_failed")
 
         result = response.json()
         if result.get("code") != 0:
             error_msg = result.get("msg", "未知错误")
             raise DocumentParserException(
-                f"申请上传链接失败: {error_msg}", self.get_service_name(), f"api_error_{result.get('code', 'unknown')}"
+                f"申请上传链接失败: {error_msg}",
+                self.get_service_name(),
+                f"api_error_{result.get('code', 'unknown')}",
             )
 
         batch_id = result["data"]["batch_id"]
@@ -169,7 +165,9 @@ class MinerUOfficialParser(DocumentEngine):
 
         if upload_response.status_code != 200:
             raise DocumentParserException(
-                f"文件上传失败: HTTP {upload_response.status_code}", self.get_service_name(), "file_upload_failed"
+                f"文件上传失败: HTTP {upload_response.status_code}",
+                self.get_service_name(),
+                "file_upload_failed",
             )
 
         return batch_id
@@ -184,13 +182,13 @@ class MinerUOfficialParser(DocumentEngine):
         start_time = time.time()
 
         while time.time() - start_time < max_wait_time:
-            response = requests.get(
-                f"{self.api_base}/extract-results/batch/{batch_id}", headers=self.headers, timeout=30
-            )
+            response = requests.get(f"{self.api_base}/extract-results/batch/{batch_id}", headers=self.headers, timeout=30)
 
             if response.status_code != 200:
                 raise DocumentParserException(
-                    f"查询任务状态失败: HTTP {response.status_code}", self.get_service_name(), "status_query_failed"
+                    f"查询任务状态失败: HTTP {response.status_code}",
+                    self.get_service_name(),
+                    "status_query_failed",
                 )
 
             result = response.json()
@@ -228,9 +226,7 @@ class MinerUOfficialParser(DocumentEngine):
             raise DocumentParserException("未获取到结果下载链接", self.get_service_name(), "no_download_url")
         response = requests.get(zip_url, timeout=60)
         if response.status_code != 200:
-            raise DocumentParserException(
-                f"下载结果失败: HTTP {response.status_code}", self.get_service_name(), "download_failed"
-            )
+            raise DocumentParserException(f"下载结果失败: HTTP {response.status_code}", self.get_service_name(), "download_failed")
         with tempfile.NamedTemporaryFile(delete=False, suffix=".zip") as tmp_file:
             tmp_file.write(response.content)
             tmp_file.flush()

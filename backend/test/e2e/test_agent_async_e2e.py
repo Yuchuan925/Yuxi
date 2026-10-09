@@ -85,9 +85,7 @@ async def _submit_input(client: httpx.AsyncClient, headers: dict[str, str], thre
                     "input": [
                         {
                             "role": "user",
-                            "content": [
-                                {"type": "input_text", "text": f"请只回复 {EXPECTED_OUTPUT}，不要添加任何解释。"}
-                            ],
+                            "content": [{"type": "input_text", "text": f"请只回复 {EXPECTED_OUTPUT}，不要添加任何解释。"}],
                         }
                     ],
                     "yuxi": {"mode": "follow_up"},
@@ -116,9 +114,7 @@ async def _stream_until_terminal(
     events: list[dict] = []
 
     async def consume() -> None:
-        async with client.stream(
-            "GET", f"/api/v1/agents/sessions/{thread_id}/events", headers=stream_headers
-        ) as response:
+        async with client.stream("GET", f"/api/v1/agents/sessions/{thread_id}/events", headers=stream_headers) as response:
             assert response.status_code == 200, await response.aread()
             async for cursor, event in read_events(response):
                 if event.get("turn_id") != turn_id:
@@ -141,9 +137,7 @@ async def _stream_until_terminal(
     return events
 
 
-async def _assert_run_persisted(
-    *, run_id: str, input_id: str, turn_id: str, thread_id: str, agent_slug: str, uid: str
-) -> None:
+async def _assert_run_persisted(*, run_id: str, input_id: str, turn_id: str, thread_id: str, agent_slug: str, uid: str) -> None:
     """独立查询 PostgreSQL，核实同一 Input/Turn/Run 的消息归属。"""
     conn = await asyncpg.connect(postgres_dsn())
     try:
@@ -207,15 +201,12 @@ async def test_async_agent_run_stream_result_and_persistence(
 
         streamed = await _stream_until_terminal(e2e_client, e2e_headers, thread_id, turn_id)
         assert any(
-            event["type"] == "agent.session.turn.output_text.delta" and event.get("yuxi", {}).get("run_id") == run_id
-            for event in streamed
+            event["type"] == "agent.session.turn.output_text.delta" and event.get("yuxi", {}).get("run_id") == run_id for event in streamed
         )
         assert streamed[-1]["type"] == "agent.session.turn.completed", streamed[-1]
         assert streamed[-1]["yuxi"]["run_id"] == run_id and streamed[-1]["yuxi"]["input_id"] == input_id
 
-        turn_response = await e2e_client.get(
-            f"/api/v1/agents/sessions/{thread_id}/turns/{turn_id}", headers=e2e_headers
-        )
+        turn_response = await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/turns/{turn_id}", headers=e2e_headers)
         assert turn_response.status_code == 200, turn_response.text
         turn = turn_response.json()
         if turn["status"] != "completed":
@@ -250,9 +241,7 @@ async def test_async_agent_run_stream_result_and_persistence(
             uid=uid,
         )
 
-        first_cursor = next(
-            event["cursor"] for event in streamed if event["type"] == "agent.session.turn.output_text.delta"
-        )
+        first_cursor = next(event["cursor"] for event in streamed if event["type"] == "agent.session.turn.output_text.delta")
         replayed = await _stream_until_terminal(e2e_client, e2e_headers, thread_id, turn_id, after_cursor=first_cursor)
         assert replayed[-1]["type"] == "agent.session.turn.completed"
         assert replayed[-1]["yuxi"]["run_id"] == run_id and replayed[-1]["yuxi"]["input_id"] == input_id

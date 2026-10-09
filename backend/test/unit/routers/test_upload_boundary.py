@@ -22,9 +22,7 @@ async def test_read_upload_accepts_limit_and_rewinds(content):
     """读取从头开始，恰好等于限制时保留全部内容。"""
     upload = UploadFile(file=BytesIO(content), filename="file.txt")
     await upload.seek(len(content))
-    assert (
-        await read_upload_with_limit(upload, max_size_bytes=5, too_large_message="too large", chunk_size=2) == content
-    )
+    assert await read_upload_with_limit(upload, max_size_bytes=5, too_large_message="too large", chunk_size=2) == content
 
 
 @pytest.mark.asyncio
@@ -88,9 +86,7 @@ async def test_prepare_upload_rejects_actual_oversize_and_keeps_request_ownershi
     ],
 )
 @pytest.mark.parametrize("content,status", [(b"12345", 200), (b"123456", 400)])
-def test_workspace_routes_convert_multipart_and_reject_oversize(
-    monkeypatch, module, router, limit, service, data, content, status
-):
+def test_workspace_routes_convert_multipart_and_reject_oversize(monkeypatch, module, router, limit, service, data, content, status):
     """实际 multipart 经路由适配，服务只能得到中立文件输入。"""
     app = FastAPI()
     app.include_router(getattr(module, router))
@@ -108,9 +104,7 @@ def test_workspace_routes_convert_multipart_and_reject_oversize(
 
     monkeypatch.setattr(module, service, consume)
     with TestClient(app) as client:
-        response = client.post(
-            f"{getattr(module, router).prefix}/upload", data=data, files={"files": ("file.txt", content)}
-        )
+        response = client.post(f"{getattr(module, router).prefix}/upload", data=data, files={"files": ("file.txt", content)})
     assert response.status_code == status, response.text
     if status == 200:
         assert response.json() == {"content": "12345", "filename": "file.txt"}

@@ -270,9 +270,7 @@ async def test_download_remote_skills_preserves_partial_results(
         ]
         assert results == expected_results
         assert len(sandbox.calls) == 1
-        cli_skill_names = [
-            sandbox.calls[0][index + 1] for index, arg in enumerate(sandbox.calls[0]) if arg == "--skill"
-        ]
+        cli_skill_names = [sandbox.calls[0][index + 1] for index, arg in enumerate(sandbox.calls[0]) if arg == "--skill"]
         assert cli_skill_names == expected_cli_skills
     finally:
         await preparation.cleanup()

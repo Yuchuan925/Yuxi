@@ -13,9 +13,7 @@ def test_retrieval_metrics_use_metadata_chunk_id():
         {"metadata": {"chunk_id": "chunk_b"}},
     ]
 
-    metrics = EvaluationMetricsCalculator.calculate_retrieval_metrics(
-        retrieved_chunks, ["chunk_b", "chunk_c"], k_values=[1, 3]
-    )
+    metrics = EvaluationMetricsCalculator.calculate_retrieval_metrics(retrieved_chunks, ["chunk_b", "chunk_c"], k_values=[1, 3])
 
     assert metrics["recall@1"] == 0.0
     assert metrics["recall@3"] == 0.5

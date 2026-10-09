@@ -60,9 +60,7 @@ async def _queue_inputs(sessions, *, count: int) -> None:
                 app_id=None,
                 agent_slug="main",
                 kind="follow_up",
-                input_payload={
-                    "context_snapshot": {"model": "ci-replay:deterministic-chat", "tool_approval_mode": "default"}
-                },
+                input_payload={"context_snapshot": {"model": "ci-replay:deterministic-chat", "tool_approval_mode": "default"}},
             )
             receipt = await AgentInputReceiptRepository(db).create(
                 receipt_id=f"receipt-{number}",
@@ -82,9 +80,7 @@ async def _queue_inputs(sessions, *, count: int) -> None:
             )
             db.add(message)
             await db.flush()
-            await AgentInputRepository(db).add_messages(
-                input_id=input_id, receipt_id=receipt.id, message_ids=[message.id]
-            )
+            await AgentInputRepository(db).add_messages(input_id=input_id, receipt_id=receipt.id, message_ids=[message.id])
         await db.commit()
 
 
@@ -236,9 +232,7 @@ async def test_completion_winning_thread_lock_rejects_stale_cancel() -> None:
                 await control_started.wait()
                 await asyncio.sleep(0.05)
                 current = await AgentRunRepository(db).get_run(dispatch.run_id)
-                settled = await runs.settle_checkpoint(
-                    db=db, run=current, worker_id="owner-a", status="completed", token_usage=None
-                )
+                settled = await runs.settle_checkpoint(db=db, run=current, worker_id="owner-a", status="completed", token_usage=None)
                 await db.commit()
                 return settled
 
@@ -347,9 +341,7 @@ async def test_cancel_partial_snapshot_only_updates_existing_public_message(case
         async with sessions() as db:
             agent_session = await SessionRepository(db).lock_session_by_thread_id("input-thread")
             dispatch = await scheduler.claim_next_input(db=db, agent_session=agent_session, binding=_binding())
-            run, acquired = await AgentRunRepository(db).mark_running(
-                dispatch.run_id, worker_id="owner", lease_seconds=60
-            )
+            run, acquired = await AgentRunRepository(db).mark_running(dispatch.run_id, worker_id="owner", lease_seconds=60)
             assert acquired
             message = Message(
                 session_record_id=agent_session.id,

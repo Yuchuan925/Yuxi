@@ -131,8 +131,7 @@ async def test_fresh_business_schema_contains_input_lifecycle_without_request_ta
                 (
                     await connection.execute(
                         text(
-                            "SELECT column_name FROM information_schema.columns "
-                            "WHERE table_schema = :schema AND table_name = 'agent_runs'"
+                            "SELECT column_name FROM information_schema.columns WHERE table_schema = :schema AND table_name = 'agent_runs'"
                         ),
                         {"schema": schema},
                     )
@@ -142,8 +141,7 @@ async def test_fresh_business_schema_contains_input_lifecycle_without_request_ta
                 (
                     await connection.execute(
                         text(
-                            "SELECT column_name FROM information_schema.columns "
-                            "WHERE table_schema = :schema AND table_name = 'agent_inputs'"
+                            "SELECT column_name FROM information_schema.columns WHERE table_schema = :schema AND table_name = 'agent_inputs'"
                         ),
                         {"schema": schema},
                     )
@@ -151,17 +149,13 @@ async def test_fresh_business_schema_contains_input_lifecycle_without_request_ta
             )
             execution_seq_nullable = await connection.scalar(
                 text(
-                    "SELECT is_nullable FROM information_schema.columns "
-                    "WHERE table_schema = :schema AND table_name = 'agent_runs' "
-                    "AND column_name = 'execution_seq'"
+                    "SELECT is_nullable FROM information_schema.columns WHERE table_schema = :schema AND table_name = 'agent_runs' AND column_name = 'execution_seq'"
                 ),
                 {"schema": schema},
             )
             execution_seq_default = await connection.scalar(
                 text(
-                    "SELECT column_default FROM information_schema.columns "
-                    "WHERE table_schema = :schema AND table_name = 'agent_runs' "
-                    "AND column_name = 'execution_seq'"
+                    "SELECT column_default FROM information_schema.columns WHERE table_schema = :schema AND table_name = 'agent_runs' AND column_name = 'execution_seq'"
                 ),
                 {"schema": schema},
             )
@@ -205,22 +199,15 @@ async def test_knowledge_child_cannot_cross_database_boundaries() -> None:
         await create_knowledge_tables(manager)
         async with scoped_engine.begin() as connection:
             await connection.execute(
-                text(
-                    "INSERT INTO knowledge_bases (kb_id, name, kb_type) VALUES "
-                    "('kb-a', 'A', 'milvus'), ('kb-b', 'B', 'milvus')"
-                )
+                text("INSERT INTO knowledge_bases (kb_id, name, kb_type) VALUES ('kb-a', 'A', 'milvus'), ('kb-b', 'B', 'milvus')")
             )
-            await connection.execute(
-                text("INSERT INTO knowledge_files (file_id, kb_id, filename) VALUES ('file-a', 'kb-a', 'a.txt')")
-            )
+            await connection.execute(text("INSERT INTO knowledge_files (file_id, kb_id, filename) VALUES ('file-a', 'kb-a', 'a.txt')"))
 
         with pytest.raises(IntegrityError):
             async with scoped_engine.begin() as connection:
                 await connection.execute(
                     text(
-                        "INSERT INTO knowledge_chunks "
-                        "(chunk_id, file_id, kb_id, chunk_index, content) "
-                        "VALUES ('chunk-cross', 'file-a', 'kb-b', 0, 'invalid')"
+                        "INSERT INTO knowledge_chunks (chunk_id, file_id, kb_id, chunk_index, content) VALUES ('chunk-cross', 'file-a', 'kb-b', 0, 'invalid')"
                     )
                 )
     finally:
@@ -242,9 +229,7 @@ async def test_knowledge_timestamp_defaults_match_database_clock_in_non_utc_sess
 
         async with session_factory() as verify_session:
             await verify_session.execute(text("SET TIME ZONE 'UTC'"))
-            persisted_at = await verify_session.scalar(
-                text("SELECT created_at FROM knowledge_bases WHERE kb_id = 'clock-kb'")
-            )
+            persisted_at = await verify_session.scalar(text("SELECT created_at FROM knowledge_bases WHERE kb_id = 'clock-kb'"))
 
         assert persisted_at.tzinfo is not None
         assert abs((persisted_at - database_now).total_seconds()) < 2
@@ -300,8 +285,7 @@ async def test_open_attempt_is_unique_in_fresh_business_schema() -> None:
         async with scoped_engine.begin() as connection:
             await connection.execute(
                 text(
-                    "UPDATE agent_runs SET session_record_id = (SELECT id FROM sessions "
-                    "WHERE thread_id = 'constraint-thread') WHERE id = 'constraint-run'"
+                    "UPDATE agent_runs SET session_record_id = (SELECT id FROM sessions WHERE thread_id = 'constraint-thread') WHERE id = 'constraint-run'"
                 )
             )
             message_id = await connection.scalar(
@@ -320,9 +304,7 @@ async def test_open_attempt_is_unique_in_fresh_business_schema() -> None:
                     )
         async with scoped_engine.begin() as connection:
             await connection.execute(
-                text(
-                    "UPDATE messages SET run_id = 'constraint-run', turn_id = 'constraint-turn' WHERE id = :message_id"
-                ),
+                text("UPDATE messages SET run_id = 'constraint-run', turn_id = 'constraint-turn' WHERE id = :message_id"),
                 {"message_id": message_id},
             )
             await connection.execute(
@@ -331,16 +313,12 @@ async def test_open_attempt_is_unique_in_fresh_business_schema() -> None:
             )
         with pytest.raises(IntegrityError, match="ck_messages_execution_scope"):
             async with scoped_engine.begin() as connection:
-                await connection.execute(
-                    text("UPDATE messages SET turn_id = NULL WHERE id = :message_id"), {"message_id": message_id}
-                )
+                await connection.execute(text("UPDATE messages SET turn_id = NULL WHERE id = :message_id"), {"message_id": message_id})
 
         async with scoped_engine.begin() as connection:
             await connection.execute(
                 text(
-                    "INSERT INTO agent_run_attempts "
-                    "(run_id, attempt_no, worker_id, started_at) "
-                    "VALUES ('constraint-run', 1, 'worker-a', CURRENT_TIMESTAMP)"
+                    "INSERT INTO agent_run_attempts (run_id, attempt_no, worker_id, started_at) VALUES ('constraint-run', 1, 'worker-a', CURRENT_TIMESTAMP)"
                 )
             )
 
@@ -348,9 +326,7 @@ async def test_open_attempt_is_unique_in_fresh_business_schema() -> None:
             async with scoped_engine.begin() as connection:
                 await connection.execute(
                     text(
-                        "INSERT INTO agent_run_attempts "
-                        "(run_id, attempt_no, worker_id, started_at) "
-                        "VALUES ('constraint-run', 2, 'worker-b', CURRENT_TIMESTAMP)"
+                        "INSERT INTO agent_run_attempts (run_id, attempt_no, worker_id, started_at) VALUES ('constraint-run', 2, 'worker-b', CURRENT_TIMESTAMP)"
                     )
                 )
     finally:
@@ -372,16 +348,12 @@ async def test_failed_fresh_initialization_cleans_checkpoint_tables_and_can_retr
                 await connection.execute(text(f"CREATE TABLE {name} (id INTEGER)"))
 
     monkeypatch.setattr(schema_bootstrap, "setup_langgraph_checkpointer", checkpoint_stage)
-    monkeypatch.setattr(
-        schema_bootstrap, "ensure_options_in_db", AsyncMock(side_effect=RuntimeError("after checkpoint"))
-    )
+    monkeypatch.setattr(schema_bootstrap, "ensure_options_in_db", AsyncMock(side_effect=RuntimeError("after checkpoint")))
     try:
         with pytest.raises(RuntimeError, match="after checkpoint"):
             await schema_bootstrap.main()
         async with engine.connect() as connection:
-            assert (
-                await connection.execute(text("SELECT tablename FROM pg_tables WHERE schemaname = current_schema()"))
-            ).all() == []
+            assert (await connection.execute(text("SELECT tablename FROM pg_tables WHERE schemaname = current_schema()"))).all() == []
         monkeypatch.setattr(schema_bootstrap, "ensure_options_in_db", AsyncMock())
         await schema_bootstrap.main()
         await require_current_schema(manager)
@@ -455,8 +427,7 @@ async def test_background_job_baseline_replaces_task_table_and_knowledge_owner_c
                 (
                     await connection.execute(
                         text(
-                            "SELECT column_name FROM information_schema.columns "
-                            "WHERE table_schema = :schema AND table_name = 'knowledge_files'"
+                            "SELECT column_name FROM information_schema.columns WHERE table_schema = :schema AND table_name = 'knowledge_files'"
                         ),
                         {"schema": schema},
                     )
@@ -466,8 +437,7 @@ async def test_background_job_baseline_replaces_task_table_and_knowledge_owner_c
                 (
                     await connection.execute(
                         text(
-                            "SELECT constraint_name FROM information_schema.table_constraints "
-                            "WHERE table_schema = :schema AND table_name = 'background_jobs'"
+                            "SELECT constraint_name FROM information_schema.table_constraints WHERE table_schema = :schema AND table_name = 'background_jobs'"
                         ),
                         {"schema": schema},
                     )

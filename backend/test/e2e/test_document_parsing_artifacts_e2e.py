@@ -134,9 +134,7 @@ async def test_private_draft_parse_send_and_delete_preserve_complete_local_direc
             headers={**e2e_headers, "Idempotency-Key": uuid4().hex},
         )
         assert accepted.status_code == 202, accepted.text
-        [attachment] = (
-            await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/attachments", headers=e2e_headers)
-        ).json()["attachments"]
+        [attachment] = (await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/attachments", headers=e2e_headers)).json()["attachments"]
         markdown_response = await e2e_client.get(attachment["artifact_url"], headers=e2e_headers)
         assert markdown_response.status_code == 200, markdown_response.text
         assert "![chart](images/images/chart.png)" in markdown_response.text
@@ -177,9 +175,7 @@ async def test_private_draft_parse_send_and_delete_preserve_complete_local_direc
         )
         assert restored.status_code == 200, restored.text
         if thread_id and attachment:
-            await e2e_client.delete(
-                f"/api/v1/agents/sessions/{thread_id}/attachments/{attachment['file_id']}", headers=e2e_headers
-            )
+            await e2e_client.delete(f"/api/v1/agents/sessions/{thread_id}/attachments/{attachment['file_id']}", headers=e2e_headers)
         if uploaded:
             prefix = f"tmp/chat_attachments/{uid}/{uploaded['id']}"
             await client.adelete_objects_by_prefix(client.KB_BUCKETS["documents"], prefix + "/")
@@ -302,9 +298,7 @@ async def test_knowledge_worker_hosts_document_resources_and_file_delete_reclaim
                 )
         assert await client.adownload_file(bucket, markdown_name)
         assert await client.adownload_file(client.KB_BUCKETS["images"], image_name) == image
-        assert (
-            len(await client.alist_object_metadata(client.KB_BUCKETS["images"], f"{kb_id}/kb-images/{file_id}/")) == 1
-        )
+        assert len(await client.alist_object_metadata(client.KB_BUCKETS["images"], f"{kb_id}/kb-images/{file_id}/")) == 1
         assert len(await client.alist_object_metadata(client.KB_BUCKETS["parsed"], f"{kb_id}/parsed/{file_id}/")) == 1
         record = await repository.get_by_file_id(file_id)
         assert record.processing_owner == "other-owner"
@@ -340,9 +334,7 @@ async def test_knowledge_worker_hosts_document_resources_and_file_delete_reclaim
         assert replacement.markdown_file != record.markdown_file
         assert await client.alist_object_metadata(bucket, markdown_name) == []
         assert await client.alist_object_metadata(client.KB_BUCKETS["images"], image_name) == []
-        assert (
-            len(await client.alist_object_metadata(client.KB_BUCKETS["images"], f"{kb_id}/kb-images/{file_id}/")) == 1
-        )
+        assert len(await client.alist_object_metadata(client.KB_BUCKETS["images"], f"{kb_id}/kb-images/{file_id}/")) == 1
         # 单文件清理的负控：其他文件的对象不能被知识库级前缀误删。
         other_name = f"{kb_id}/kb-images/other-file/attempt/images/chart.png"
         await client.aupload_file(bucket_name=client.KB_BUCKETS["images"], object_name=other_name, data=image)

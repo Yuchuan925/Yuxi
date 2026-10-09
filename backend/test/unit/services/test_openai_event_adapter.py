@@ -143,9 +143,7 @@ async def test_tool_only_uses_function_items_and_command_call_identity(adapter, 
                         update={
                             "messages": [
                                 ToolMessage(content="unrelated", tool_call_id="other"),
-                                ToolMessage(
-                                    content="result", tool_call_id="call", status="error" if failed else "success"
-                                ),
+                                ToolMessage(content="result", tool_call_id="call", status="error" if failed else "success"),
                             ]
                         }
                     ),
@@ -168,20 +166,13 @@ async def test_tool_only_uses_function_items_and_command_call_identity(adapter, 
 @pytest.mark.asyncio
 async def test_missing_message_start_fails_instead_of_binding_adjacent_item(adapter):
     with pytest.raises(ValueError, match="message-start"):
-        await adapter.consume(
-            native(5, {"event": "content-block-delta", "delta": {"type": "text-delta", "text": "bad"}})
-        )
+        await adapter.consume(native(5, {"event": "content-block-delta", "delta": {"type": "text-delta", "text": "bad"}}))
 
 
 @pytest.mark.asyncio
 async def test_tool_error_waits_for_committed_run_outcome(adapter):
     """GraphInterrupt 与异常共享原生 tool-error，不能提前伪造 failed。"""
-    assert (
-        await adapter.consume(
-            native(1, {"event": "tool-error", "tool_call_id": "call", "message": "interrupt"}, "tools")
-        )
-        == []
-    )
+    assert await adapter.consume(native(1, {"event": "tool-error", "tool_call_id": "call", "message": "interrupt"}, "tools")) == []
 
 
 @pytest.mark.asyncio
@@ -235,9 +226,7 @@ def test_turn_lifecycle_events_keep_required_protocol_fields(name, status):
         created_by_run_id=None,
         error_type=None,
     )
-    turn = SimpleNamespace(
-        id="turn", thread_id="thread", created_at=now, finished_at=now, result_run_id="run", current_run_id="run"
-    )
+    turn = SimpleNamespace(id="turn", thread_id="thread", created_at=now, finished_at=now, result_run_id="run", current_run_id="run")
     event = events._turn_event(None, run, turn, name, status, now)
     jsonschema.validate(event, SCHEMA)
     assert event["turn"]["subagent_id"] is None

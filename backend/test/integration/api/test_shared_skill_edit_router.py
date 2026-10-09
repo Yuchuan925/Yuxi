@@ -23,9 +23,7 @@ from yuxi.modules.identity.models import User
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
 
-async def test_shared_skill_edit_updates_file_and_index_and_rejects_stale_or_unauthorized(
-    test_client, admin_headers, standard_user
-):
+async def test_shared_skill_edit_updates_file_and_index_and_rejects_stale_or_unauthorized(test_client, admin_headers, standard_user):
     """保存后回读两个事实来源，旧修订与无权限用户不能覆盖。"""
     slug = f"pytest-edit-{uuid.uuid4().hex[:10]}"
     original = f"---\r\nname: {slug}\r\nslug: {slug}\r\ndescription: before\r\n---\r\n# Before\r\n"
@@ -44,9 +42,7 @@ async def test_shared_skill_edit_updates_file_and_index_and_rejects_stale_or_una
     assert confirmed.status_code == 200, confirmed.text
 
     try:
-        read = await test_client.get(
-            f"/api/system/skills/{slug}/file", params={"path": "SKILL.md"}, headers=admin_headers
-        )
+        read = await test_client.get(f"/api/system/skills/{slug}/file", params={"path": "SKILL.md"}, headers=admin_headers)
         assert read.status_code == 200, read.text
         revision = read.json()["data"]["revision"]
         assert revision == hashlib.sha256(original.encode()).hexdigest()
@@ -94,9 +90,7 @@ async def test_shared_skill_edit_updates_file_and_index_and_rejects_stale_or_una
         )
         assert denied.status_code in {403, 404}, denied.text
 
-        options = await test_client.get(
-            "/api/system/skills/dependency-options", params={"slug": slug}, headers=admin_headers
-        )
+        options = await test_client.get("/api/system/skills/dependency-options", params={"slug": slug}, headers=admin_headers)
         assert options.status_code == 200, options.text
         tool_slug = options.json()["data"]["tools"][0]["slug"]
         dependencies = await test_client.put(
@@ -111,9 +105,7 @@ async def test_shared_skill_edit_updates_file_and_index_and_rejects_stale_or_una
         )
         assert dependencies.status_code == 200, dependencies.text
 
-        root_snapshot = await test_client.get(
-            f"/api/system/skills/{slug}/file", params={"path": "SKILL.md"}, headers=admin_headers
-        )
+        root_snapshot = await test_client.get(f"/api/system/skills/{slug}/file", params={"path": "SKILL.md"}, headers=admin_headers)
         assert root_snapshot.status_code == 200, root_snapshot.text
         assert root_snapshot.json()["data"]["skill"]["tool_dependencies"] == [tool_slug]
         assert root_snapshot.json()["data"]["revision"] == dependencies.json()["data"]["revision"]
@@ -217,9 +209,7 @@ async def test_unquoted_multiline_description_can_be_saved_through_http(test_cli
     """预览支持的多行描述可经真实安装和依赖编辑路径保存。"""
     slug = f"pytest-multiline-{uuid.uuid4().hex[:10]}"
     content = (
-        f"---\nname: {slug}\ndescription:\n"
-        '  Use this skill for PDFs.\n  CREATE (from scratch): "make a PDF".\n'
-        "license: MIT\n---\n# Body\n"
+        f'---\nname: {slug}\ndescription:\n  Use this skill for PDFs.\n  CREATE (from scratch): "make a PDF".\nlicense: MIT\n---\n# Body\n'
     )
     prepared = await test_client.post(
         "/api/skills/import/prepare",
@@ -236,9 +226,7 @@ async def test_unquoted_multiline_description_can_be_saved_through_http(test_cli
     assert confirmed.status_code == 200, confirmed.text
 
     try:
-        read = await test_client.get(
-            f"/api/system/skills/{slug}/file", params={"path": "SKILL.md"}, headers=admin_headers
-        )
+        read = await test_client.get(f"/api/system/skills/{slug}/file", params={"path": "SKILL.md"}, headers=admin_headers)
         assert read.status_code == 200, read.text
         saved = await test_client.put(
             f"/api/system/skills/{slug}/dependencies",
@@ -251,9 +239,7 @@ async def test_unquoted_multiline_description_can_be_saved_through_http(test_cli
             },
         )
         assert saved.status_code == 200, saved.text
-        assert saved.json()["data"]["skill"]["description"] == (
-            'Use this skill for PDFs. CREATE (from scratch): "make a PDF".'
-        )
+        assert saved.json()["data"]["skill"]["description"] == ('Use this skill for PDFs. CREATE (from scratch): "make a PDF".')
     finally:
         deleted = await test_client.delete(f"/api/system/skills/{slug}", headers=admin_headers)
         assert deleted.status_code == 200, deleted.text
@@ -284,9 +270,7 @@ async def test_delete_cleanup_preserves_reinstalled_same_slug(test_client, admin
         return get_skill_data_dir() / detail.json()["data"]["dir_path"]
 
     old = await install(root)
-    revision = (await test_client.get(f"/api/system/skills/{slug}/content", headers=admin_headers)).json()["data"][
-        "revision"
-    ]
+    revision = (await test_client.get(f"/api/system/skills/{slug}/content", headers=admin_headers)).json()["data"]["revision"]
     ordinary_release = await test_client.put(
         f"/api/system/skills/{slug}/content",
         headers=admin_headers,

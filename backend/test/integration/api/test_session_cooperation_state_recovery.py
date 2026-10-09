@@ -54,9 +54,7 @@ async def cooperation_user(test_client, admin_headers):
         assert deleted.status_code in (200, 404), deleted.text
 
 
-async def test_state_recovers_children_without_checkpoint_and_rejects_other_user(
-    test_client, cooperation_user, admin_headers
-):
+async def test_state_recovers_children_without_checkpoint_and_rejects_other_user(test_client, cooperation_user, admin_headers):
     """创建已提交而父 checkpoint 从未写入的子 Run，页面仍能发现并读到终态。"""
     uid = cooperation_user["user"]["uid"]
     project_id = str(uuid.uuid4())
@@ -78,9 +76,7 @@ async def test_state_recovers_children_without_checkpoint_and_rejects_other_user
                 )
             )
             await db.flush()
-            parent = Session(
-                thread_id=parent_thread, uid=uid, project_id=project_id, agent_id="state-probe", status="active"
-            )
+            parent = Session(thread_id=parent_thread, uid=uid, project_id=project_id, agent_id="state-probe", status="active")
             child = Session(
                 thread_id=child_thread,
                 uid=uid,
@@ -152,9 +148,7 @@ async def test_state_recovers_children_without_checkpoint_and_rejects_other_user
             )
             await db.commit()
 
-        response = await test_client.get(
-            f"/api/v1/agents/sessions/{parent_thread}/state", headers=cooperation_user["headers"]
-        )
+        response = await test_client.get(f"/api/v1/agents/sessions/{parent_thread}/state", headers=cooperation_user["headers"])
         assert response.status_code == 200, response.text
         runs = response.json()["agent_state"]["cooperation"]["sessions"]
         assert len(runs) == 2, response.json()
@@ -182,9 +176,7 @@ async def test_state_recovers_children_without_checkpoint_and_rejects_other_user
     finally:
         async with sessions() as db:
             await db.execute(
-                update(AgentTurn)
-                .where(AgentTurn.id.in_([turn_id, child_turn_id]))
-                .values(current_run_id=None, result_run_id=None)
+                update(AgentTurn).where(AgentTurn.id.in_([turn_id, child_turn_id])).values(current_run_id=None, result_run_id=None)
             )
             await db.execute(delete(AgentRun).where(AgentRun.id == child_id))
             await db.execute(delete(AgentRun).where(AgentRun.id == parent_id))

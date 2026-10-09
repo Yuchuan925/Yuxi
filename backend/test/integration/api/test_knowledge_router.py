@@ -188,10 +188,9 @@ async def test_folder_rename_and_move_persist_tree_changes(test_client, admin_he
         headers=admin_headers,
     )
     assert source_listing.status_code == 200, source_listing.text
-    assert [
-        (item["file_id"], item["parent_id"], item["filename"], item["created_by"])
-        for item in source_listing.json()["items"]
-    ] == [(child["file_id"], source["file_id"], "child", child["created_by"])]
+    assert [(item["file_id"], item["parent_id"], item["filename"], item["created_by"]) for item in source_listing.json()["items"]] == [
+        (child["file_id"], source["file_id"], "child", child["created_by"])
+    ]
 
     move_response = await test_client.put(
         f"/api/knowledge/databases/{kb_id}/documents/{child['file_id']}/move",
@@ -232,9 +231,7 @@ async def test_folder_rename_and_move_persist_tree_changes(test_client, admin_he
     assert missing_target_response.status_code == 422, missing_target_response.text
 
 
-async def test_folder_mutations_reject_invalid_name_and_directory_cycle(
-    test_client, admin_headers, knowledge_database
-):
+async def test_folder_mutations_reject_invalid_name_and_directory_cycle(test_client, admin_headers, knowledge_database):
     kb_id = knowledge_database["kb_id"]
 
     parent_response = await test_client.post(
@@ -395,9 +392,7 @@ async def test_get_chunk_presets_returns_configured_options(test_client, admin_h
     assert all(option["label"] and option["description"] for option in options)
 
 
-async def test_update_database_additional_params_merge_keeps_chunk_preset(
-    test_client, admin_headers, knowledge_database
-):
+async def test_update_database_additional_params_merge_keeps_chunk_preset(test_client, admin_headers, knowledge_database):
     kb_id = knowledge_database["kb_id"]
 
     first_update = await test_client.put(
@@ -457,9 +452,7 @@ async def test_knowledge_routes_enforce_permissions(test_client, standard_user, 
     _assert_forbidden_response(forbidden_exists)
 
 
-async def test_kb_image_proxy_requires_auth_and_streams_private_image(
-    test_client, admin_headers, knowledge_database
-):
+async def test_kb_image_proxy_requires_auth_and_streams_private_image(test_client, admin_headers, knowledge_database):
     """知识库图片代理：未登录不可访问，鉴权后可读取私有 bucket 图片"""
     from yuxi.infrastructure.minio.client import MinIOClient, get_minio_client
 
@@ -569,9 +562,7 @@ async def test_admin_can_create_vector_db_with_reranker(test_client, admin_heade
         "use_reranker": True,
         "recall_top_k": 20,
     }
-    update_response = await test_client.put(
-        f"/api/knowledge/databases/{kb_id}/query-params", json=update_params, headers=admin_headers
-    )
+    update_response = await test_client.put(f"/api/knowledge/databases/{kb_id}/query-params", json=update_params, headers=admin_headers)
     assert update_response.status_code == 200, update_response.text
 
     # 再次获取参数，验证保存成功
@@ -825,10 +816,7 @@ async def test_get_knowledge_base_types(test_client, admin_headers):
     ]
     assert "default_config" not in payload["kb_types"]["notion"]
     assert payload["kb_types"]["notion"]["name"] == "Notion"
-    assert (
-        payload["kb_types"]["notion"]["description"]
-        == "连接 Notion Data Source 的只读知识库，支持检索、打开页面和页内查找"
-    )
+    assert payload["kb_types"]["notion"]["description"] == "连接 Notion Data Source 的只读知识库，支持检索、打开页面和页内查找"
     assert payload["kb_types"]["notion"]["requires_embedding_model"] is False
     assert payload["kb_types"]["notion"]["supports_documents"] is False
     assert [option["key"] for option in payload["kb_types"]["notion"]["create_params"]["options"]] == [
@@ -918,7 +906,6 @@ async def test_sample_questions_endpoints(test_client, admin_headers, knowledge_
     )
     assert generate_response.status_code == 400
     assert "中没有文件" in generate_response.json()["detail"]
-
 
 
 @pytest.mark.parametrize(

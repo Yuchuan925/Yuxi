@@ -15,11 +15,7 @@ class SkillRepository:
 
     async def list_enabled_readable(self, user: User) -> list[Skill]:
         """只返回当前用户可使用的已启用共享索引。"""
-        return [
-            item
-            for item in await self.list_enabled()
-            if resolve_skill_permission(user, item) != ResourcePermission.NONE
-        ]
+        return [item for item in await self.list_enabled() if resolve_skill_permission(user, item) != ResourcePermission.NONE]
 
     async def list_authorized_for_projection(self, user: User) -> list[Skill]:
         """为投影锁定阶段包含当前用户可读的停用项。"""
@@ -35,11 +31,7 @@ class SkillRepository:
         for item in await self.list_all():
             permission = resolve_skill_permission(user, item)
             can_manage_builtin = item.source_type == "builtin" and user.role in {"admin", "superadmin"}
-            if (
-                permission == ResourcePermission.MANAGE
-                or can_manage_builtin
-                or (item.enabled and permission != ResourcePermission.NONE)
-            ):
+            if permission == ResourcePermission.MANAGE or can_manage_builtin or (item.enabled and permission != ResourcePermission.NONE):
                 visible.append(item)
         return visible
 
@@ -59,12 +51,7 @@ class SkillRepository:
 
     async def get_by_slug_for_read(self, slug: str) -> Skill | None:
         """读取文件期间取得单个共享 Skill 的共享行锁。"""
-        stmt = (
-            select(Skill)
-            .where(Skill.slug == slug)
-            .with_for_update(read=True, of=Skill)
-            .execution_options(populate_existing=True)
-        )
+        stmt = select(Skill).where(Skill.slug == slug).with_for_update(read=True, of=Skill).execution_options(populate_existing=True)
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
@@ -84,9 +71,7 @@ class SkillRepository:
 
     async def list_enabled(self) -> list[Skill]:
         stmt = (
-            select(Skill)
-            .where(Skill.enabled.is_(True), Skill.bound_agent_id.is_(None))
-            .order_by(Skill.updated_at.desc(), Skill.id.desc())
+            select(Skill).where(Skill.enabled.is_(True), Skill.bound_agent_id.is_(None)).order_by(Skill.updated_at.desc(), Skill.id.desc())
         )
         result = await self.db.execute(stmt)
         return list(result.scalars().all())
@@ -108,16 +93,12 @@ class SkillRepository:
 
     async def list_versions(self, skill_id: int) -> list[SkillVersion]:
         """按创建顺序返回所属 Skill 的历史版本。"""
-        result = await self.db.scalars(
-            select(SkillVersion).where(SkillVersion.skill_id == skill_id).order_by(SkillVersion.id.desc())
-        )
+        result = await self.db.scalars(select(SkillVersion).where(SkillVersion.skill_id == skill_id).order_by(SkillVersion.id.desc()))
         return list(result.all())
 
     async def get_version(self, skill_id: int, version: str) -> SkillVersion | None:
         """版本定位同时约束所属 Skill，阻止跨资源操作。"""
-        return await self.db.scalar(
-            select(SkillVersion).where(SkillVersion.skill_id == skill_id, SkillVersion.version == version)
-        )
+        return await self.db.scalar(select(SkillVersion).where(SkillVersion.skill_id == skill_id, SkillVersion.version == version))
 
     async def exists_slug(self, slug: str) -> bool:
         return (await self.get_by_slug(slug)) is not None

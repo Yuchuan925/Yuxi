@@ -332,9 +332,7 @@ async def transfer_resource_owner(
     from yuxi.modules.identity.services.resource_ownership import transfer_shared_resource
 
     try:
-        await transfer_shared_resource(
-            db, kind=kind, resource_id=resource_id, owner_uid=payload.owner_uid, actor=current_user
-        )
+        await transfer_shared_resource(db, kind=kind, resource_id=resource_id, owner_uid=payload.owner_uid, actor=current_user)
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except LookupError as exc:

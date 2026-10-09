@@ -50,9 +50,7 @@ class Project(Base):
     deleted_at = Column(DateTime(timezone=True), nullable=True, comment="软删除时间")
     idempotency_key = Column(String(128), nullable=True, comment="幂等创建键")
     created_at = Column(DateTime(timezone=True), default=utc_now, server_default=func.now(), nullable=False)
-    updated_at = Column(
-        DateTime(timezone=True), default=utc_now, onupdate=utc_now, server_default=func.now(), nullable=False
-    )
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, server_default=func.now(), nullable=False)
 
     sessions = relationship("Session", back_populates="project")
 

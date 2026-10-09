@@ -97,18 +97,13 @@ def test_preloaded_dependency_content_changes_manifest_fingerprint():
     scope = {
         "preloaded_skills": ["parent", "dependency"],
         "preloaded_skill_contents": {"parent": "first", "dependency": "dependency"},
-        "skill_metadata": {
-            slug: {"source_scope": "shared", "version": "v1", "content_hash": "hash"}
-            for slug in ("parent", "dependency")
-        },
+        "skill_metadata": {slug: {"source_scope": "shared", "version": "v1", "content_hash": "hash"} for slug in ("parent", "dependency")},
     }
     first = build_skill_manifest_entries(config, scope)
     scope["preloaded_skill_contents"]["parent"] = "changed"
     second = build_skill_manifest_entries(config, scope)
     assert [item["slug"] for item in first] == ["parent", "dependency"]
-    assert compute_manifest_fingerprint(_manifest(skill_entries=first)) != compute_manifest_fingerprint(
-        _manifest(skill_entries=second)
-    )
+    assert compute_manifest_fingerprint(_manifest(skill_entries=first)) != compute_manifest_fingerprint(_manifest(skill_entries=second))
 
 
 def test_personal_preloaded_skill_does_not_borrow_shared_identity():
@@ -203,9 +198,7 @@ def test_limits_captured_from_context(field, expected):
         {"model": "chosen", "tool_approval_mode": "always_trust", "system_prompt": "frozen"},
     ],
 )
-async def test_manifest_uses_prepared_context_and_persisted_overrides(
-    monkeypatch, run_type, empty_config, context_snapshot
-):
+async def test_manifest_uses_prepared_context_and_persisted_overrides(monkeypatch, run_type, empty_config, context_snapshot):
     """完整快照优先于已变化的 Agent 配置，摘要来自真实执行对象。"""
     import hashlib
     from types import SimpleNamespace
@@ -231,13 +224,9 @@ async def test_manifest_uses_prepared_context_and_persisted_overrides(
     expected_prompt = "You are a helpful assistant." if empty_config else "base"
     if context_snapshot is not None:
         expected_prompt = context_snapshot.get("system_prompt", "You are a helpful assistant.")
-    monkeypatch.setattr(
-        service, "AgentRepository", lambda db: SimpleNamespace(get_visible_by_slug=AsyncMock(return_value=agent))
-    )
+    monkeypatch.setattr(service, "AgentRepository", lambda db: SimpleNamespace(get_visible_by_slug=AsyncMock(return_value=agent)))
     monkeypatch.setattr(service, "get_agent_backend", lambda name: SimpleNamespace(context_schema=ChatBotContext))
-    monkeypatch.setattr(
-        "yuxi.modules.agents.runtime.context._load_workspace_agent_context", lambda uid: "workspace policy"
-    )
+    monkeypatch.setattr("yuxi.modules.agents.runtime.context._load_workspace_agent_context", lambda uid: "workspace policy")
     seen = []
 
     async def prepare(context):
@@ -288,9 +277,7 @@ async def test_manifest_uses_prepared_context_and_persisted_overrides(
     assert result.context.tool_approval_mode == result.manifest["tool_approval_mode"] == "always_trust"
     assert result.context.system_prompt == f"{expected_prompt}\n\nworkspace policy"
     assert result.manifest["limits"]["model_retry_times"] == result.context.model_retry_times == 2
-    assert (
-        result.manifest["resources"]["skills"][0]["preload_content_hash"] == hashlib.sha256(b"frozen skill").hexdigest()
-    )
+    assert result.manifest["resources"]["skills"][0]["preload_content_hash"] == hashlib.sha256(b"frozen skill").hexdigest()
     assert not hasattr(result.context, "is_subagent_runtime")
     assert not hasattr(result.context, "parent_thread_id")
     assert result.context.uid == "user"
@@ -302,9 +289,7 @@ async def test_manifest_uses_prepared_context_and_persisted_overrides(
         run=run, user=SimpleNamespace(uid="user"), db=object(), workdir_binding=binding, worker_id="different-owner"
     )
     assert same_config.manifest["config_digest"] == first_digest
-    monkeypatch.setattr(
-        "yuxi.modules.agents.runtime.context._load_workspace_agent_context", lambda uid: "changed policy"
-    )
+    monkeypatch.setattr("yuxi.modules.agents.runtime.context._load_workspace_agent_context", lambda uid: "changed policy")
     changed = await service.prepare_run_execution(
         run=run, user=SimpleNamespace(uid="user"), db=object(), workdir_binding=binding, worker_id="owner"
     )
@@ -323,9 +308,7 @@ async def test_execution_preparation_rejects_missing_dependencies(monkeypatch, m
 
     agent = None if missing == "agent" else SimpleNamespace(backend_id="backend", config_json={})
     backend = None if missing == "backend" else SimpleNamespace(context_schema=ChatBotContext)
-    monkeypatch.setattr(
-        service, "AgentRepository", lambda db: SimpleNamespace(get_visible_by_slug=AsyncMock(return_value=agent))
-    )
+    monkeypatch.setattr(service, "AgentRepository", lambda db: SimpleNamespace(get_visible_by_slug=AsyncMock(return_value=agent)))
 
     def get_backend(name):
         """模拟工厂的明确缺失错误，保留其他依赖测试。"""

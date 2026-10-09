@@ -84,16 +84,12 @@ class PPStructureV3Parser(DocumentEngine):
 
         file_ext = Path(file_path).suffix.lower()
         if not self.supports_file_type(file_ext):
-            raise DocumentParserException(
-                f"不支持的文件类型: {file_ext}", self.get_service_name(), "unsupported_file_type"
-            )
+            raise DocumentParserException(f"不支持的文件类型: {file_ext}", self.get_service_name(), "unsupported_file_type")
 
         # 先检查服务健康状态
         health = self.check_health()
         if health["status"] != "healthy":
-            raise DocumentParserException(
-                f"PP-Structure-V3 服务不可用: {health['message']}", self.get_service_name(), health["status"]
-            )
+            raise DocumentParserException(f"PP-Structure-V3 服务不可用: {health['message']}", self.get_service_name(), health["status"])
 
         try:
             start_time = time.time()
@@ -127,9 +123,7 @@ class PPStructureV3Parser(DocumentEngine):
             text = result.get("full_text", "")
 
             processing_time = time.time() - start_time
-            logger.info(
-                f"PP-Structure-V3 处理成功: {os.path.basename(file_path)} - {len(text)} 字符 ({processing_time:.2f}s)"
-            )
+            logger.info(f"PP-Structure-V3 处理成功: {os.path.basename(file_path)} - {len(text)} 字符 ({processing_time:.2f}s)")
 
             # 记录统计信息
             summary = result.get("summary", {})

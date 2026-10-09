@@ -138,9 +138,7 @@ async def test_save_release_restore_delete_complete_package(test_client, admin_h
         await engine.dispose()
 
 
-async def test_save_release_commit_failure_keeps_old_reference(
-    test_client, admin_headers, bound_version_skill, monkeypatch
-):
+async def test_save_release_commit_failure_keeps_old_reference(test_client, admin_headers, bound_version_skill, monkeypatch):
     """真实 PG 提交失败，旧引用和字节保持有效，新包与历史均不留下。"""
     from yuxi.modules.extensions.skills.content import save_skill_content
     from yuxi.modules.identity.models import User
@@ -167,9 +165,7 @@ async def test_save_release_commit_failure_keeps_old_reference(
                     slug=slug,
                     operator=user,
                     expected_revision=before["revision"],
-                    changes=[
-                        {"action": "write", "path": "SKILL.md", "content": before["files"]["SKILL.md"] + " changed"}
-                    ],
+                    changes=[{"action": "write", "path": "SKILL.md", "content": before["files"]["SKILL.md"] + " changed"}],
                     release=True,
                 )
         assert await current_content(slug) == original
@@ -182,9 +178,7 @@ async def test_save_release_commit_failure_keeps_old_reference(
         await engine.dispose()
 
 
-async def test_reader_and_corrupt_history_cannot_restore(
-    test_client, admin_headers, standard_user, bound_version_skill
-):
+async def test_reader_and_corrupt_history_cannot_restore(test_client, admin_headers, standard_user, bound_version_skill):
     """读取权限不能管理版本，历史字节损坏不能覆盖有效当前包。"""
     agent, slug = bound_version_skill
     base = f"/api/system/skills/{slug}"
@@ -243,9 +237,7 @@ async def test_concurrent_content_save_only_one_commits(test_client, admin_heade
                 headers=admin_headers,
                 json={
                     "expected_revision": before["revision"],
-                    "changes": [
-                        {"action": "write", "path": "SKILL.md", "content": before["files"]["SKILL.md"] + suffix}
-                    ],
+                    "changes": [{"action": "write", "path": "SKILL.md", "content": before["files"]["SKILL.md"] + suffix}],
                 },
             )
             for suffix in (" A", " B")
@@ -295,9 +287,7 @@ async def test_content_save_does_not_refresh_all_users(test_client, admin_header
         await engine.dispose()
 
 
-async def test_restore_revalidates_dependencies_against_current_agent_scope(
-    test_client, admin_headers, standard_user, bound_version_skill
-):
+async def test_restore_revalidates_dependencies_against_current_agent_scope(test_client, admin_headers, standard_user, bound_version_skill):
     """latest 移除依赖后扩大 Agent 授权，旧快照不得恢复不覆盖新范围的依赖。"""
     agent_slug, slug = bound_version_skill
     base = f"/api/system/skills/{slug}"
@@ -332,9 +322,7 @@ async def test_restore_revalidates_dependencies_against_current_agent_scope(
             headers=admin_headers,
             json={
                 "changes": [{"action": "dependencies", "skill_dependencies": [dep_slug]}],
-                "expected_revision": (await test_client.get(f"{base}/content", headers=admin_headers)).json()["data"][
-                    "revision"
-                ],
+                "expected_revision": (await test_client.get(f"{base}/content", headers=admin_headers)).json()["data"]["revision"],
                 "release": True,
             },
         )
@@ -345,9 +333,9 @@ async def test_restore_revalidates_dependencies_against_current_agent_scope(
             headers=admin_headers,
             json={
                 "skill_dependencies": [],
-                "expected_revision": (
-                    await test_client.get(f"{base}/file?path=SKILL.md", headers=admin_headers)
-                ).json()["data"]["revision"],
+                "expected_revision": (await test_client.get(f"{base}/file?path=SKILL.md", headers=admin_headers)).json()["data"][
+                    "revision"
+                ],
             },
         )
         assert removed.status_code == 200, removed.text
@@ -356,9 +344,7 @@ async def test_restore_revalidates_dependencies_against_current_agent_scope(
             "read_scope": {"access_level": "user", "user_uids": [standard_user["user"]["uid"]], "department_ids": []},
             "manage_scope": None,
         }
-        published = await test_client.put(
-            f"/api/agent/{agent_slug}", headers=admin_headers, json={"share_config": grants}
-        )
+        published = await test_client.put(f"/api/agent/{agent_slug}", headers=admin_headers, json={"share_config": grants})
         assert published.status_code == 200, published.text
         listed = await test_client.get(f"{base}/versions", headers=admin_headers)
         source = (await current_content(slug)) / "SKILL.md"
@@ -382,9 +368,7 @@ async def test_restore_revalidates_dependencies_against_current_agent_scope(
         await engine.dispose()
 
 
-async def test_release_collision_preserves_existing_history(
-    test_client, admin_headers, bound_version_skill, monkeypatch
-):
+async def test_release_collision_preserves_existing_history(test_client, admin_headers, bound_version_skill, monkeypatch):
     """相同版本标识被唯一约束拒绝，不删除已发布内容。"""
     from types import SimpleNamespace
     from yuxi.modules.extensions.skills import content
@@ -425,9 +409,7 @@ async def test_release_collision_preserves_existing_history(
         await engine.dispose()
 
 
-async def test_committed_response_survives_following_save_prune(
-    test_client, admin_headers, bound_version_skill, monkeypatch
-):
+async def test_committed_response_survives_following_save_prune(test_client, admin_headers, bound_version_skill, monkeypatch):
     """暂停首笔提交后，让第二笔保存清理旧包，首笔仍准确返回成功。"""
     from yuxi.modules.extensions.skills import content
     from yuxi.modules.identity.models import User
@@ -471,9 +453,7 @@ async def test_committed_response_survives_following_save_prune(
                 headers=admin_headers,
                 json={
                     "expected_revision": latest["revision"],
-                    "changes": [
-                        {"action": "write", "path": "SKILL.md", "content": latest["files"]["SKILL.md"] + " following"}
-                    ],
+                    "changes": [{"action": "write", "path": "SKILL.md", "content": latest["files"]["SKILL.md"] + " following"}],
                 },
             )
             assert response.status_code == 200, response.text

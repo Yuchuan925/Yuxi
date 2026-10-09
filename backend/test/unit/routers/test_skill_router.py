@@ -184,9 +184,7 @@ def test_create_uploaded_skill_draft_route(monkeypatch):
         captured["operator_uid"] = operator.uid
         return {"draft_id": "draft-1", "items": [{"slug": "demo"}], "failures": []}
 
-    monkeypatch.setattr(
-        "yuxi.api.routers.extensions.skills.create_uploaded_skill_draft", fake_create_uploaded_skill_draft
-    )
+    monkeypatch.setattr("yuxi.api.routers.extensions.skills.create_uploaded_skill_draft", fake_create_uploaded_skill_draft)
 
     client = TestClient(_build_app(role="user"))
     resp = client.post(
@@ -223,9 +221,7 @@ def test_remote_skill_prepare_and_admin_confirm_routes(monkeypatch):
         ]
 
     monkeypatch.setattr("yuxi.api.routers.extensions.skills.create_remote_skill_draft", fake_create_remote_skill_draft)
-    monkeypatch.setattr(
-        "yuxi.api.routers.extensions.skills.confirm_skill_install_draft", fake_confirm_skill_install_draft
-    )
+    monkeypatch.setattr("yuxi.api.routers.extensions.skills.confirm_skill_install_draft", fake_confirm_skill_install_draft)
 
     client = TestClient(_build_app(role="admin"))
     prepare_resp = client.post(
@@ -283,12 +279,8 @@ def test_dependency_options_route_checks_manage_permission(monkeypatch):
         captured["options"] = {"slug": slug, "operator_uid": user.uid}
         return {"tools": [{"slug": "calculator", "name": "Calculator"}], "mcps": ["mcp-a"], "skills": ["other"]}
 
-    monkeypatch.setattr(
-        "yuxi.api.routers.extensions.skills.get_manageable_skill_or_raise", fake_get_manageable_skill_or_raise
-    )
-    monkeypatch.setattr(
-        "yuxi.api.routers.extensions.skills.get_skill_dependency_options", fake_get_skill_dependency_options
-    )
+    monkeypatch.setattr("yuxi.api.routers.extensions.skills.get_manageable_skill_or_raise", fake_get_manageable_skill_or_raise)
+    monkeypatch.setattr("yuxi.api.routers.extensions.skills.get_skill_dependency_options", fake_get_skill_dependency_options)
 
     client = TestClient(_build_app())
     resp = client.get("/api/system/skills/dependency-options?slug=demo")
@@ -366,9 +358,7 @@ def test_update_skill_dependencies_route_passes_operator(monkeypatch):
         captured["operator_uid"] = operator.uid
         return _skill(slug=slug), "next-revision"
 
-    monkeypatch.setattr(
-        "yuxi.api.routers.extensions.skills.edit_shared_skill_dependencies", fake_edit_shared_skill_dependencies
-    )
+    monkeypatch.setattr("yuxi.api.routers.extensions.skills.edit_shared_skill_dependencies", fake_edit_shared_skill_dependencies)
 
     client = TestClient(_build_app())
     resp = client.put(

@@ -55,9 +55,7 @@ class DepartmentRepository:
             department = result.scalar_one_or_none()
             if department is None:
                 return None
-            count_result = await session.execute(
-                select(func.count(User.id)).where(User.department_id == id, User.is_deleted == 0)
-            )
+            count_result = await session.execute(select(func.count(User.id)).where(User.department_id == id, User.is_deleted == 0))
             return {**department.to_dict(), "user_count": count_result.scalar() or 0}
 
     async def get_by_name(self, name: str) -> Department | None:
@@ -124,9 +122,7 @@ class DepartmentRepository:
             await session.flush()
         return True
 
-    async def delete_and_migrate_users(
-        self, id: int, *, default_department_id: int = 1
-    ) -> DepartmentDeletionResult | None:
+    async def delete_and_migrate_users(self, id: int, *, default_department_id: int = 1) -> DepartmentDeletionResult | None:
         """迁移部门用户、删除关联 API Key，并原子删除部门。"""
         async with self._session() as session:
             result = await session.execute(select(Department).where(Department.id == id))
@@ -140,9 +136,7 @@ class DepartmentRepository:
                 user.department_id = default_department_id
 
             await session.execute(
-                update(APIKey)
-                .where(APIKey.department_id == id)
-                .values(is_enabled=False, revoked_at=utc_now(), department_id=None)
+                update(APIKey).where(APIKey.department_id == id).values(is_enabled=False, revoked_at=utc_now(), department_id=None)
             )
             await session.delete(department)
             await session.flush()
@@ -151,9 +145,7 @@ class DepartmentRepository:
     async def count_users(self, id: int) -> int:
         """统计部门用户数量"""
         async with self._session() as session:
-            result = await session.execute(
-                select(func.count(User.id)).where(User.department_id == id, User.is_deleted == 0)
-            )
+            result = await session.execute(select(func.count(User.id)).where(User.department_id == id, User.is_deleted == 0))
             return result.scalar() or 0
 
     async def exists_by_name(self, name: str) -> bool:

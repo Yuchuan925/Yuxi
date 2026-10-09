@@ -18,8 +18,7 @@ async def test_prepare_agent_config_write_resolves_only_submitted_resource_field
     resource_fields = {"tools", "knowledges", "mcps", "skills"}
     resolver = AsyncMock(
         return_value={
-            field_name: [{"key": f"visible-{field_name}"}, {"key": f"also-visible-{field_name}"}]
-            for field_name in resource_fields
+            field_name: [{"key": f"visible-{field_name}"}, {"key": f"also-visible-{field_name}"}] for field_name in resource_fields
         }
     )
 
@@ -77,9 +76,7 @@ async def test_prepare_agent_config_write_does_not_load_resources_for_unrelated_
 @pytest.mark.asyncio
 @pytest.mark.parametrize("subagents", [[], ["undeclared-subagent"]])
 @pytest.mark.parametrize("selection", [[], "all"])
-async def test_prepare_agent_config_write_does_not_load_resources_for_strategy_switch(
-    monkeypatch, subagents, selection
-):
+async def test_prepare_agent_config_write_does_not_load_resources_for_strategy_switch(monkeypatch, subagents, selection):
     """替代配置入口明确拒绝未声明字段。"""
     monkeypatch.setattr(
         agent_config_service,

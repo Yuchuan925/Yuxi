@@ -62,17 +62,11 @@ class CooperationRepository:
             ).all()
         }
         run_ids = [turn.current_run_id for turn in turns.values() if turn.current_run_id]
-        runs = (
-            dict((await self.db.execute(select(AgentRun.id, AgentRun.status).where(AgentRun.id.in_(run_ids)))).all())
-            if run_ids
-            else {}
-        )
+        runs = dict((await self.db.execute(select(AgentRun.id, AgentRun.status).where(AgentRun.id.in_(run_ids)))).all()) if run_ids else {}
         pending = set(
             (
                 await self.db.scalars(
-                    select(AgentInput.thread_id)
-                    .where(AgentInput.thread_id.in_(ids), AgentInput.status == "pending")
-                    .distinct()
+                    select(AgentInput.thread_id).where(AgentInput.thread_id.in_(ids), AgentInput.status == "pending").distinct()
                 )
             ).all()
         )
@@ -237,8 +231,6 @@ class CooperationRepository:
         await self.db.execute(
             insert(CooperationRuntime)
             .values(tree_root_thread_id=run.runtime_scope_id, idle_since=None, released=False, stopped=False)
-            .on_conflict_do_update(
-                index_elements=[CooperationRuntime.tree_root_thread_id], set_={"idle_since": None, "released": False}
-            )
+            .on_conflict_do_update(index_elements=[CooperationRuntime.tree_root_thread_id], set_={"idle_since": None, "released": False})
         )
         return True

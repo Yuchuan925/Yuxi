@@ -37,10 +37,9 @@ async def test_draft_upload_does_not_create_session_and_deletes_original(test_cl
         assert record["uid"] == uid and record["status"] == "draft"
         assert record["input_id"] is None and record["receipt_id"] is None
         assert await storage.adownload_file(bucket, record["object_name"]) == b"draft bytes"
-        assert {
-            item["object_name"]
-            for item in await storage.alist_object_metadata(bucket, f"tmp/chat_attachments/{uid}/{file_id}/")
-        } == {record["object_name"]}
+        assert {item["object_name"] for item in await storage.alist_object_metadata(bucket, f"tmp/chat_attachments/{uid}/{file_id}/")} == {
+            record["object_name"]
+        }
         assert (await test_client.get(f"/api/v1/agents/files/{file_id}", headers=headers)).json() == file
         for method, path, kwargs in (
             ("GET", f"/api/v1/agents/files/{file_id}", {}),
@@ -135,9 +134,7 @@ async def test_expired_draft_cleanup_is_bounded_and_keeps_live_drafts(test_clien
     ids = []
     prefix = None
     try:
-        anchor = await test_client.post(
-            "/api/v1/agents/files", headers=headers, files={"file": ("anchor.txt", b"live", "text/plain")}
-        )
+        anchor = await test_client.post("/api/v1/agents/files", headers=headers, files={"file": ("anchor.txt", b"live", "text/plain")})
         assert anchor.status_code == 201, anchor.text
         ids.append(anchor.json()["id"])
         row = await conn.fetchrow("SELECT uid,app_id FROM agent_attachments WHERE id=$1", anchor.json()["id"])
@@ -159,9 +156,7 @@ async def test_expired_draft_cleanup_is_bounded_and_keeps_live_drafts(test_clien
                 object_name,
             )
         for remaining in [1, 0]:
-            uploaded = await test_client.post(
-                "/api/v1/agents/files", headers=headers, files={"file": ("live.txt", b"live", "text/plain")}
-            )
+            uploaded = await test_client.post("/api/v1/agents/files", headers=headers, files={"file": ("live.txt", b"live", "text/plain")})
             assert uploaded.status_code == 201, uploaded.text
             ids.append(uploaded.json()["id"])
             assert (
@@ -172,12 +167,7 @@ async def test_expired_draft_cleanup_is_bounded_and_keeps_live_drafts(test_clien
                 )
                 == remaining
             )
-        assert (
-            await conn.fetchval(
-                "SELECT count(*) FROM agent_attachments WHERE uid=$1 AND app_id=$2 AND status='draft'", uid, app_id
-            )
-            == 3
-        )
+        assert await conn.fetchval("SELECT count(*) FROM agent_attachments WHERE uid=$1 AND app_id=$2 AND status='draft'", uid, app_id) == 3
         names = {item["object_name"] for item in await storage.alist_object_metadata(bucket, prefix)}
         assert len(names) == 3 and all("manifest" not in name for name in names)
     finally:

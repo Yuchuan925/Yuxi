@@ -42,15 +42,9 @@ class DoubaoSearchInput(BaseModel):
             "- 'YYYY-MM-DD..YYYY-MM-DD': 自定义日期范围区间 (如 '2025-01-01..2025-12-31')"
         ),
     )
-    sites: list[str] | None = Field(
-        default=None, description="指定限定搜索的完整域名列表 (如 ['sohu.com', '163.com'])，最多支持 20 个站点"
-    )
-    block_hosts: list[str] | None = Field(
-        default=None, description="指定屏蔽的搜索域名列表 (如 ['example.com'])，最多支持 5 个站点"
-    )
-    content_format: str = Field(
-        default="text", description="正文返回格式，支持 'text' (纯文本) 或 'markdown' (Markdown 格式)，默认 'text'"
-    )
+    sites: list[str] | None = Field(default=None, description="指定限定搜索的完整域名列表 (如 ['sohu.com', '163.com'])，最多支持 20 个站点")
+    block_hosts: list[str] | None = Field(default=None, description="指定屏蔽的搜索域名列表 (如 ['example.com'])，最多支持 5 个站点")
+    content_format: str = Field(default="text", description="正文返回格式，支持 'text' (纯文本) 或 'markdown' (Markdown 格式)，默认 'text'")
 
 
 @langchain_tool("web_search", args_schema=DoubaoSearchInput, description=DOUBAO_SEARCH_DESCRIPTION)

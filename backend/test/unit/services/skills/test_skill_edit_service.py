@@ -72,9 +72,7 @@ def _setup_shared_skill(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             target.updated_by = updated_by
             return target
 
-        async def update_dependencies(
-            self, target, *, tool_dependencies, mcp_dependencies, skill_dependencies, updated_by
-        ):
+        async def update_dependencies(self, target, *, tool_dependencies, mcp_dependencies, skill_dependencies, updated_by):
             target.tool_dependencies = tool_dependencies
             target.mcp_dependencies = mcp_dependencies
             target.skill_dependencies = skill_dependencies
@@ -159,9 +157,7 @@ async def test_shared_node_delete_commit_failure_restores_file(tmp_path, monkeyp
 
     monkeypatch.setattr(edit_service, "get_manageable_skill_or_raise", manageable)
     with pytest.raises(RuntimeError, match="database commit failed"):
-        await edit_service.delete_skill_node(
-            _Session(fail_commit=True), slug="demo", relative_path="notes.txt", operator=_user("owner")
-        )
+        await edit_service.delete_skill_node(_Session(fail_commit=True), slug="demo", relative_path="notes.txt", operator=_user("owner"))
     assert (skill_dir / "notes.txt").read_text(encoding="utf-8") == "before"
 
 
@@ -337,11 +333,7 @@ async def test_dependency_form_updates_root_file_and_index(tmp_path, monkeypatch
 async def test_dependency_edit_accepts_unquoted_multiline_description(tmp_path, monkeypatch):
     """预览可识别的多行描述也必须能保存依赖。"""
     skill_dir, item, _old = _setup_shared_skill(tmp_path, monkeypatch)
-    original = (
-        "---\nname: demo\nslug: demo\ndescription:\n"
-        '  Use this skill for PDFs.\n  CREATE (from scratch): "make a PDF".\n'
-        "license: MIT\n---\n# Body\n"
-    )
+    original = '---\nname: demo\nslug: demo\ndescription:\n  Use this skill for PDFs.\n  CREATE (from scratch): "make a PDF".\nlicense: MIT\n---\n# Body\n'
     (skill_dir / "SKILL.md").write_text(original, encoding="utf-8")
 
     result, revision = await edit_service.edit_shared_skill_dependencies(

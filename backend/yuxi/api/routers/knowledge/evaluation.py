@@ -239,9 +239,7 @@ async def resume_evaluation_dataset(
     """恢复自动生成评估数据集"""
     try:
         service = EvaluationService()
-        result = await service.resume_dataset_generation(
-            kb_id=kb_id, dataset_id=dataset_id, created_by=current_user.uid
-        )
+        result = await service.resume_dataset_generation(kb_id=kb_id, dataset_id=dataset_id, created_by=current_user.uid)
         return {"message": "success", "data": result}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -317,9 +315,7 @@ async def get_evaluation_run_results(
             raise HTTPException(status_code=400, detail="无效的评估结果筛选条件")
 
         service = EvaluationService()
-        results = await service.get_run_results(
-            kb_id, run_id, page=page, page_size=page_size, result_filter=result_filter or "all"
-        )
+        results = await service.get_run_results(kb_id, run_id, page=page, page_size=page_size, result_filter=result_filter or "all")
         return {"message": "success", "data": results}
     except HTTPException:
         raise

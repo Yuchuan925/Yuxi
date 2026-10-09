@@ -302,8 +302,9 @@ async def update_database_info(
 ):
     """更新知识库信息"""
     logger.debug(
-        f"[update_database_info] 接收到的参数: name={data.name}, llm_model_spec={data.llm_model_spec}, "
-        f"additional_params={data.additional_params}, share_config={data.share_config}"
+        f"[update_database_info] 接收到的参数: name={data.name}, "
+        f"llm_model_spec={data.llm_model_spec}, additional_params={data.additional_params}, "
+        f"share_config={data.share_config}"
     )
     try:
         update_llm_model_spec = "llm_model_spec" in data.model_fields_set
@@ -936,10 +937,7 @@ async def get_document_content(kb_id: str, doc_id: str, current_user: User = Dep
     try:
         info = await knowledge_base.get_file_content(kb_id, doc_id)
         internal_graph_fields = {"ent_id", "ent_ids", "extraction_result"}
-        info["lines"] = [
-            {key: value for key, value in line.items() if key not in internal_graph_fields}
-            for line in info.get("lines", [])
-        ]
+        info["lines"] = [{key: value for key, value in line.items() if key not in internal_graph_fields} for line in info.get("lines", [])]
         return info
     except HTTPException:
         raise
@@ -949,9 +947,7 @@ async def get_document_content(kb_id: str, doc_id: str, current_user: User = Dep
 
 
 @knowledge.delete("/databases/{kb_id}/documents/batch")
-async def batch_delete_documents(
-    kb_id: str, file_ids: list[str] = Body(...), current_user: User = Depends(require_knowledge_base_manage)
-):
+async def batch_delete_documents(kb_id: str, file_ids: list[str] = Body(...), current_user: User = Depends(require_knowledge_base_manage)):
     """批量删除文档或文件夹"""
     logger.debug(f"BATCH DELETE documents {file_ids} in {kb_id}")
     await _ensure_database_supports_documents(kb_id, "批量文档删除")
@@ -1134,9 +1130,7 @@ async def get_kb_image(kb_id: str, object_path: str, current_user: User = Depend
             minio_response.close()
             minio_response.release_conn()
 
-    return StreamingResponse(
-        image_stream(), media_type=content_type, headers={"Cache-Control": "private, max-age=3600"}
-    )
+    return StreamingResponse(image_stream(), media_type=content_type, headers={"Cache-Control": "private, max-age=3600"})
 
 
 # =============================================================================

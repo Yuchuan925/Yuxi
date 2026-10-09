@@ -138,9 +138,7 @@ async def cleanup_provisioned_sandboxes(
 
 def _postgres_dsn() -> str:
     """返回测试环境 PostgreSQL DSN（去掉 SQLAlchemy 驱动前缀）。"""
-    return os.getenv("POSTGRES_URL", "postgresql+asyncpg://postgres:postgres@postgres:5432/yuxi").replace(
-        "+asyncpg", ""
-    )
+    return os.getenv("POSTGRES_URL", "postgresql+asyncpg://postgres:postgres@postgres:5432/yuxi").replace("+asyncpg", "")
 
 
 def _is_pytest_resource(name: object) -> bool:
@@ -194,8 +192,7 @@ def _is_test_thread(thread: object) -> bool:
     if metadata.get("_yuxi_test") is True:
         return True
     if metadata.get("_yuxi_e2e") is True and (
-        metadata.get("test") in E2E_THREAD_TEST_MARKERS
-        or _has_prefix(metadata.get("marker"), ("YUXI_SUBAGENT_STREAM_E2E_",))
+        metadata.get("test") in E2E_THREAD_TEST_MARKERS or _has_prefix(metadata.get("marker"), ("YUXI_SUBAGENT_STREAM_E2E_",))
     ):
         return True
     if is_test_session_title(thread.get("title")):
@@ -282,12 +279,7 @@ async def list_test_session_resources(owner_uid: str) -> dict[str, CleanupSessio
     conn = await asyncpg.connect(_postgres_dsn())
     try:
         receipt_rows = await conn.fetch(
-            "SELECT DISTINCT thread_id "
-            "FROM agent_input_receipts "
-            "WHERE uid = $1 AND ("
-            "left(idempotency_key, char_length($2)) = $2 "
-            "OR left(idempotency_key, char_length($3)) = $3"
-            ")",
+            "SELECT DISTINCT thread_id FROM agent_input_receipts WHERE uid = $1 AND (left(idempotency_key, char_length($2)) = $2 OR left(idempotency_key, char_length($3)) = $3)",
             owner_uid,
             TEST_RESOURCE_PREFIX,
             "agent-call-queue-",
@@ -324,9 +316,7 @@ async def list_test_session_resources(owner_uid: str) -> dict[str, CleanupSessio
                 status=str(row["status"] or ""),
                 workdir_path=(
                     str(row["workdir_path"])
-                    if row["directory_mode"] == "managed"
-                    and row["selection_status"] == "implicit"
-                    and row["workdir_path"]
+                    if row["directory_mode"] == "managed" and row["selection_status"] == "implicit" and row["workdir_path"]
                     else None
                 ),
             )
@@ -361,9 +351,7 @@ async def list_test_session_resources(owner_uid: str) -> dict[str, CleanupSessio
                     status=str(row["status"] or ""),
                     workdir_path=(
                         str(row["workdir_path"])
-                        if row["directory_mode"] == "managed"
-                        and row["selection_status"] == "implicit"
-                        and row["workdir_path"]
+                        if row["directory_mode"] == "managed" and row["selection_status"] == "implicit" and row["workdir_path"]
                         else None
                     ),
                 )
@@ -414,21 +402,15 @@ async def _validate_test_workdirs_exclusive(
                 candidate_path = PurePosixPath(normalize_workdir_path(candidate_value))
             except ValueError as exc:
                 raise RuntimeError(
-                    "Test agent_session cleanup cannot verify an existing Workdir owner: "
-                    f"{row['id']}={candidate_value!r}"
+                    f"Test agent_session cleanup cannot verify an existing Workdir owner: {row['id']}={candidate_value!r}"
                 ) from exc
-            overlaps = (
-                candidate_path == target_path
-                or candidate_path in target_path.parents
-                or target_path in candidate_path.parents
-            )
+            overlaps = candidate_path == target_path or candidate_path in target_path.parents or target_path in candidate_path.parents
             if overlaps:
                 owners.add(str(row["id"] or ""))
         unexpected = owners - target_project_ids
         if unexpected:
             raise RuntimeError(
-                f"Test agent_session cleanup refuses shared or overlapping Workdir {workdir_path!r}; "
-                f"other projects: {', '.join(sorted(unexpected))}"
+                f"Test agent_session cleanup refuses shared or overlapping Workdir {workdir_path!r}; other projects: {', '.join(sorted(unexpected))}"
             )
         if not project_ids <= target_project_ids:
             raise RuntimeError(f"Test agent_session cleanup has an untracked Workdir owner: {workdir_path!r}")
@@ -445,8 +427,7 @@ async def validate_test_runs_terminal(thread_ids: set[str]) -> None:
         target_ids = sorted(thread_ids)
         while True:
             turns = await conn.fetch(
-                "SELECT id, status FROM agent_turns WHERE thread_id = ANY($1::text[]) "
-                "AND status IN ('running', 'waiting', 'cancelling')",
+                "SELECT id, status FROM agent_turns WHERE thread_id = ANY($1::text[]) AND status IN ('running', 'waiting', 'cancelling')",
                 target_ids,
             )
             if turns:
@@ -454,9 +435,7 @@ async def validate_test_runs_terminal(thread_ids: set[str]) -> None:
                 raise RuntimeError(f"test Turn is not terminal: {details}")
 
             rows = await conn.fetch(
-                "SELECT id, status, runtime_cleanup_pending FROM agent_runs "
-                "WHERE thread_id = ANY($1::text[]) "
-                "AND (status <> ALL($2::text[]) OR runtime_cleanup_pending)",
+                "SELECT id, status, runtime_cleanup_pending FROM agent_runs WHERE thread_id = ANY($1::text[]) AND (status <> ALL($2::text[]) OR runtime_cleanup_pending)",
                 target_ids,
                 list(AGENT_RUN_TERMINAL_STATUSES),
             )
@@ -482,9 +461,7 @@ async def list_test_pending_inputs(thread_ids: set[str]) -> list[tuple[str, str]
     conn = await asyncpg.connect(_postgres_dsn())
     try:
         rows = await conn.fetch(
-            "SELECT thread_id, id FROM agent_inputs "
-            "WHERE thread_id = ANY($1::text[]) AND kind = 'follow_up' AND status = 'pending' "
-            "ORDER BY received_seq",
+            "SELECT thread_id, id FROM agent_inputs WHERE thread_id = ANY($1::text[]) AND kind = 'follow_up' AND status = 'pending' ORDER BY received_seq",
             sorted(thread_ids),
         )
         return [(str(row["thread_id"]), str(row["id"])) for row in rows]
@@ -552,15 +529,11 @@ async def _delete_test_session_rows(conn: asyncpg.Connection, thread_ids_list: l
     """使用调用方事务删除测试 Session 的完整历史。"""
 
     session_rows = await conn.fetch(
-        "SELECT c.id, c.project_id, p.selection_status "
-        "FROM sessions c JOIN projects p ON p.id = c.project_id AND p.uid = c.uid "
-        "WHERE c.thread_id = ANY($1::text[])",
+        "SELECT c.id, c.project_id, p.selection_status FROM sessions c JOIN projects p ON p.id = c.project_id AND p.uid = c.uid WHERE c.thread_id = ANY($1::text[])",
         thread_ids_list,
     )
     session_record_ids = [int(row["id"]) for row in session_rows]
-    implicit_project_ids = [
-        str(row["project_id"]) for row in session_rows if row["project_id"] and row["selection_status"] == "implicit"
-    ]
+    implicit_project_ids = [str(row["project_id"]) for row in session_rows if row["project_id"] and row["selection_status"] == "implicit"]
     run_rows = await conn.fetch(
         "SELECT id FROM agent_runs WHERE thread_id = ANY($1::text[])",
         thread_ids_list,
@@ -586,9 +559,7 @@ async def _delete_test_session_rows(conn: asyncpg.Connection, thread_ids_list: l
         "DELETE FROM session_cooperation_events WHERE tree_root_thread_id = ANY($1::text[]) OR sender_thread_id = ANY($1::text[]) OR recipient_thread_id = ANY($1::text[])",
         thread_ids_list,
     )
-    await conn.execute(
-        "DELETE FROM session_cooperation_runtimes WHERE tree_root_thread_id = ANY($1::text[])", thread_ids_list
-    )
+    await conn.execute("DELETE FROM session_cooperation_runtimes WHERE tree_root_thread_id = ANY($1::text[])", thread_ids_list)
     await conn.execute("UPDATE sessions SET created_by_run_id = NULL WHERE id = ANY($1::int[])", session_record_ids)
     await conn.execute("DELETE FROM agent_input_messages WHERE input_id = ANY($1::text[])", input_ids)
     await conn.execute(
@@ -608,8 +579,7 @@ async def _delete_test_session_rows(conn: asyncpg.Connection, thread_ids_list: l
     await conn.execute("DELETE FROM scheduled_agent_runs WHERE thread_id = ANY($1::text[])", thread_ids_list)
     await conn.execute("DELETE FROM sessions WHERE id = ANY($1::int[])", session_record_ids)
     await conn.execute(
-        "DELETE FROM projects WHERE id = ANY($1::text[]) "
-        "AND NOT EXISTS (SELECT 1 FROM sessions WHERE sessions.project_id = projects.id)",
+        "DELETE FROM projects WHERE id = ANY($1::text[]) AND NOT EXISTS (SELECT 1 FROM sessions WHERE sessions.project_id = projects.id)",
         implicit_project_ids,
     )
 
@@ -620,9 +590,7 @@ async def delete_orphaned_test_projects(owner_uid: str) -> None:
     conn = await asyncpg.connect(_postgres_dsn())
     try:
         await conn.execute(
-            "DELETE FROM projects WHERE uid = $1 "
-            "AND left(idempotency_key, char_length($2)) = $2 "
-            "AND NOT EXISTS (SELECT 1 FROM sessions WHERE sessions.project_id = projects.id)",
+            "DELETE FROM projects WHERE uid = $1 AND left(idempotency_key, char_length($2)) = $2 AND NOT EXISTS (SELECT 1 FROM sessions WHERE sessions.project_id = projects.id)",
             owner_uid,
             TEST_RESOURCE_PREFIX,
         )
@@ -639,8 +607,7 @@ async def _assert_test_sessions_deleted(conn: asyncpg.Connection, thread_ids_lis
     )
     if remaining:
         raise RuntimeError(
-            "Test agent_session cleanup left sessions behind: "
-            + ", ".join(sorted(str(row["thread_id"]) for row in remaining))
+            "Test agent_session cleanup left sessions behind: " + ", ".join(sorted(str(row["thread_id"]) for row in remaining))
         )
 
 
@@ -683,8 +650,7 @@ async def cleanup_test_chat_resources(
     remaining_inputs = await list_test_pending_inputs(target_thread_ids)
     if remaining_inputs:
         raise RuntimeError(
-            "Test agent_session cleanup left pending Inputs behind: "
-            + ", ".join(input_id for _, input_id in remaining_inputs)
+            "Test agent_session cleanup left pending Inputs behind: " + ", ".join(input_id for _, input_id in remaining_inputs)
         )
     await validate_test_runs_terminal(target_thread_ids)
 

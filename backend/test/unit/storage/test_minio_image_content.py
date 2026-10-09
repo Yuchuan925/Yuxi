@@ -9,9 +9,7 @@ from yuxi.infrastructure.minio import utils
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "image_format,extension", [("PNG", ".png"), ("JPEG", ".jpg"), ("WEBP", ".webp"), ("GIF", ".gif")]
-)
+@pytest.mark.parametrize("image_format,extension", [("PNG", ".png"), ("JPEG", ".jpg"), ("WEBP", ".webp"), ("GIF", ".gif")])
 async def test_image_content_is_stored_unchanged(monkeypatch, image_format, extension):
     """所有允许的图片格式都按实际格式生成对象名，并保存原始内容。"""
     source = BytesIO()
@@ -49,7 +47,5 @@ async def test_image_rejection_creates_no_object(monkeypatch, content, limit, me
 
     monkeypatch.setattr(utils, "aupload_file_to_minio", store)
     with pytest.raises(ValueError, match=message):
-        await utils.upload_image_to_minio(
-            content, object_prefix="images/user-1", max_size_bytes=limit, too_large_message="too large"
-        )
+        await utils.upload_image_to_minio(content, object_prefix="images/user-1", max_size_bytes=limit, too_large_message="too large")
     assert objects == {}

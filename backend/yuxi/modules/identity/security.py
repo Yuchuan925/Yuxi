@@ -78,9 +78,7 @@ def _get_jwt_secret_key() -> str:
 
 
 def _get_api_key_derivation_secret() -> str:
-    return _validate_configured_security_secrets(required_names=("API_KEY_DERIVATION_SECRET",))[
-        "API_KEY_DERIVATION_SECRET"
-    ]
+    return _validate_configured_security_secrets(required_names=("API_KEY_DERIVATION_SECRET",))["API_KEY_DERIVATION_SECRET"]
 
 
 def _get_jwt_issuer() -> str:

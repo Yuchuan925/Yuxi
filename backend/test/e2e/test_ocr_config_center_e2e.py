@@ -98,9 +98,7 @@ async def test_admin_ocr_config_drives_real_tmp_attachment_parse(
             },
         )
         assert accepted.status_code == 202, accepted.text
-        [attachment] = (
-            await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/attachments", headers=e2e_headers)
-        ).json()["attachments"]
+        [attachment] = (await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/attachments", headers=e2e_headers)).json()["attachments"]
         cancelled = await e2e_client.post(
             f"/api/v1/agents/sessions/{thread_id}/events",
             headers={**e2e_headers, "Idempotency-Key": uuid4().hex},

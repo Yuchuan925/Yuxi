@@ -21,9 +21,7 @@ async def test_legacy_schema_version_is_rejected_before_ddl(monkeypatch):
     create_tables = AsyncMock()
     monkeypatch.setattr(schema_bootstrap, "pg_manager", manager)
     monkeypatch.setattr(schema_bootstrap, "schema_migration_lock", locked)
-    monkeypatch.setattr(
-        schema_bootstrap, "get_schema_versions", AsyncMock(return_value={"business": 1, "knowledge": 1})
-    )
+    monkeypatch.setattr(schema_bootstrap, "get_schema_versions", AsyncMock(return_value={"business": 1, "knowledge": 1}))
     monkeypatch.setattr(schema_bootstrap, "create_business_tables", create_tables)
 
     with pytest.raises(RuntimeError, match="Unsupported Yuxi schema versions"):

@@ -167,9 +167,7 @@ async def finalize_job_failure(session, record, error: str) -> None:
 async def reconcile_and_publish_jobs() -> list[tuple[str, str, int]]:
     """收敛失联 owner，并发布所有当前 pending BackgroundJob。"""
     repository = BackgroundJobRepository()
-    reconciled = await repository.reconcile_expired_leases(
-        before_fail=finalize_job_failure,
-    )
+    reconciled = await repository.reconcile_expired_leases(before_fail=finalize_job_failure)
     await publish_pending_jobs()
     await repository.prune_terminal()
     return reconciled

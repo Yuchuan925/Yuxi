@@ -97,9 +97,7 @@ async def _filter_project_tree_entries(entries: list[dict], *, uid: str, db) -> 
         return entries
 
     visible_paths = await ProjectRepository(db).list_selectable_workdir_paths_for_user(uid)
-    selected_project_paths = [
-        PurePosixPath(path) for path in visible_paths if PurePosixPath(path).parts[:1] == ("projects",)
-    ]
+    selected_project_paths = [PurePosixPath(path) for path in visible_paths if PurePosixPath(path).parts[:1] == ("projects",)]
 
     def is_visible(candidate: PurePosixPath) -> bool:
         if candidate.parts[:1] != ("projects",) or candidate.as_posix() == "projects":

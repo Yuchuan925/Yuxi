@@ -141,9 +141,7 @@ class KnowledgeFileRepository:
 
     async def list_by_kb_id(self, kb_id: str) -> list[KnowledgeFile]:
         async with pg_manager.get_async_session_context() as session:
-            result = await session.execute(
-                select(KnowledgeFile).where(KnowledgeFile.kb_id == kb_id, KnowledgeFile.deleted_at.is_(None))
-            )
+            result = await session.execute(select(KnowledgeFile).where(KnowledgeFile.kb_id == kb_id, KnowledgeFile.deleted_at.is_(None)))
             return list(result.scalars().all())
 
     async def list_by_kb_id_after(
@@ -162,10 +160,7 @@ class KnowledgeFileRepository:
 
         async with pg_manager.get_async_session_context() as session:
             result = await session.execute(
-                select(KnowledgeFile)
-                .where(*filters)
-                .order_by(KnowledgeFile.file_id.asc())
-                .limit(min(max(int(limit or 100), 1), 1000))
+                select(KnowledgeFile).where(*filters).order_by(KnowledgeFile.file_id.asc()).limit(min(max(int(limit or 100), 1), 1000))
             )
             return list(result.scalars().all())
 
@@ -313,9 +308,7 @@ class KnowledgeFileRepository:
 
     async def count_all(self) -> int:
         async with pg_manager.get_async_session_context() as session:
-            result = await session.execute(
-                select(func.count()).select_from(KnowledgeFile).where(KnowledgeFile.deleted_at.is_(None))
-            )
+            result = await session.execute(select(func.count()).select_from(KnowledgeFile).where(KnowledgeFile.deleted_at.is_(None)))
             return int(result.scalar() or 0)
 
     async def list_file_ids_by_exact_statuses(
@@ -341,10 +334,7 @@ class KnowledgeFileRepository:
 
         async with pg_manager.get_async_session_context() as session:
             result = await session.execute(
-                select(KnowledgeFile.file_id)
-                .where(*filters)
-                .order_by(KnowledgeFile.file_id.asc())
-                .limit(normalized_limit)
+                select(KnowledgeFile.file_id).where(*filters).order_by(KnowledgeFile.file_id.asc()).limit(normalized_limit)
             )
             return [str(file_id) for file_id in result.scalars().all()]
 
@@ -450,10 +440,8 @@ class KnowledgeFileRepository:
         immediate_name = remainder.label("filename")
         segment = func.split_part(remainder, "/", 1)
         virtual_path_prefix = (literal(path_prefix) + segment + literal("/")).label("path_prefix")
-        virtual_file_id = (
-            literal("__virtual_folder__:") + literal(parent_id or "root") + literal(":") + virtual_path_prefix
-        ).label(
-            "file_id",
+        virtual_file_id = (literal("__virtual_folder__:") + literal(parent_id or "root") + literal(":") + virtual_path_prefix).label(
+            "file_id"
         )
 
         real_select = select(
@@ -625,9 +613,7 @@ class KnowledgeFileRepository:
                 func.coalesce(func.sum(case((non_folder, KnowledgeFile.file_size), else_=0)), 0).label("total_size"),
                 func.coalesce(func.sum(case((non_folder, KnowledgeFile.chunk_count), else_=0)), 0).label("chunk_count"),
                 func.coalesce(func.sum(case((non_folder, KnowledgeFile.token_count), else_=0)), 0).label("token_count"),
-                func.sum(case((non_folder & (KnowledgeFile.status == "uploaded"), 1), else_=0)).label(
-                    "pending_parse_count"
-                ),
+                func.sum(case((non_folder & (KnowledgeFile.status == "uploaded"), 1), else_=0)).label("pending_parse_count"),
                 func.sum(case((non_folder & KnowledgeFile.status.in_(["parsed", "error_indexing"]), 1), else_=0)).label(
                     "pending_index_count"
                 ),
@@ -669,9 +655,7 @@ class KnowledgeFileRepository:
             )
             if kb is None or kb.deleted_at is not None:
                 raise ValueError("Knowledge base not found or deleted")
-            result = await session.execute(
-                select(KnowledgeFile).where(KnowledgeFile.file_id == file_id).with_for_update()
-            )
+            result = await session.execute(select(KnowledgeFile).where(KnowledgeFile.file_id == file_id).with_for_update())
             record = result.scalar_one_or_none()
             if record is None:
                 record = KnowledgeFile(file_id=file_id, **sanitized_data)
@@ -845,9 +829,7 @@ class KnowledgeFileRepository:
                 await session.flush()
                 return file_record
 
-            result = await session.execute(
-                update(KnowledgeFile).where(*filters).values(**sanitized_data).returning(KnowledgeFile)
-            )
+            result = await session.execute(update(KnowledgeFile).where(*filters).values(**sanitized_data).returning(KnowledgeFile))
             return result.scalar_one_or_none()
 
     @staticmethod
@@ -879,9 +861,7 @@ class KnowledgeFileRepository:
         event_key: str | None = None
         async with pg_manager.get_async_session_context() as session:
             record = await session.scalar(
-                select(KnowledgeFile)
-                .where(KnowledgeFile.kb_id == kb_id, KnowledgeFile.file_id == file_id)
-                .with_for_update()
+                select(KnowledgeFile).where(KnowledgeFile.kb_id == kb_id, KnowledgeFile.file_id == file_id).with_for_update()
             )
             if record is None:
                 return None
@@ -891,9 +871,7 @@ class KnowledgeFileRepository:
             record.status = "deleted"
             record.projection_status = "pending"
             record.projection_error = None
-            existing = await session.scalar(
-                select(KnowledgeProjectionOutbox).where(KnowledgeProjectionOutbox.event_key == event_key)
-            )
+            existing = await session.scalar(select(KnowledgeProjectionOutbox).where(KnowledgeProjectionOutbox.event_key == event_key))
             if existing is None:
                 session.add(
                     KnowledgeProjectionOutbox(
@@ -929,11 +907,7 @@ class KnowledgeFileRepository:
                 return []
             kb.deleted_at = kb.deleted_at or utc_now()
             database_key = f"database:{kb_id}:deleted"
-            existing = await session.scalar(
-                select(KnowledgeProjectionOutbox).where(
-                    KnowledgeProjectionOutbox.event_key == database_key,
-                )
-            )
+            existing = await session.scalar(select(KnowledgeProjectionOutbox).where(KnowledgeProjectionOutbox.event_key == database_key))
             if existing is None:
                 session.add(
                     KnowledgeProjectionOutbox(
@@ -953,9 +927,7 @@ class KnowledgeFileRepository:
                 record.status = "deleted"
                 record.projection_status = "pending"
                 record.projection_error = None
-                existing = await session.scalar(
-                    select(KnowledgeProjectionOutbox).where(KnowledgeProjectionOutbox.event_key == event_key)
-                )
+                existing = await session.scalar(select(KnowledgeProjectionOutbox).where(KnowledgeProjectionOutbox.event_key == event_key))
                 if existing is None:
                     session.add(
                         KnowledgeProjectionOutbox(

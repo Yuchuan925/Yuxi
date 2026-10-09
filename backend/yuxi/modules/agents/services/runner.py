@@ -120,9 +120,7 @@ async def _validate_run_workdir_binding(run: AgentRun) -> AuthorizedWorkdir:
             or root.project_id != member.project_id
         ):
             raise NonRetryableRunError("AgentRun 的共享沙盒树归属非法")
-        root_binding = await resolve_authorized_workdir(
-            thread_id=root.thread_id, uid=str(run.uid), app_id=run.app_id, db=db
-        )
+        root_binding = await resolve_authorized_workdir(thread_id=root.thread_id, uid=str(run.uid), app_id=run.app_id, db=db)
         if root_binding.workdir_path != binding.workdir_path:
             raise NonRetryableRunError("协作树成员的 Workdir 不一致")
     return binding
@@ -153,9 +151,7 @@ class RunContext:
             self._heartbeat_task = asyncio.create_task(self._heartbeat_lease())
 
     async def close(self) -> None:
-        tasks = [
-            task for task in (self._watch_task, self._durable_cancel_task, self._heartbeat_task) if task is not None
-        ]
+        tasks = [task for task in (self._watch_task, self._durable_cancel_task, self._heartbeat_task) if task is not None]
         for task in tasks:
             task.cancel()
         if tasks:
@@ -372,9 +368,7 @@ async def _confirmed_user_cancel(run_id: str) -> bool:
         return False
 
 
-async def _read_run_token_usage_from_state(
-    *, run_id: str, thread_id: str, current_user, app_id: str | None = None
-) -> dict | None:
+async def _read_run_token_usage_from_state(*, run_id: str, thread_id: str, current_user, app_id: str | None = None) -> dict | None:
     """从当前线程 state 读取属于指定 Run 的用量快照。"""
     try:
         async with pg_manager.get_async_session_context() as db:
@@ -887,9 +881,7 @@ async def process_agent_run(ctx, run_id: str):
     except Exception as exc:
         await flush_writer_best_effort(writer)
         if await _confirmed_user_cancel(run_id):
-            await _finish_user_cancel(
-                run_id=run_id, thread_id=thread_id, current_user=user, worker_id=worker_id, writer=writer, run=run
-            )
+            await _finish_user_cancel(run_id=run_id, thread_id=thread_id, current_user=user, worker_id=worker_id, writer=writer, run=run)
             return
         if _is_retryable_exception(exc) and not _is_last_try(ctx):
             if not await release_run_lease_for_retry(run_id, worker_id):

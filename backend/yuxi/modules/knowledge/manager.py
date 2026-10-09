@@ -273,14 +273,8 @@ class KnowledgeBaseManager:
     ) -> dict[str, Any]:
         """将知识库记录转换为 Summary 与 Detail 共用的规范字段。"""
         kb_type = row.kb_type or "milvus"
-        kb_class = (
-            KnowledgeBaseFactory.get_kb_class(kb_type) if KnowledgeBaseFactory.is_type_supported(kb_type) else None
-        )
-        additional_params = (
-            kb_class.normalize_additional_params(row.additional_params)
-            if kb_class
-            else dict(row.additional_params or {})
-        )
+        kb_class = KnowledgeBaseFactory.get_kb_class(kb_type) if KnowledgeBaseFactory.is_type_supported(kb_type) else None
+        additional_params = kb_class.normalize_additional_params(row.additional_params) if kb_class else dict(row.additional_params or {})
         persisted_stats = additional_params.pop("stats", None)
         normalized_stats = self._normalize_database_stats(stats if stats is not None else persisted_stats)
 
@@ -585,9 +579,7 @@ class KnowledgeBaseManager:
             return None
         return await self._get_or_create_kb_instance(record.kb_type)
 
-    async def add_file_record(
-        self, kb_id: str, item: str, params: dict | None = None, operator_id: str | None = None
-    ) -> dict:
+    async def add_file_record(self, kb_id: str, item: str, params: dict | None = None, operator_id: str | None = None) -> dict:
         """Add file record to metadata"""
         config = await self.get_kb_config(kb_id)
         executor = await self._get_or_create_kb_instance(config.kb_type)
@@ -857,10 +849,7 @@ class KnowledgeBaseManager:
             UserRepository().list_by_uids(creator_uids),
         )
         creators = {user.uid: user for user in creators}
-        items = [
-            self._file_record_list_item(record, child_counts, creators.get(getattr(record, "created_by", None)))
-            for record in records
-        ]
+        items = [self._file_record_list_item(record, child_counts, creators.get(getattr(record, "created_by", None))) for record in records]
         normalize_path_prefix = getattr(repo, "_normalize_path_prefix", lambda value: value or "")
 
         result = {
@@ -936,9 +925,7 @@ class KnowledgeBaseManager:
         if not use_sql_pagination:
             # 多库才需要跨库按更新时间归并；单库结果已由 DB 按 updated_at desc, file_id asc 排好序。
             all_files.sort(key=lambda item: item.get("updated_at") or "", reverse=True)
-        paginated_files = (
-            all_files if use_sql_pagination else all_files[normalized_offset : normalized_offset + normalized_limit]
-        )
+        paginated_files = all_files if use_sql_pagination else all_files[normalized_offset : normalized_offset + normalized_limit]
         return {
             "files": paginated_files,
             "total": total,
@@ -1153,9 +1140,7 @@ class KnowledgeBaseManager:
             if current_graph_config.get("locked") and "graph_build_config" in additional_params:
                 raise ValueError("图谱抽取配置已锁定，请使用图谱重置接口重新配置")
 
-            merged_additional_params = kb_class.normalize_additional_params(
-                deep_merge(current_additional_params, additional_params)
-            )
+            merged_additional_params = kb_class.normalize_additional_params(deep_merge(current_additional_params, additional_params))
             update_data["additional_params"] = merged_additional_params
 
         if share_config is not None:

@@ -49,16 +49,12 @@ def test_upload_stream_no_clobber_and_limit(tmp_path, monkeypatch, existing_kind
     else:
         target.write_bytes(b"original")
     with pytest.raises(FileExistsError):
-        Workspace("user-1").upload_authorized_file_from_stream(
-            "/file.txt", BytesIO(b"12345"), max_bytes=5, overwrite=False
-        )
+        Workspace("user-1").upload_authorized_file_from_stream("/file.txt", BytesIO(b"12345"), max_bytes=5, overwrite=False)
     assert target.read_bytes() == b"original"
     assert outside.read_bytes() == b"original"
     assert not list(tmp_path.glob(".yuxi-write-*"))
 
-    result = Workspace("user-1").upload_authorized_file_from_stream(
-        "/new.txt", BytesIO(b"12345"), max_bytes=5, overwrite=False
-    )
+    result = Workspace("user-1").upload_authorized_file_from_stream("/new.txt", BytesIO(b"12345"), max_bytes=5, overwrite=False)
     assert result["size"] == 5
     assert (tmp_path / "new.txt").read_bytes() == b"12345"
     assert (tmp_path / "new.txt").stat().st_mode & 0o777 == 0o600

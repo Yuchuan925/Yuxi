@@ -66,10 +66,7 @@ def test_download_sandbox_directory_limits_empty_directory_entries(tmp_path: Pat
             if remote_dir == REMOTE_DIR:
                 return SimpleNamespace(
                     error=None,
-                    entries=[
-                        {"path": f"{REMOTE_DIR}/dir-{idx}", "is_dir": True}
-                        for idx in range(MAX_SANDBOX_TREE_ENTRIES + 1)
-                    ],
+                    entries=[{"path": f"{REMOTE_DIR}/dir-{idx}", "is_dir": True} for idx in range(MAX_SANDBOX_TREE_ENTRIES + 1)],
                 )
             return SimpleNamespace(error=None, entries=[])
 

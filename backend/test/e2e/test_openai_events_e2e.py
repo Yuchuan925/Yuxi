@@ -59,9 +59,7 @@ async def test_default_message_keeps_batch_across_concurrent_steer_and_retry(e2e
                 )
                 for index in range(2)
             ]
-            receipts = await asyncio.gather(
-                *(e2e_client.post(url, headers=headers, json=body) for body, headers in requests)
-            )
+            receipts = await asyncio.gather(*(e2e_client.post(url, headers=headers, json=body) for body, headers in requests))
             assert all(r.status_code == 202 for r in receipts), [r.text for r in receipts]
             assert receipts[0].json()["input_id"] == receipts[1].json()["input_id"]
             assert all(r.json()["turn_id"] is None and "mode" not in r.json() for r in receipts)
@@ -82,11 +80,7 @@ async def test_default_message_keeps_batch_across_concurrent_steer_and_retry(e2e
             unsupported = await e2e_client.post(
                 url,
                 headers={**e2e_headers, "Idempotency-Key": f"unsupported-{gate}"},
-                json={
-                    "events": [
-                        {"type": "agent.session.input.function_call_output", "call_id": "fake", "output": "fake"}
-                    ]
-                },
+                json={"events": [{"type": "agent.session.input.function_call_output", "call_id": "fake", "output": "fake"}]},
             )
             assert unsupported.status_code == 422, unsupported.text
             await replay.get("/release-blocking", params={"token": gate})
@@ -120,8 +114,7 @@ async def test_default_message_keeps_batch_across_concurrent_steer_and_retry(e2e
             conn = await asyncpg.connect(postgres_dsn())
             try:
                 modes = await conn.fetch(
-                    "SELECT i.kind, r.turn_id FROM agent_input_receipts r "
-                    "LEFT JOIN agent_inputs i ON i.id = r.input_id WHERE r.idempotency_key LIKE $1",
+                    "SELECT i.kind, r.turn_id FROM agent_input_receipts r LEFT JOIN agent_inputs i ON i.id = r.input_id WHERE r.idempotency_key LIKE $1",
                     f"%{gate}%",
                 )
                 assert sum(row["kind"] == "steer" for row in modes) == 2
@@ -129,11 +122,7 @@ async def test_default_message_keeps_batch_across_concurrent_steer_and_retry(e2e
             finally:
                 await conn.close()
             # 每个公开 item 独立分页，不能按 Message ID 截断同消息的工具 item。
-            history = (
-                await e2e_client.get(
-                    f"/api/v1/agents/sessions/{thread_id}/items?order=asc&limit=100", headers=e2e_headers
-                )
-            ).json()
+            history = (await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/items?order=asc&limit=100", headers=e2e_headers)).json()
             expected = [item for item in history["data"] if item["turn_id"] == turn_id]
             page_url = f"/api/v1/agents/sessions/{thread_id}/turns/{turn_id}/items"
             seen, after = [], None
@@ -229,17 +218,13 @@ async def test_cancel_preserves_displayed_partial_text_in_public_history(e2e_cli
                     "agent_id": slug,
                     "agent": {"model": MODEL},
                     "title": make_test_session_title("cancel-partial"),
-                    "input": [
-                        _message(f"{OUTPUT} DETERMINISTIC_CANCEL_FOLLOWUP DETERMINISTIC_BLOCK_BEFORE_RESPONSE:{gate}")
-                    ],
+                    "input": [_message(f"{OUTPUT} DETERMINISTIC_CANCEL_FOLLOWUP DETERMINISTIC_BLOCK_BEFORE_RESPONSE:{gate}")],
                 },
             )
             assert created.status_code == 201, created.text
             thread_id, turn_id = created.json()["id"], created.json()["yuxi"]["receipt"]["turn_id"]
             async with asyncio.timeout(30):
-                async with e2e_client.stream(
-                    "GET", f"/api/v1/agents/sessions/{thread_id}/events", headers=e2e_headers
-                ) as stream:
+                async with e2e_client.stream("GET", f"/api/v1/agents/sessions/{thread_id}/events", headers=e2e_headers) as stream:
                     async for _, event in read_events(stream):
                         if event["type"] == "agent.session.turn.output_text.delta":
                             shown, item_id = event["delta"], event["item_id"]
@@ -253,11 +238,7 @@ async def test_cancel_preserves_displayed_partial_text_in_public_history(e2e_cli
             assert cancelled.status_code == 202, cancelled.text
             await replay.get("/release-blocking", params={"token": gate})
             assert (await _turn(e2e_client, e2e_headers, thread_id, turn_id))["status"] == "cancelled"
-            history = (
-                await e2e_client.get(
-                    f"/api/v1/agents/sessions/{thread_id}/items?order=asc&limit=100", headers=e2e_headers
-                )
-            ).json()
+            history = (await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/items?order=asc&limit=100", headers=e2e_headers)).json()
             item = next(item for item in history["data"] if item["id"] == item_id)
             assert item["status"] == "incomplete"
             assert item["content"] == [{"type": "output_text", "text": shown}]

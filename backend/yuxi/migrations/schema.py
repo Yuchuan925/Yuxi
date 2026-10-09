@@ -32,8 +32,7 @@ IDENTITY_PERMISSION_STATEMENTS = (
         RETURN NEW;
     END $$
     """,
-    "CREATE TRIGGER yuxi_identity_guard BEFORE UPDATE OR DELETE ON users "
-    "FOR EACH ROW EXECUTE FUNCTION yuxi_guard_identity()",
+    "CREATE TRIGGER yuxi_identity_guard BEFORE UPDATE OR DELETE ON users FOR EACH ROW EXECUTE FUNCTION yuxi_guard_identity()",
 )
 
 
@@ -124,10 +123,7 @@ async def add_attachment_table(manager) -> None:
     async with manager.async_engine.begin() as conn:
         await conn.run_sync(lambda connection: AgentAttachment.__table__.create(connection, checkfirst=True))
         await conn.execute(
-            text(
-                f"UPDATE {SCHEMA_VERSION_TABLE} SET version=:version, applied_at=CURRENT_TIMESTAMP "
-                "WHERE domain='business'"
-            ),
+            text(f"UPDATE {SCHEMA_VERSION_TABLE} SET version=:version, applied_at=CURRENT_TIMESTAMP WHERE domain='business'"),
             {"version": BUSINESS_SCHEMA_VERSION},
         )
 
@@ -155,15 +151,13 @@ async def ensure_business_schema(manager):
     statements = (
         "CREATE SEQUENCE IF NOT EXISTS agent_runs_execution_seq",
         "ALTER TABLE agent_runs ALTER COLUMN execution_seq SET DEFAULT nextval('agent_runs_execution_seq')",
-        "CREATE INDEX IF NOT EXISTS ix_agent_inputs_pending_queue "
-        "ON agent_inputs(thread_id, received_seq) WHERE status = 'pending'",
+        "CREATE INDEX IF NOT EXISTS ix_agent_inputs_pending_queue ON agent_inputs(thread_id, received_seq) WHERE status = 'pending'",
         "CREATE INDEX IF NOT EXISTS ix_messages_session_created_id ON messages(session_record_id, created_at, id)",
         "CREATE INDEX IF NOT EXISTS ix_agent_runs_thread_execution_seq ON agent_runs(thread_id, execution_seq)",
         "CREATE INDEX IF NOT EXISTS ix_agent_runs_status_lease_expires ON agent_runs(status, lease_expires_at)",
-        "CREATE INDEX IF NOT EXISTS ix_background_jobs_status_lease_expires "
-        "ON background_jobs(status, lease_expires_at)",
-        f"CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_runs_one_active_per_thread "
-        f"ON agent_runs(uid, agent_slug, thread_id) "
+        "CREATE INDEX IF NOT EXISTS ix_background_jobs_status_lease_expires ON background_jobs(status, lease_expires_at)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_runs_one_active_per_thread "
+        "ON agent_runs(uid, agent_slug, thread_id) "
         f"WHERE status NOT IN ({AGENT_RUN_TERMINAL_STATUS_SQL})",
     )
     async with manager.async_engine.begin() as conn:

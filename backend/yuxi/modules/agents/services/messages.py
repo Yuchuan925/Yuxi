@@ -148,9 +148,7 @@ def _ai_message_content_and_tool_calls(msg_dict: dict) -> tuple[str, list[dict]]
                 for item in content
                 if isinstance(item, dict) and item.get("type") == "tool_call"
             ]
-        content = "\n".join(
-            item.get("text", "") for item in content if isinstance(item, dict) and isinstance(item.get("text"), str)
-        )
+        content = "\n".join(item.get("text", "") for item in content if isinstance(item, dict) and isinstance(item.get("text"), str))
     elif not isinstance(content, str):
         content = str(content)
     return content, list(tool_calls_data)
@@ -435,17 +433,9 @@ async def save_messages_from_langgraph_state(
         current_model_audits = await ModelMessageAuditRepository(session_repo.db).list_for_run(run_id)
         model_operation_ids = {message.operation_id for message in current_model_audits if message.operation_id}
         current_tool_audits = await ToolMessageAuditRepository(session_repo.db).list_for_run(run_id)
-        tool_audits_by_operation = {
-            message.operation_id: message for message in current_tool_audits if message.operation_id
-        }
-        resume_input = (
-            await session_repo.db.get(Message, persisted_run.input_message_id)
-            if persisted_run.input_message_id
-            else None
-        )
-        rejected_calls = (
-            set((resume_input.extra_metadata or {}).get("rejected_tool_calls", [])) if resume_input else set()
-        )
+        tool_audits_by_operation = {message.operation_id: message for message in current_tool_audits if message.operation_id}
+        resume_input = await session_repo.db.get(Message, persisted_run.input_message_id) if persisted_run.input_message_id else None
+        rejected_calls = set((resume_input.extra_metadata or {}).get("rejected_tool_calls", [])) if resume_input else set()
         state_model_messages: dict[str, dict[str, Any]] = {}
         state_tool_messages: dict[str, dict[str, Any]] = {}
         last_state_ai_id: str | None = None
@@ -546,9 +536,7 @@ async def save_messages_from_langgraph_state(
         if last_ai_message is not None:
             has_tool_calls = bool((last_ai_message.extra_metadata or {}).get("tool_calls"))
             should_publish = (
-                last_ai_message.message_type != MODEL_AUDIT_MESSAGE_TYPE
-                or complete_run
-                or (interrupt_run and not has_tool_calls)
+                last_ai_message.message_type != MODEL_AUDIT_MESSAGE_TYPE or complete_run or (interrupt_run and not has_tool_calls)
             )
             if should_publish:
                 await session_repo.publish_assistant_output(last_ai_message)
@@ -590,11 +578,7 @@ def _bind_approval_calls(waitpoint: dict, model_message: Message | None) -> dict
     calls = []
     for action in waitpoint["calls"]:
         position = next(
-            (
-                index
-                for index, call in enumerate(declarations)
-                if call["name"] == action["name"] and call["args"] == action["args"]
-            ),
+            (index for index, call in enumerate(declarations) if call["name"] == action["name"] and call["args"] == action["args"]),
             None,
         )
         if position is None:

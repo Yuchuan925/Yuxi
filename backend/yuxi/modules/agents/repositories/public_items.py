@@ -124,11 +124,7 @@ class PublicItemRepository:
         """仅使用工具审计已校验的声明身份关联恢复前的公开调用。"""
         source_id = (tool_message.extra_metadata or {}).get("source_model_message_id")
         source = await self.db.get(Message, source_id) if source_id is not None else None
-        if (
-            source is None
-            or source.session_record_id != tool_message.session_record_id
-            or source.turn_id != tool_message.turn_id
-        ):
+        if source is None or source.session_record_id != tool_message.session_record_id or source.turn_id != tool_message.turn_id:
             return None
         call = (source.extra_metadata or {}).get("public_items", {}).get(f"call:{tool_message.operation_id}")
         return (source, call) if call is not None else None
@@ -227,9 +223,7 @@ class PublicItemRepository:
         if turn_id is not None:
             source = source.where(Message.turn_id == turn_id)
         if after is not None:
-            cursor = (
-                await self.db.execute(source.with_only_columns(Message.id, index).where(identity == after))
-            ).one_or_none()
+            cursor = (await self.db.execute(source.with_only_columns(Message.id, index).where(identity == after))).one_or_none()
             if cursor is None:
                 raise ValueError("after 不是当前 Turn 的公开 item" if turn_id else "after 不是当前 Session 的公开 item")
             position = tuple_(Message.id, index)

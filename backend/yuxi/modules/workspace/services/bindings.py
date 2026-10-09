@@ -156,9 +156,7 @@ async def ensure_session_workdir_available(
     return binding.workdir_path
 
 
-async def resolve_session_workdir_binding(
-    *, agent_session: Session, uid: str, db, project: Project | None = None
-) -> WorkdirBinding:
+async def resolve_session_workdir_binding(*, agent_session: Session, uid: str, db, project: Project | None = None) -> WorkdirBinding:
     """解析 Session 唯一 Project 所拥有的持久 Workdir。"""
     resolved_project = project
     if resolved_project is None:

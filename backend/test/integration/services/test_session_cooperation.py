@@ -146,12 +146,7 @@ async def test_creation_is_idempotent_and_context_is_independent(tree):
         messages = list((await db.scalars(select(Message).where(Message.session_record_id == member.id))).all())
         assert [message.content for message in messages] == ["EXPLICIT_reviewer"]
         assert "PRIVATE_ROOT_HISTORY" not in str(run.input_payload)
-        assert (
-            await db.scalar(
-                select(func.count()).select_from(AgentInput).where(AgentInput.thread_id == member.thread_id)
-            )
-            == 1
-        )
+        assert await db.scalar(select(func.count()).select_from(AgentInput).where(AgentInput.thread_id == member.thread_id)) == 1
     with pytest.raises(ValueError, match="名称"):
         await child(tree, name="other", call_id="create-reviewer")
 
@@ -214,9 +209,7 @@ async def test_agent_directory_uses_app_key_owner_visibility_for_end_user(tree):
             result = await service.list_agents()
             assert shared in {role["id"] for role in result["agents"]}
             assert private not in {role["id"] for role in result["agents"]}
-            created = await service.create_session(
-                name="app-worker", description="共享核验", call_id="app", agent_id=shared
-            )
+            created = await service.create_session(name="app-worker", description="共享核验", call_id="app", agent_id=shared)
         async with factory() as db:
             child = await db.scalar(select(Session).where(Session.thread_id == created["session_id"]))
             assert child.uid == uid and child.app_id == "directory-app"
@@ -246,10 +239,7 @@ async def test_agent_selection_rejects_deleted_execution_user(tree, operation):
             else:
                 await service.create_session(name="invalid", description="拒绝", call_id="invalid")
     async with factory() as db:
-        assert (
-            await db.scalar(select(func.count()).select_from(Session).where(Session.tree_root_thread_id == root_id))
-            == 1
-        )
+        assert await db.scalar(select(func.count()).select_from(Session).where(Session.tree_root_thread_id == root_id)) == 1
 
 
 async def test_selected_agent_freezes_target_config_model_and_parent_approval(tree):
@@ -257,9 +247,7 @@ async def test_selected_agent_freezes_target_config_model_and_parent_approval(tr
     factory, run_id, root_id, uid = tree
     slug = await _define_target_agent(tree)
     async with factory() as db:
-        service = SessionCooperationService(
-            db, run_id=run_id, uid=uid, config_snapshot={"system_prompt": "PARENT_OVERRIDE"}
-        )
+        service = SessionCooperationService(db, run_id=run_id, uid=uid, config_snapshot={"system_prompt": "PARENT_OVERRIDE"})
         created = await service.create_session(name="reviewer", description="独立核验", call_id="choose", agent_id=slug)
         replay = await service.create_session(name="reviewer", description="独立核验", call_id="choose", agent_id=slug)
         assert created == replay
@@ -273,12 +261,7 @@ async def test_selected_agent_freezes_target_config_model_and_parent_approval(tr
         assert run.input_payload["context_snapshot"] == member.config_snapshot
         assert run.input_payload["context_snapshot"]["model"] == member.config_snapshot["model"] == "test:target"
         assert run.input_payload["context_snapshot"]["tool_approval_mode"] == "always_trust"
-        assert (
-            await db.scalar(
-                select(func.count()).select_from(AgentInput).where(AgentInput.thread_id == member.thread_id)
-            )
-            == 1
-        )
+        assert await db.scalar(select(func.count()).select_from(AgentInput).where(AgentInput.thread_id == member.thread_id)) == 1
 
 
 @pytest.mark.parametrize("initial_context", [None, {}])
@@ -357,12 +340,7 @@ async def test_creation_replay_cannot_change_selected_agent(tree):
         assert len(members) == 2
         member = next(member for member in members if member.thread_id == created["session_id"])
         assert member.agent_id == first
-        assert (
-            await db.scalar(
-                select(func.count()).select_from(AgentInput).where(AgentInput.thread_id == member.thread_id)
-            )
-            == 1
-        )
+        assert await db.scalar(select(func.count()).select_from(AgentInput).where(AgentInput.thread_id == member.thread_id)) == 1
 
 
 @pytest.mark.parametrize("name", ["/root/aaa/bbb", "aaa/bbb", "/root/name", "../bbb", r"aaa\bbb", "aaa%2Fbbb"])
@@ -370,18 +348,13 @@ async def test_creation_rejects_paths_without_persisting_children(tree, name):
     """直接调用服务也不能用路径名称生成子会话或输入。"""
     factory, _, root_id, _ = tree
     async with factory() as db:
-        before_inputs = await db.scalar(
-            select(func.count()).select_from(AgentInput).where(AgentInput.thread_id == root_id)
-        )
+        before_inputs = await db.scalar(select(func.count()).select_from(AgentInput).where(AgentInput.thread_id == root_id))
     with pytest.raises(ValueError, match="name"):
         await child(tree, name=name)
     async with factory() as db:
         members = list((await db.scalars(select(Session).where(Session.tree_root_thread_id == root_id))).all())
         assert [member.thread_id for member in members] == [root_id]
-        assert (
-            await db.scalar(select(func.count()).select_from(AgentInput).where(AgentInput.thread_id == root_id))
-            == before_inputs
-        )
+        assert await db.scalar(select(func.count()).select_from(AgentInput).where(AgentInput.thread_id == root_id)) == before_inputs
 
 
 async def test_creation_derives_direct_parent_and_path_from_calling_session(tree):
@@ -390,9 +363,7 @@ async def test_creation_derives_direct_parent_and_path_from_calling_session(tree
     parent = await child(tree, name="aaa", call_id="create-aaa")
     sibling = await child(tree, name="bbb", call_id="create-bbb")
     async with factory() as db:
-        _, acquired = await AgentRunRepository(db).mark_running(
-            parent["run_id"], worker_id="aaa-worker", lease_seconds=120
-        )
+        _, acquired = await AgentRunRepository(db).mark_running(parent["run_id"], worker_id="aaa-worker", lease_seconds=120)
         assert acquired
         await db.commit()
         nested = await SessionCooperationService(db, run_id=parent["run_id"], uid=uid).create_session(
@@ -436,9 +407,7 @@ async def test_whole_tree_shares_four_slots_and_recursive_creation(tree):
     async with factory() as db:
         assert (
             await db.scalar(
-                select(func.count())
-                .select_from(AgentRun)
-                .where(AgentRun.runtime_scope_id == tree[2], AgentRun.status == "running")
+                select(func.count()).select_from(AgentRun).where(AgentRun.runtime_scope_id == tree[2], AgentRun.status == "running")
             )
             == 4
         )
@@ -457,27 +426,18 @@ async def test_message_is_durable_idempotent_and_does_not_create_work(tree):
     async with factory() as db:
         assert (
             await db.scalar(
-                select(func.count())
-                .select_from(CooperationEvent)
-                .where(CooperationEvent.recipient_thread_id == created["session_id"])
+                select(func.count()).select_from(CooperationEvent).where(CooperationEvent.recipient_thread_id == created["session_id"])
             )
             == 1
         )
-        assert (
-            await db.scalar(
-                select(func.count()).select_from(AgentInput).where(AgentInput.thread_id == created["session_id"])
-            )
-            == 1
-        )
+        assert await db.scalar(select(func.count()).select_from(AgentInput).where(AgentInput.thread_id == created["session_id"])) == 1
 
 
 async def test_cross_tree_and_cross_app_targets_are_rejected(tree):
     factory, run_id, root_id, uid = tree
     async with factory() as db:
         root = await db.scalar(select(Session).where(Session.thread_id == root_id))
-        stranger = Session(
-            thread_id=f"{root_id}-x", uid=uid, project_id=root.project_id, agent_id=root.agent_id, status="active"
-        )
+        stranger = Session(thread_id=f"{root_id}-x", uid=uid, project_id=root.project_id, agent_id=root.agent_id, status="active")
         other_app = Session(
             thread_id=f"{root_id}-a",
             tree_root_thread_id=root_id,
@@ -539,16 +499,12 @@ async def test_cooperation_wait_releases_slot_and_recovers_same_turn(tree):
             waitpoint={**wait, "id": "wait-root", "run_id": run_id},
         )
         await db.commit()
-        _, acquired = await AgentRunRepository(db).mark_running(
-            member["run_id"], worker_id="child-worker", lease_seconds=120
-        )
+        _, acquired = await AgentRunRepository(db).mark_running(member["run_id"], worker_id="child-worker", lease_seconds=120)
         assert acquired
         await db.commit()
         sender = await db.scalar(select(Session).where(Session.thread_id == member["session_id"]))
         recipient = await db.scalar(select(Session).where(Session.thread_id == root_id))
-        await CooperationRepository(db).append(
-            sender=sender, recipient=recipient, key="wake", kind="message", content="ready"
-        )
+        await CooperationRepository(db).append(sender=sender, recipient=recipient, key="wake", kind="message", content="ready")
         await db.commit()
     await recover_cooperation_waits()
     await recover_cooperation_waits()
@@ -596,29 +552,17 @@ async def test_tool_side_effects_replay_across_resume_runs(tree):
         turn = await db.get(AgentTurn, old.turn_id)
         resumed_id = turn.current_run_id
         assert resumed_id != run_id
-        _, acquired = await AgentRunRepository(db).mark_running(
-            resumed_id, worker_id="resume-worker", lease_seconds=120
-        )
+        _, acquired = await AgentRunRepository(db).mark_running(resumed_id, worker_id="resume-worker", lease_seconds=120)
         assert acquired
         await db.commit()
         service = SessionCooperationService(db, run_id=resumed_id, uid=uid)
-        assert (
-            await service.create_session(name="reviewer", description="EXPLICIT_reviewer", call_id="create-reviewer")
-            == member
-        )
-        assert (
-            await service.send_message(target=member["session_id"], content="information", call_id="message") == message
-        )
+        assert await service.create_session(name="reviewer", description="EXPLICIT_reviewer", call_id="create-reviewer") == member
+        assert await service.send_message(target=member["session_id"], content="information", call_id="message") == message
         await db.commit()
-        assert (
-            await service.submit_input(target=member["session_id"], description="FOLLOWUP", call_id="followup")
-            == submitted
-        )
+        assert await service.submit_input(target=member["session_id"], description="FOLLOWUP", call_id="followup") == submitted
         for operation, match in (
             (
-                lambda: service.create_session(
-                    name="changed", description="EXPLICIT_reviewer", call_id="create-reviewer"
-                ),
+                lambda: service.create_session(name="changed", description="EXPLICIT_reviewer", call_id="create-reviewer"),
                 "名称",
             ),
             (
@@ -635,17 +579,10 @@ async def test_tool_side_effects_replay_across_resume_runs(tree):
         assert created.created_by_run_id == run_id
         event = await db.get(CooperationEvent, message["message_id"])
         assert event.source_run_id == run_id
+        assert await db.scalar(select(func.count()).select_from(AgentInput).where(AgentInput.thread_id == created.thread_id)) == 2
         assert (
             await db.scalar(
-                select(func.count()).select_from(AgentInput).where(AgentInput.thread_id == created.thread_id)
-            )
-            == 2
-        )
-        assert (
-            await db.scalar(
-                select(func.count())
-                .select_from(CooperationEvent)
-                .where(CooperationEvent.recipient_thread_id == created.thread_id)
+                select(func.count()).select_from(CooperationEvent).where(CooperationEvent.recipient_thread_id == created.thread_id)
             )
             == 1
         )
@@ -678,9 +615,7 @@ async def test_same_call_id_in_new_turn_creates_new_work(tree):
             session_record_id=old.session_record_id,
         )
         turn.current_run_id = new_run.id
-        _, acquired = await AgentRunRepository(db).mark_running(
-            new_run.id, worker_id="new-turn-worker", lease_seconds=120
-        )
+        _, acquired = await AgentRunRepository(db).mark_running(new_run.id, worker_id="new-turn-worker", lease_seconds=120)
         assert acquired
         await db.commit()
         second = await SessionCooperationService(db, run_id=new_run.id, uid=uid).submit_input(
@@ -688,12 +623,7 @@ async def test_same_call_id_in_new_turn_creates_new_work(tree):
         )
         assert second["input_id"] != first["input_id"]
     async with factory() as db:
-        assert (
-            await db.scalar(
-                select(func.count()).select_from(AgentInput).where(AgentInput.thread_id == member["session_id"])
-            )
-            == 3
-        )
+        assert await db.scalar(select(func.count()).select_from(AgentInput).where(AgentInput.thread_id == member["session_id"])) == 3
 
 
 async def test_cancel_parent_preserves_descendants(tree, monkeypatch):
@@ -781,9 +711,7 @@ async def test_lost_worker_publishes_failure_to_waiting_member(tree, monkeypatch
     member = await child(tree)
     monkeypatch.setattr("yuxi.modules.agents.services.leases.reconcile_pending_runtime_cleanups", AsyncMock())
     async with factory() as db:
-        _, acquired = await AgentRunRepository(db).mark_running(
-            member["run_id"], worker_id="lost-worker", lease_seconds=120
-        )
+        _, acquired = await AgentRunRepository(db).mark_running(member["run_id"], worker_id="lost-worker", lease_seconds=120)
         assert acquired
         run = await db.get(AgentRun, member["run_id"])
         run.lease_expires_at = utc_now() - timedelta(seconds=1)
@@ -814,9 +742,7 @@ async def test_idle_reaper_preserves_active_tree(tree, monkeypatch):
     def release_other_tree(candidate, **kwargs):
         assert candidate != root_id, "活跃树不应调用沙盒释放器"
 
-    monkeypatch.setattr(
-        "yuxi.modules.agents.services.leases.get_sandbox_provider", lambda: SimpleNamespace(release=release_other_tree)
-    )
+    monkeypatch.setattr("yuxi.modules.agents.services.leases.get_sandbox_provider", lambda: SimpleNamespace(release=release_other_tree))
     await release_idle_sandboxes()
     async with factory() as db:
         assert not (await db.get(CooperationRuntime, root_id)).released
@@ -855,12 +781,7 @@ async def test_wait_rejects_empty_and_self_targets(tree):
             with pytest.raises(ValueError, match="目标不能为空|自身"):
                 await service.wait_updates(targets=targets, after_cursor=0, timeout_seconds=1)
         assert (
-            await db.scalar(
-                select(func.count())
-                .select_from(CooperationEvent)
-                .where(CooperationEvent.tree_root_thread_id == root_id)
-            )
-            == 0
+            await db.scalar(select(func.count()).select_from(CooperationEvent).where(CooperationEvent.tree_root_thread_id == root_id)) == 0
         )
 
 
@@ -953,9 +874,7 @@ async def test_resume_call_cannot_change_target_session(tree, monkeypatch, opera
             return await service.send_message(target=target["session_id"], content="same", call_id="replayed-call")
         if operation == "input":
             return await service.submit_input(target=target["session_id"], description="same", call_id="replayed-call")
-        return await service.cancel_turn(
-            target=target["session_id"], turn_id=target["turn_id"], call_id="replayed-call"
-        )
+        return await service.cancel_turn(target=target["session_id"], turn_id=target["turn_id"], call_id="replayed-call")
 
     async with factory() as db:
         service = SessionCooperationService(db, run_id=run_id, uid=uid)
@@ -983,9 +902,7 @@ async def test_resume_call_cannot_change_target_session(tree, monkeypatch, opera
         turn = await db.get(AgentTurn, old_turn_id)
         assert turn.current_run_id != run_id
         resumed_id = turn.current_run_id
-        _, acquired = await AgentRunRepository(db).mark_running(
-            resumed_id, worker_id="resume-worker", lease_seconds=120
-        )
+        _, acquired = await AgentRunRepository(db).mark_running(resumed_id, worker_id="resume-worker", lease_seconds=120)
         assert acquired
         await db.commit()
         service = SessionCooperationService(db, run_id=resumed_id, uid=uid)
@@ -998,15 +915,9 @@ async def test_resume_call_cannot_change_target_session(tree, monkeypatch, opera
         with pytest.raises(ValueError, match="目标|幂等"):
             await invoke(service, second)
         await db.rollback()
+        assert await db.scalar(select(func.count()).select_from(AgentInput).where(AgentInput.uid == uid)) == inputs_before
         assert (
-            await db.scalar(select(func.count()).select_from(AgentInput).where(AgentInput.uid == uid)) == inputs_before
-        )
-        assert (
-            await db.scalar(
-                select(func.count())
-                .select_from(CooperationEvent)
-                .where(CooperationEvent.tree_root_thread_id == root_id)
-            )
+            await db.scalar(select(func.count()).select_from(CooperationEvent).where(CooperationEvent.tree_root_thread_id == root_id))
             == events_before
         )
         assert (await db.get(AgentTurn, second["turn_id"])).status == "running"
@@ -1040,9 +951,7 @@ async def test_child_status_notification_preserves_self_and_parent_recipients(tr
         )
         assert len(events) == 2
         assert {event.recipient_thread_id for event in events} == {root_id, member["session_id"]}
-        assert all(
-            event.payload["waiting_for"] == "approval" and event.turn_id == member["turn_id"] for event in events
-        )
+        assert all(event.payload["waiting_for"] == "approval" and event.turn_id == member["turn_id"] for event in events)
 
 
 async def test_cancelling_last_pending_run_starts_tree_idle_timeout(tree, monkeypatch):
@@ -1114,9 +1023,7 @@ async def complete_member(factory, member, content):
         await db.flush()
         run.output_message_id = output.id
         await repo.set_terminal_status(run.id, status="completed", worker_id="result-worker")
-        await AgentTurnRepository(db).set_terminal(
-            await db.get(AgentTurn, run.turn_id), status="completed", result_run_id=run.id
-        )
+        await AgentTurnRepository(db).set_terminal(await db.get(AgentTurn, run.turn_id), status="completed", result_run_id=run.id)
         await db.commit()
 
 
@@ -1250,9 +1157,7 @@ async def test_summary_reads_whole_tree_with_constant_queries_and_omits_results(
             expected = list(
                 (
                     await db.scalars(
-                        select(Session.thread_id)
-                        .where(Session.tree_root_thread_id == root_id)
-                        .order_by(Session.cooperation_path)
+                        select(Session.thread_id).where(Session.tree_root_thread_id == root_id).order_by(Session.cooperation_path)
                     )
                 ).all()
             )
@@ -1351,9 +1256,7 @@ async def test_message_foreign_keys_do_not_deadlock_session_writers(tree, monkey
                 task.cancel()
             await asyncio.gather(task, return_exceptions=True)
     async with factory() as db:
-        assert await db.scalar(
-            select(CooperationEvent.id).where(CooperationEvent.idempotency_key == f"lock-{lock_owner}")
-        )
+        assert await db.scalar(select(CooperationEvent.id).where(CooperationEvent.idempotency_key == f"lock-{lock_owner}"))
 
 
 async def test_bad_wait_does_not_block_other_wait_recovery(tree):
@@ -1411,9 +1314,7 @@ async def test_sandbox_release_allows_messages_but_defers_execution(tree, monkey
         started.set()
         assert finish.wait(10), "test release was not unblocked"
 
-    monkeypatch.setattr(
-        "yuxi.modules.agents.services.leases.get_sandbox_provider", lambda: SimpleNamespace(release=release)
-    )
+    monkeypatch.setattr("yuxi.modules.agents.services.leases.get_sandbox_provider", lambda: SimpleNamespace(release=release))
     async with factory() as db:
         run = await db.get(AgentRun, run_id)
         await AgentRunRepository(db).set_terminal_status(run_id, status="failed", worker_id="root-worker")
@@ -1446,9 +1347,7 @@ async def test_sandbox_release_allows_messages_but_defers_execution(tree, monkey
                 turn.current_run_id = pending.id
                 pending_id = pending.id
                 await db.commit()
-                _, acquired = await AgentRunRepository(db).mark_running(
-                    pending_id, worker_id="after-release", lease_seconds=120
-                )
+                _, acquired = await AgentRunRepository(db).mark_running(pending_id, worker_id="after-release", lease_seconds=120)
                 assert not acquired
                 await db.commit()
     finally:
@@ -1456,9 +1355,7 @@ async def test_sandbox_release_allows_messages_but_defers_execution(tree, monkey
         await cleanup
     async with factory() as db:
         assert await db.scalar(select(CooperationEvent.id).where(CooperationEvent.idempotency_key == "during-release"))
-        _, acquired = await AgentRunRepository(db).mark_running(
-            pending_id, worker_id="after-release", lease_seconds=120
-        )
+        _, acquired = await AgentRunRepository(db).mark_running(pending_id, worker_id="after-release", lease_seconds=120)
         assert acquired
         await db.commit()
         assert (await db.get(CooperationRuntime, root_id)).released is False
@@ -1482,9 +1379,7 @@ async def test_sandbox_release_keeps_lock_through_repeated_cancellation(tree, mo
         started.set()
         assert finish.wait(10), "test release was not unblocked"
 
-    monkeypatch.setattr(
-        "yuxi.modules.agents.services.leases.get_sandbox_provider", lambda: SimpleNamespace(release=release)
-    )
+    monkeypatch.setattr("yuxi.modules.agents.services.leases.get_sandbox_provider", lambda: SimpleNamespace(release=release))
     async with factory() as db:
         run = await db.get(AgentRun, run_id)
         await AgentRunRepository(db).set_terminal_status(run_id, status="failed", worker_id="root-worker")
@@ -1526,9 +1421,7 @@ async def test_expired_lease_failure_does_not_block_other_runs(tree, monkeypatch
     good = await child(tree, name="good-lease", call_id="good-lease")
     async with factory() as db:
         for member in (bad, good):
-            run, acquired = await AgentRunRepository(db).mark_running(
-                member["run_id"], worker_id="expired", lease_seconds=120
-            )
+            run, acquired = await AgentRunRepository(db).mark_running(member["run_id"], worker_id="expired", lease_seconds=120)
             assert acquired
             run.lease_expires_at = utc_now() - timedelta(seconds=2)
         await db.commit()

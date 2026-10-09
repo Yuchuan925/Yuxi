@@ -673,11 +673,7 @@ def test_wrap_model_call_offloads_large_tool_results(scenario: dict) -> None:
     assert len(model.prompts) == scenario["expect_summary_count"]
     assert messages[2].content == large_result
     assert (_expected_tool_result_path(large_result), large_result) in backend.writes
-    history_writes = [
-        write_path
-        for write_path, _content in backend.writes
-        if write_path.startswith(VIRTUAL_PATH_CONVERSATION_HISTORY)
-    ]
+    history_writes = [write_path for write_path, _content in backend.writes if write_path.startswith(VIRTUAL_PATH_CONVERSATION_HISTORY)]
     assert bool(history_writes) is scenario["expect_history_write"]
 
     assert captured_messages is not None

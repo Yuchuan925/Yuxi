@@ -31,9 +31,7 @@ class Dispatch:
     binding: WorkdirBinding
 
 
-async def claim_next_input(
-    *, db: AsyncSession, agent_session: Session, binding: WorkdirBinding | None = None
-) -> Dispatch | None:
+async def claim_next_input(*, db: AsyncSession, agent_session: Session, binding: WorkdirBinding | None = None) -> Dispatch | None:
     """在已锁 Thread 上领取优先队头，原子建立 Turn 与首段 Run。"""
     if agent_session.status != "active" or agent_session.queue_paused:
         return None
@@ -44,15 +42,11 @@ async def claim_next_input(
     if runtime is not None and runtime.stopped:
         return None
     turn_repo = AgentTurnRepository(db)
-    if await turn_repo.lock_active_for_thread(
-        thread_id=agent_session.thread_id, uid=agent_session.uid, app_id=agent_session.app_id
-    ):
+    if await turn_repo.lock_active_for_thread(thread_id=agent_session.thread_id, uid=agent_session.uid, app_id=agent_session.app_id):
         return None
 
     input_repo = AgentInputRepository(db)
-    head = await input_repo.get_queue_head(
-        thread_id=agent_session.thread_id, uid=agent_session.uid, app_id=agent_session.app_id
-    )
+    head = await input_repo.get_queue_head(thread_id=agent_session.thread_id, uid=agent_session.uid, app_id=agent_session.app_id)
     if head is None or await AttachmentRepository(db).has_unready(head.id):
         return None
     if binding is None:
@@ -65,9 +59,7 @@ async def claim_next_input(
 
     turn_id = str(uuid.uuid4())
     run_id = str(uuid.uuid4())
-    turn = await turn_repo.create(
-        turn_id=turn_id, thread_id=agent_session.thread_id, uid=agent_session.uid, app_id=agent_session.app_id
-    )
+    turn = await turn_repo.create(turn_id=turn_id, thread_id=agent_session.thread_id, uid=agent_session.uid, app_id=agent_session.app_id)
     await AgentRunRepository(db).create_run(
         run_id=run_id,
         thread_id=agent_session.thread_id,
@@ -104,9 +96,7 @@ async def dispatch_next_input(*, uid: str, agent_slug: str, thread_id: str) -> s
         # 归档只停止执行；已接收文件仍要完成提交，领取门禁由 claim_next_input 执行。
         binding = await resolve_session_workdir_binding(agent_session=agent_session, uid=uid, db=db)
         for input_item in await AttachmentRepository(db).list_preparing_inputs(thread_id, uid, agent_session.app_id):
-            if not await prepare_input_attachments(
-                db=db, agent_session=agent_session, input_item=input_item, binding=binding
-            ):
+            if not await prepare_input_attachments(db=db, agent_session=agent_session, input_item=input_item, binding=binding):
                 # 保留准备错误和来源；普通队列仍受优先队头约束。
                 continue
         dispatch = await claim_next_input(db=db, agent_session=agent_session, binding=binding)
@@ -164,7 +154,10 @@ async def recover_pending_dispatches() -> None:
                     continue
                 current = await AgentRunRepository(db).get_run(run.id)
                 turn = await AgentTurnRepository(db).get_for_scope(
-                    turn_id=run.turn_id, thread_id=run.thread_id, uid=run.uid, app_id=run.app_id
+                    turn_id=run.turn_id,
+                    thread_id=run.thread_id,
+                    uid=run.uid,
+                    app_id=run.app_id,
                 )
                 if current is None or current.status != "pending" or turn is None or turn.current_run_id != run.id:
                     continue

@@ -40,8 +40,7 @@ async def _create_agent(
                 "context": {
                     "model": model,
                     "system_prompt": (
-                        "你是 read_file 端到端测试智能体。用户要求读取附件时，必须先调用 read_file，"
-                        "不得根据文件名猜测内容。严格按用户指定格式回答。"
+                        "你是 read_file 端到端测试智能体。用户要求读取附件时，必须先调用 read_file，不得根据文件名猜测内容。严格按用户指定格式回答。"
                     ),
                     "tools": [],
                     "knowledges": [],

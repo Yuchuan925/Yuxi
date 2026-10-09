@@ -25,25 +25,15 @@ async def resolve_agent_context_snapshot(
     context.update_config((agent_item.config_json or {}).get("context") or {})
     context.model = await resolve_agent_run_model_spec(model_spec, context.model, db)
     context.tool_approval_mode = resolve_agent_run_tool_approval_mode(tool_approval_mode, context.tool_approval_mode)
-    return {
-        item.name: deepcopy(getattr(context, item.name))
-        for item in fields(context)
-        if item.metadata.get("configurable", True)
-    }
+    return {item.name: deepcopy(getattr(context, item.name)) for item in fields(context) if item.metadata.get("configurable", True)}
 
 
-async def resolve_agent_run_model_spec(
-    requested_model: str | None, configured_model: str | None, db: AsyncSession | None = None
-) -> str:
+async def resolve_agent_run_model_spec(requested_model: str | None, configured_model: str | None, db: AsyncSession | None = None) -> str:
     """按显式值、Agent 配置和系统默认值选择聊天模型。"""
     if requested_model is not None and not requested_model.strip():
         raise HTTPException(status_code=422, detail="显式模型标识不能为空")
     model_spec = next(
-        (
-            candidate.strip()
-            for candidate in (requested_model, configured_model)
-            if isinstance(candidate, str) and candidate.strip()
-        ),
+        (candidate.strip() for candidate in (requested_model, configured_model) if isinstance(candidate, str) and candidate.strip()),
         None,
     )
     if model_spec is None:

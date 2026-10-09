@@ -28,9 +28,7 @@ def skip_if_external_quota(payload: object) -> None:
 
 
 def postgres_dsn() -> str:
-    return os.getenv("POSTGRES_URL", "postgresql+asyncpg://postgres:postgres@postgres:5432/yuxi").replace(
-        "+asyncpg", ""
-    )
+    return os.getenv("POSTGRES_URL", "postgresql+asyncpg://postgres:postgres@postgres:5432/yuxi").replace("+asyncpg", "")
 
 
 async def wait_model_provider_cache() -> None:

@@ -269,11 +269,7 @@ def resolve_agent_permission(user: Any, resource: ShareableResource) -> Resource
         return ResourcePermission.NONE
     if _value(resource, "is_builtin", False) or _value(resource, "slug") == "default-chatbot":
         permission = resolve_resource_permission(user, resource, AGENT_PERMISSION_POLICY)
-        return (
-            permission
-            if _value(user, "role") == "superadmin"
-            else _minimum_permission(permission, ResourcePermission.READ)
-        )
+        return permission if _value(user, "role") == "superadmin" else _minimum_permission(permission, ResourcePermission.READ)
     return resolve_resource_permission(
         user,
         resource,

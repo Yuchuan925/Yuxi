@@ -24,7 +24,9 @@ class AttachmentRepository:
     async def get_for_scope(self, file_id, uid, app_id, *, lock=False) -> AgentAttachment | None:
         """文件 ID 只在所属用户与 APP 内可见。"""
         statement = select(AgentAttachment).where(
-            AgentAttachment.id == file_id, AgentAttachment.uid == uid, AgentAttachment.app_id == app_id
+            AgentAttachment.id == file_id,
+            AgentAttachment.uid == uid,
+            AgentAttachment.app_id == app_id,
         )
         if lock:
             statement = statement.with_for_update()
@@ -51,7 +53,8 @@ class AttachmentRepository:
         )
         if model_input_id is not None:
             statement = statement.where(
-                AgentAttachment.status == "ready", (AgentInput.id == model_input_id) | (AgentInput.status == "consumed")
+                AgentAttachment.status == "ready",
+                (AgentInput.id == model_input_id) | (AgentInput.status == "consumed"),
             )
         return list(await self.db.scalars(statement.order_by(AgentAttachment.created_at, AgentAttachment.id)))
 
@@ -64,19 +67,13 @@ class AttachmentRepository:
 
     async def has_unready(self, input_id) -> bool:
         """调度和消费统一拒绝尚未准备的附件。"""
-        return bool(
-            await self.db.scalar(
-                select(exists().where(AgentAttachment.input_id == input_id, AgentAttachment.status != "ready"))
-            )
-        )
+        return bool(await self.db.scalar(select(exists().where(AgentAttachment.input_id == input_id, AgentAttachment.status != "ready"))))
 
     async def statuses_for_inputs(self, input_ids) -> dict[str, dict]:
         """一次读取 Input 的准备结果，空附件集合天然就绪。"""
         result = {input_id: {"attachment_status": "ready", "attachment_error": None} for input_id in input_ids}
         rows = await self.db.execute(
-            select(AgentAttachment.input_id, AgentAttachment.status, AgentAttachment.error).where(
-                AgentAttachment.input_id.in_(input_ids)
-            )
+            select(AgentAttachment.input_id, AgentAttachment.status, AgentAttachment.error).where(AgentAttachment.input_id.in_(input_ids))
         )
         for input_id, status, error in rows:
             if status != "ready":

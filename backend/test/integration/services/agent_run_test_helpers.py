@@ -128,9 +128,7 @@ async def create_agent_run(
 async def cleanup_agent_run_threads(session_factory, thread_ids: list[str]) -> None:
     """按外键顺序清理本测试创建的持久事实。"""
     async with session_factory() as db:
-        rows = (
-            await db.execute(select(Session.project_id, Session.uid).where(Session.thread_id.in_(thread_ids)))
-        ).all()
+        rows = (await db.execute(select(Session.project_id, Session.uid).where(Session.thread_id.in_(thread_ids)))).all()
         session_record_ids = list((await db.scalars(select(Session.id).where(Session.thread_id.in_(thread_ids)))).all())
         input_ids = list((await db.scalars(select(AgentInput.id).where(AgentInput.thread_id.in_(thread_ids)))).all())
         await db.execute(delete(CooperationEvent).where(CooperationEvent.tree_root_thread_id.in_(thread_ids)))

@@ -59,9 +59,7 @@ class StageAnalysisTest(unittest.TestCase):
                     "workers": 1,
                     "concurrency": 1,
                     "p95_ms": 8,
-                    "requests": [
-                        {"run_id": "r", "api_received_ns": 0, "model_send_ns": 8_000_000, "spans": spans, "db": {}}
-                    ],
+                    "requests": [{"run_id": "r", "api_received_ns": 0, "model_send_ns": 8_000_000, "spans": spans, "db": {}}],
                     "events": [{"event": "model_send", "run_id": "r", "start_ns": 1_000_000}],
                 }
             ]

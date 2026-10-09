@@ -55,9 +55,7 @@ def _entry(access: AuthorizedWorkdir, parent_scope: str, item: dict) -> dict:
         "is_dir": is_dir,
         "size": int(item.get("size") or 0),
         "modified_at": utc_isoformat_from_timestamp(float(item.get("modified_at") or 0)) or "",
-        "artifact_url": (
-            None if is_dir else f"/api/v1/agents/sessions/{access.thread_id}/artifacts/{runtime_path.lstrip('/')}"
-        ),
+        "artifact_url": (None if is_dir else f"/api/v1/agents/sessions/{access.thread_id}/artifacts/{runtime_path.lstrip('/')}"),
     }
 
 

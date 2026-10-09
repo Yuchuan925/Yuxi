@@ -421,10 +421,7 @@ class AgentRepository:
 
         # Thread 是接收与调度的先行锁；按共同顺序锁定，随后读取持久工作事实。
         result = await self.db.execute(
-            select(Session.thread_id)
-            .where(Session.agent_id == current.slug)
-            .order_by(Session.thread_id)
-            .with_for_update(key_share=True)
+            select(Session.thread_id).where(Session.agent_id == current.slug).order_by(Session.thread_id).with_for_update(key_share=True)
         )
         thread_ids = list(result.scalars())
         active_turn = await self.db.scalar(
@@ -486,9 +483,7 @@ class AgentRepository:
         is_builtin = is_builtin_agent(agent)
         data["can_manage"] = user_can_manage_agent(user, agent)
         data["can_run"] = user_can_run_agent(user, agent)
-        data["can_share"] = (
-            data["can_manage"] and not is_builtin and (agent.visibility == "shared" or user.role in ADMIN_ROLES)
-        )
+        data["can_share"] = data["can_manage"] and not is_builtin and (agent.visibility == "shared" or user.role in ADMIN_ROLES)
         data["can_transfer"] = agent.visibility == "shared" and user.role == "superadmin" and not is_builtin
         data["effective_permission"] = permission.value
         data["is_builtin"] = is_builtin

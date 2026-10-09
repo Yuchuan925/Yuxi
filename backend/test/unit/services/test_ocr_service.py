@@ -95,9 +95,7 @@ async def test_health_checks_every_registered_ocr_method(db_session, monkeypatch
     monkeypatch.setattr(
         ocr_service,
         "get_engine",
-        lambda engine_id, **kwargs: SimpleNamespace(
-            check_health=lambda: {"status": "healthy", "message": kwargs["engine"]}
-        ),
+        lambda engine_id, **kwargs: SimpleNamespace(check_health=lambda: {"status": "healthy", "message": kwargs["engine"]}),
     )
 
     health = await ocr_service.check_all_ocr_health(db_session)

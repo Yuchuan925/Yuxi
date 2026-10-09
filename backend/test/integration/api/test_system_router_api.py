@@ -72,9 +72,7 @@ async def test_readiness_endpoint_proves_core_runtime_dependencies(test_client):
     }
     assert response.json()["degraded"] is False
     assert response.json()["components"]
-    assert all(
-        component["status"] == "ok" for component in response.json()["components"].values() if component["required"]
-    )
+    assert all(component["status"] == "ok" for component in response.json()["components"].values() if component["required"])
 
 
 async def test_discovery_and_openapi_declare_full_knowledge_capabilities(test_client):
@@ -256,11 +254,7 @@ async def test_retired_system_config_field_is_hidden_rejected_and_preserved(test
             previous_updated_by = record.updated_by
             previous_updated_at = record.updated_at
             seeded_value = {**previous_value, retired_field: True}
-            await db.execute(
-                update(ConfigOption)
-                .where(ConfigOption.key == "system_options")
-                .values(value=seeded_value)
-            )
+            await db.execute(update(ConfigOption).where(ConfigOption.key == "system_options").values(value=seeded_value))
             await db.commit()
         await invalidate_option_cache("system_options")
 
@@ -287,11 +281,7 @@ async def test_retired_system_config_field_is_hidden_rejected_and_preserved(test
         assert batch_response.json()["detail"] == f"未知配置字段: {retired_field}"
 
         previous_model = config["default_model"]
-        updated_model = (
-            "test-provider:test-model"
-            if previous_model != "test-provider:test-model"
-            else "test-provider:alternate-model"
-        )
+        updated_model = "test-provider:test-model" if previous_model != "test-provider:test-model" else "test-provider:alternate-model"
         update_response = await test_client.post(
             "/api/system/config",
             json={"key": "default_model", "value": updated_model},

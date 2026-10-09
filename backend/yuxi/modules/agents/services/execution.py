@@ -465,9 +465,7 @@ async def _stream_agent_execution(
         raise ValueError("Run 缺少已消费的输入消息")
 
     langfuse_run = None
-    adapter = OpenAIEventAdapter(
-        run_id=meta["run_id"], turn_id=meta["turn_id"], thread_id=thread_id, worker_id=meta["worker_id"]
-    )
+    adapter = OpenAIEventAdapter(run_id=meta["run_id"], turn_id=meta["turn_id"], thread_id=thread_id, worker_id=meta["worker_id"])
     accumulated_content = []
     trace_info = {}
     try:
@@ -485,7 +483,10 @@ async def _stream_agent_execution(
             graph_input = [message.require_langchain_message() for message in input_messages]
             message_type = input_messages[0].message_type
             attachments = await AttachmentRepository(db).list_for_thread(
-                thread_id, agent_session.uid, agent_session.app_id, model_input_id=meta["input_id"]
+                thread_id,
+                agent_session.uid,
+                agent_session.app_id,
+                model_input_id=meta["input_id"],
             )
             authorized_attachments = [serialize_attachment(item, thread_id=thread_id) for item in attachments]
             graph_input[-1] = _with_attachment_context(graph_input[-1], authorized_attachments)

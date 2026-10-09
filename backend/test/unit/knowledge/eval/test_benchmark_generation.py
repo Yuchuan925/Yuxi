@@ -27,9 +27,7 @@ class FakeLlm:
 
     async def call(self, prompt, stream):
         self.prompts.append(prompt)
-        return SimpleNamespace(
-            content=('{"query":"问题","gold_answer":"答案","gold_chunk_ids":["' + self.gold_chunk_id + '"]}')
-        )
+        return SimpleNamespace(content=('{"query":"问题","gold_answer":"答案","gold_chunk_ids":["' + self.gold_chunk_id + '"]}'))
 
 
 class FakeGraphGenerationKnowledgeBase(FakeGenerationKnowledgeBase):
@@ -366,14 +364,10 @@ async def test_iter_generated_benchmark_items_yields_before_all_workers_finish(m
         async def call(self, prompt, stream):
             self.calls += 1
             if self.calls == 1:
-                return SimpleNamespace(
-                    content='{"query":"问题一","gold_answer":"答案一","gold_chunk_ids":["anchor_chunk"]}'
-                )
+                return SimpleNamespace(content='{"query":"问题一","gold_answer":"答案一","gold_chunk_ids":["anchor_chunk"]}')
             second_call_entered.set()
             await release_second_call.wait()
-            return SimpleNamespace(
-                content='{"query":"问题二","gold_answer":"答案二","gold_chunk_ids":["anchor_chunk"]}'
-            )
+            return SimpleNamespace(content='{"query":"问题二","gold_answer":"答案二","gold_chunk_ids":["anchor_chunk"]}')
 
     fake_llm = BlockingLlm()
     monkeypatch.setattr(benchmark_generation, "select_model", lambda model_spec: fake_llm)

@@ -101,9 +101,7 @@ async def create_implicit_project(*, uid: str, db, idempotency_key: str | None =
     )
 
 
-async def create_project_view(
-    *, uid: str, request_id: str, name: str, directory_mode: str, workdir_path: str | None, db
-) -> dict:
+async def create_project_view(*, uid: str, request_id: str, name: str, directory_mode: str, workdir_path: str | None, db) -> dict:
     """幂等创建 selectable Project。"""
     normalized_request_id = (request_id or "").strip()
     if not normalized_request_id:

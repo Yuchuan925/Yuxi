@@ -313,9 +313,7 @@ def tree_merge(bull: int, sections: list[str] | list[tuple[str, str]], depth: in
         typed_sections = sections  # type: ignore[assignment]
 
     typed_sections = [
-        (t, o)
-        for t, o in typed_sections
-        if t and len(t.split("@")[0].strip()) > 1 and not re.match(r"[0-9]+$", t.split("@")[0].strip())
+        (t, o) for t, o in typed_sections if t and len(t.split("@")[0].strip()) > 1 and not re.match(r"[0-9]+$", t.split("@")[0].strip())
     ]
 
     def get_level(section: tuple[str, str]) -> tuple[int, str]:
@@ -365,9 +363,7 @@ def hierarchical_merge(bull: int, sections: list[str] | list[tuple[str, str]], d
         typed_sections = sections  # type: ignore[assignment]
 
     typed_sections = [
-        (t, o)
-        for t, o in typed_sections
-        if t and len(t.split("@")[0].strip()) > 1 and not re.match(r"[0-9]+$", t.split("@")[0].strip())
+        (t, o) for t, o in typed_sections if t and len(t.split("@")[0].strip()) > 1 and not re.match(r"[0-9]+$", t.split("@")[0].strip())
     ]
 
     bullets_size = len(BULLET_PATTERN[bull])

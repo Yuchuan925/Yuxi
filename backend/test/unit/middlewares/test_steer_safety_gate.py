@@ -134,15 +134,11 @@ async def test_parallel_tools_finish_before_steer_ends_graph_and_checkpoint_is_c
     await asyncio.wait_for(graph_task, timeout=5)
 
     safe_point_results = {
-        message.tool_call_id: message.content
-        for message in middleware.messages_at_safe_point
-        if isinstance(message, ToolMessage)
+        message.tool_call_id: message.content for message in middleware.messages_at_safe_point if isinstance(message, ToolMessage)
     }
     persisted_state = await agent.aget_state(config)
     checkpoint_results = {
-        message.tool_call_id: message.content
-        for message in persisted_state.values["messages"]
-        if isinstance(message, ToolMessage)
+        message.tool_call_id: message.content for message in persisted_state.values["messages"] if isinstance(message, ToolMessage)
     }
 
     assert model.call_count == 1

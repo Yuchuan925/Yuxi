@@ -142,9 +142,7 @@ async def test_projection_refresh_waits_for_lock_then_reloads_revoked_authorizat
             lock_identity = (
                 await lock_db.execute(
                     text(
-                        "SELECT classid::bigint, objid::bigint, objsubid "
-                        "FROM pg_locks WHERE pid = pg_backend_pid() "
-                        "AND locktype = 'advisory' AND granted"
+                        "SELECT classid::bigint, objid::bigint, objsubid FROM pg_locks WHERE pid = pg_backend_pid() AND locktype = 'advisory' AND granted"
                     )
                 )
             ).one()
@@ -185,9 +183,7 @@ async def test_projection_refresh_waits_for_lock_then_reloads_revoked_authorizat
             refresh_task = asyncio.create_task(projection_service.refresh_user_skill_projection_async(uid))
             await asyncio.sleep(0.2)
             assert not refresh_task.done()
-            policy_task = asyncio.create_task(
-                projection_service.commit_skill_policy_and_refresh_projections(policy_db, slug)
-            )
+            policy_task = asyncio.create_task(projection_service.commit_skill_policy_and_refresh_projections(policy_db, slug))
             await asyncio.wait_for(policy_task, timeout=5)
 
         refreshed_sources = await asyncio.wait_for(refresh_task, timeout=5)
@@ -222,9 +218,7 @@ async def test_projection_refresh_waits_for_lock_then_reloads_revoked_authorizat
             lock_identity = (
                 await lock_db.execute(
                     text(
-                        "SELECT classid::bigint, objid::bigint, objsubid "
-                        "FROM pg_locks WHERE pid = pg_backend_pid() "
-                        "AND locktype = 'advisory' AND granted"
+                        "SELECT classid::bigint, objid::bigint, objsubid FROM pg_locks WHERE pid = pg_backend_pid() AND locktype = 'advisory' AND granted"
                     )
                 )
             ).one()
@@ -244,9 +238,7 @@ async def test_projection_refresh_waits_for_lock_then_reloads_revoked_authorizat
                         }
                     )
                 )
-                policy_task = asyncio.create_task(
-                    projection_service.commit_skill_policy_and_refresh_projections(policy_db, slug)
-                )
+                policy_task = asyncio.create_task(projection_service.commit_skill_policy_and_refresh_projections(policy_db, slug))
                 assert await _wait_for_advisory_waiter(session_factory, lock_identity), (
                     "policy mutation did not wait on the uid projection lock"
                 )

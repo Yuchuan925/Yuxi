@@ -15,9 +15,7 @@ class AgentInputReceiptRepository:
         """绑定调用方持有的事务。"""
         self.db = db
 
-    async def get_for_scope(
-        self, *, uid: str, app_id: str | None, thread_id: str, idempotency_key: str
-    ) -> AgentInputReceipt | None:
+    async def get_for_scope(self, *, uid: str, app_id: str | None, thread_id: str, idempotency_key: str) -> AgentInputReceipt | None:
         """在同一 Thread 的消息与控制命令间共用键空间。"""
         result = await self.db.execute(
             select(AgentInputReceipt).where(

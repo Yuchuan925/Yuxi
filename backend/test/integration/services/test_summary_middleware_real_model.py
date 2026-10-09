@@ -158,6 +158,4 @@ async def test_compacted_messages_call_real_chat_model(monkeypatch: pytest.Monke
     assert "[Tool result saved]" in formatted
     assert "END" not in formatted
     assert messages[2].content == large_result
-    assert any(
-        path.startswith(VIRTUAL_PATH_LARGE_TOOL_RESULTS) and content == large_result for path, content in backend.writes
-    )
+    assert any(path.startswith(VIRTUAL_PATH_LARGE_TOOL_RESULTS) and content == large_result for path, content in backend.writes)

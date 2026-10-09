@@ -79,12 +79,8 @@ async def test_attachment_upload_preserves_metadata_and_minio_bytes(test_client,
                 assert await db.get(AgentAttachment, file_id) is None
 
 
-@pytest.mark.parametrize(
-    "endpoint,url_key", [("/api/user/upload-image", "image_url"), ("/api/auth/upload-avatar", "avatar_url")]
-)
-async def test_image_upload_preserves_minio_bytes_and_rejects_invalid_content(
-    test_client, standard_user, endpoint, url_key
-):
+@pytest.mark.parametrize("endpoint,url_key", [("/api/user/upload-image", "image_url"), ("/api/auth/upload-avatar", "avatar_url")])
+async def test_image_upload_preserves_minio_bytes_and_rejects_invalid_content(test_client, standard_user, endpoint, url_key):
     """图片与头像端点消费实际图片字节，并返回可定位的存储结果。"""
     source = BytesIO()
     Image.new("RGB", (2, 2), "red").save(source, format="PNG")

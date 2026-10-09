@@ -155,10 +155,7 @@ def test_book_chunking_hierarchical_merge(monkeypatch, seed) -> None:
             "laws.docx",
             "\n".join(
                 ["#### 中华人民共和国企业所得税法实施条例", "##### 微信扫一扫：分享"]
-                + [
-                    f"第{i}条 企业所得税法实施细则说明，适用于测试场景，确保条文长度足够用于验证分块策略。"
-                    for i in range(1, 260)
-                ]
+                + [f"第{i}条 企业所得税法实施细则说明，适用于测试场景，确保条文长度足够用于验证分块策略。" for i in range(1, 260)]
             ),
             {"chunk_token_num": 180, "overlapped_percent": 20, "delimiter": "\\n"},
         ),

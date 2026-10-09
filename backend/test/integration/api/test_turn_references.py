@@ -139,10 +139,7 @@ async def reference_turn(test_client, admin_headers, reference_replay):
                     "read_scope": {"access_level": "user", "user_uids": [uid], "department_ids": []},
                 },
             )
-            turns = [
-                AgentTurn(id=identifier, thread_id=thread_id, uid=uid, status="completed")
-                for identifier in [turn_id, neighbor_id]
-            ]
+            turns = [AgentTurn(id=identifier, thread_id=thread_id, uid=uid, status="completed") for identifier in [turn_id, neighbor_id]]
             db.add_all([kb, *turns])
             await db.flush()
             runs = [
@@ -308,9 +305,7 @@ async def reference_turn(test_client, admin_headers, reference_replay):
                 text("UPDATE agent_turns SET current_run_id=NULL, result_run_id=NULL WHERE thread_id=:id"),
                 {"id": thread_id},
             )
-            await conn.execute(
-                text("UPDATE agent_runs SET output_message_id=NULL WHERE thread_id=:id"), {"id": thread_id}
-            )
+            await conn.execute(text("UPDATE agent_runs SET output_message_id=NULL WHERE thread_id=:id"), {"id": thread_id})
             await conn.execute(text("DELETE FROM messages WHERE session_record_id=:id"), {"id": session_id})
             await conn.execute(text("DELETE FROM agent_runs WHERE thread_id=:id"), {"id": thread_id})
             await conn.execute(text("DELETE FROM agent_turns WHERE thread_id=:id"), {"id": thread_id})
@@ -434,9 +429,7 @@ async def test_web_references_cannot_read_app_owned_thread(test_client, admin_he
     target = reference_turn
     async with target.sessions() as db:
         session = await db.scalar(
-            select(Session)
-            .join(AgentTurn, AgentTurn.thread_id == Session.thread_id)
-            .where(AgentTurn.id == target.turn_id)
+            select(Session).join(AgentTurn, AgentTurn.thread_id == Session.thread_id).where(AgentTurn.id == target.turn_id)
         )
         session.app_id = "reference-app"
         await db.commit()
@@ -451,9 +444,7 @@ async def test_web_references_cannot_read_app_owned_thread(test_client, admin_he
             await db.commit()
 
 
-async def test_readonly_connector_evidence_keeps_remote_file_id_without_document_preview(
-    test_client, admin_headers, reference_turn
-):
+async def test_readonly_connector_evidence_keeps_remote_file_id_without_document_preview(test_client, admin_headers, reference_turn):
     """Dify 的远端 file_id 不代表支持本地原文预览。"""
     target = reference_turn
     async with target.sessions() as db:
@@ -505,9 +496,7 @@ async def test_invalid_model_output_does_not_save_success_and_can_retry(
     assert len(retried.json()["citations"]) == 2
 
 
-async def test_concurrent_annotation_rejects_duplicate_call(
-    test_client, admin_headers, reference_turn, reference_replay
-):
+async def test_concurrent_annotation_rejects_duplicate_call(test_client, admin_headers, reference_turn, reference_replay):
     """真实 PG 锁在独立模型请求等待期间拒绝第二个请求。"""
     reference_replay.release = threading.Event()
     url = reference_turn.references_path

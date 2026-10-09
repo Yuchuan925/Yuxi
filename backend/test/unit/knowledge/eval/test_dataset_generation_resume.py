@@ -453,9 +453,7 @@ def make_generation_context(neighbors_count=2):
         (3, 2, [2, 1]),  # 失败时未满一批的残余 buffer 一并落库
     ],
 )
-async def test_generate_dataset_job_persists_partial_batches_on_failure(
-    monkeypatch, fail_after, batch_size, expected_batches
-):
+async def test_generate_dataset_job_persists_partial_batches_on_failure(monkeypatch, fail_after, batch_size, expected_batches):
     """生成中途失败时保留已提交 checkpoint，终态由 Task failure hook 原子投影。"""
     added_items = []
     metadata_updates = []

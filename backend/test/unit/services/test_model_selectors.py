@@ -117,11 +117,7 @@ def test_select_model_wraps_langchain_model_and_expands_model_params(monkeypatch
 
     monkeypatch.setattr(
         "yuxi.modules.models.chat.model_cache.get_model_info",
-        lambda spec: (
-            _chat_model_info("test-provider", "namespace/chat-model")
-            if spec == "test-provider:namespace/chat-model"
-            else None
-        ),
+        lambda spec: _chat_model_info("test-provider", "namespace/chat-model") if spec == "test-provider:namespace/chat-model" else None,
     )
 
     def fake_load_chat_model(spec, **kwargs):
@@ -151,11 +147,7 @@ def test_select_model_maps_anthropic_max_completion_tokens(monkeypatch):
 
     monkeypatch.setattr(
         "yuxi.modules.models.chat.model_cache.get_model_info",
-        lambda spec: (
-            _chat_model_info("anthropic", "mimo-v2.5", provider_type="anthropic")
-            if spec == "anthropic:mimo-v2.5"
-            else None
-        ),
+        lambda spec: _chat_model_info("anthropic", "mimo-v2.5", provider_type="anthropic") if spec == "anthropic:mimo-v2.5" else None,
     )
     monkeypatch.setattr(
         "yuxi.modules.models.chat.load_chat_model",
@@ -194,9 +186,7 @@ def test_load_chat_model_keeps_non_siliconflow_openai_streaming(monkeypatch):
     monkeypatch.setattr(
         "yuxi.modules.models.chat.model_cache.get_model_info",
         lambda spec: (
-            _chat_model_info("openai-compatible", "namespace/chat-model")
-            if spec == "openai-compatible:namespace/chat-model"
-            else None
+            _chat_model_info("openai-compatible", "namespace/chat-model") if spec == "openai-compatible:namespace/chat-model" else None
         ),
     )
 
@@ -364,9 +354,7 @@ def test_load_chat_model_rejects_uid_header_for_gemini(monkeypatch):
 
 def _user_uid_signature(uid: str, timestamp: str) -> str:
     """按网关契约独立重算 HMAC-SHA256 签名。"""
-    return base64.b64encode(
-        hmac.new(b"unit-test-signing-secret", f"uid={uid}\nts={timestamp}".encode(), hashlib.sha256).digest()
-    ).decode()
+    return base64.b64encode(hmac.new(b"unit-test-signing-secret", f"uid={uid}\nts={timestamp}".encode(), hashlib.sha256).digest()).decode()
 
 
 def _deterministic_chat_responder(requests_seen: list):

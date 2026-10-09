@@ -759,9 +759,7 @@ def test_unchanged_skill_projection_does_not_create_staging(tmp_path: Path, monk
 
 
 @pytest.mark.parametrize("linked_side", ["source", "projection"])
-def test_projection_comparison_does_not_accept_equal_symlink(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, linked_side: str
-):
+def test_projection_comparison_does_not_accept_equal_symlink(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, linked_side: str):
     """字节相同的链接不能通过未变化判定；非法来源撤下旧投影。"""
     source = tmp_path / "sources/demo"
     source.mkdir(parents=True)
@@ -785,9 +783,7 @@ def test_projection_comparison_does_not_accept_equal_symlink(
 
 
 @pytest.mark.parametrize("component", ["root", "ancestor"])
-def test_projection_comparison_rejects_symlinked_source_directory(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, component: str
-):
+def test_projection_comparison_rejects_symlinked_source_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, component: str):
     """投影快路径逐层校验来源根和祖先，不读取链接后的目录。"""
     source = tmp_path / "sources/demo"
     source.mkdir(parents=True)
@@ -796,9 +792,7 @@ def test_projection_comparison_rejects_symlinked_source_directory(
     linked = tmp_path / "linked"
     linked.symlink_to(source if component == "root" else source.parent, target_is_directory=True)
     with pytest.raises(OSError):
-        projection_service.sync_user_accessible_skills(
-            "user-1", {"demo": linked if component == "root" else linked / "demo"}
-        )
+        projection_service.sync_user_accessible_skills("user-1", {"demo": linked if component == "root" else linked / "demo"})
     assert not (projection / "demo").exists()
 
 
@@ -1242,9 +1236,7 @@ async def test_skill_zip_import_uses_skill_md_name_not_zip_or_root_dir(tmp_path:
 
 
 @pytest.mark.asyncio
-async def test_skill_zip_import_validates_skill_md_name_not_zip_filename(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
+async def test_skill_zip_import_validates_skill_md_name_not_zip_filename(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
     class FakeRepo(RealSkillRepository):
         def __init__(self, _db):
@@ -1270,9 +1262,7 @@ async def test_skill_zip_import_validates_skill_md_name_not_zip_filename(
 
 
 @pytest.mark.asyncio
-async def test_skill_zip_import_uses_frontmatter_slug_and_keeps_display_name(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
+async def test_skill_zip_import_uses_frontmatter_slug_and_keeps_display_name(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
     class FakeRepo(RealSkillRepository):
         created_item: Skill | None = None
@@ -1329,9 +1319,7 @@ async def test_skill_zip_import_uses_frontmatter_slug_and_keeps_display_name(
 
 
 @pytest.mark.asyncio
-async def test_skill_zip_import_rewrites_conflicting_slug_not_display_name(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
+async def test_skill_zip_import_rewrites_conflicting_slug_not_display_name(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
     class FakeRepo(RealSkillRepository):
         existing_slugs = {"word-docx"}
@@ -1354,12 +1342,7 @@ async def test_skill_zip_import_rewrites_conflicting_slug_not_display_name(
     zip_bytes = _build_zip(
         {
             "Word Skill/SKILL.md": (
-                "---\n"
-                "name: Word / DOCX\n"
-                "slug: word-docx\n"
-                "description: Create, inspect, and edit Microsoft Word documents.\n"
-                "---\n"
-                "# Word / DOCX\n"
+                "---\nname: Word / DOCX\nslug: word-docx\ndescription: Create, inspect, and edit Microsoft Word documents.\n---\n# Word / DOCX\n"
             )
         }
     )
@@ -1421,9 +1404,7 @@ async def test_skill_md_prepare_confirm_creates_single_file_skill(tmp_path: Path
     assert results[0]["slug"] == "demo"
     assert results[0]["success"] is True
     assert FakeRepo.created_item.name == "demo"
-    assert (
-        content_service.content_path(FakeRepo.created_item).joinpath("SKILL.md").read_text(encoding="utf-8") == skill_md
-    )
+    assert content_service.content_path(FakeRepo.created_item).joinpath("SKILL.md").read_text(encoding="utf-8") == skill_md
 
 
 def test_skill_dependency_scope_covers_read_and_manage_audiences():
@@ -1544,21 +1525,16 @@ async def test_init_builtin_skills_create_missing(tmp_path: Path, monkeypatch: p
     assert FakeRepo.created_payload["mcp_dependencies"] == ["charts"]
     assert FakeRepo.created_payload["skill_dependencies"] == ["common-report"]
     assert (tmp_path / "skill-sources/shared" / "reporter" / "SKILL.md").exists()
-    assert (tmp_path / "skill-sources/shared" / "reporter" / "prompts" / "system.md").read_text(
-        encoding="utf-8"
-    ) == "prompt"
+    assert (tmp_path / "skill-sources/shared" / "reporter" / "prompts" / "system.md").read_text(encoding="utf-8") == "prompt"
 
 
 @pytest.mark.asyncio
-async def test_init_builtin_skills_updates_existing_record_and_preserves_disabled(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
+async def test_init_builtin_skills_updates_existing_record_and_preserves_disabled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
     source_dir = tmp_path / "builtin-skills" / "reporter"
     source_dir.mkdir(parents=True, exist_ok=True)
     (source_dir / "SKILL.md").write_text(
-        "---\nname: reporter\ndescription: new description\nversion: 1.0.1\n"
-        "tool_dependencies: [mysql_query]\nmcp_dependencies: [charts]\n---\n# SQL Reporter\n",
+        "---\nname: reporter\ndescription: new description\nversion: 1.0.1\ntool_dependencies: [mysql_query]\nmcp_dependencies: [charts]\n---\n# SQL Reporter\n",
         encoding="utf-8",
     )
     (source_dir / "prompt.md").write_text("new builtin content", encoding="utf-8")
@@ -1778,9 +1754,7 @@ async def test_skill_node_mutations_lock_skill_row(tmp_path: Path, monkeypatch: 
     )
     note = content_service.content_path(item) / "notes" / "note.md"
     note.write_text("before", encoding="utf-8")
-    await edit_service.delete_skill_node(
-        _UnitOfWork(), slug="demo", relative_path="notes/note.md", operator=_user("root", role="admin")
-    )
+    await edit_service.delete_skill_node(_UnitOfWork(), slug="demo", relative_path="notes/note.md", operator=_user("root", role="admin"))
 
     assert locked_reads == [("demo", False), ("demo", True), ("demo", False), ("demo", True)]
     assert note.read_text() == "before"

@@ -287,9 +287,7 @@ async def test_real_network_errors_exhaust_budget_without_error_message(sync, ki
     error = (
         openai.InternalServerError("Internal server error", response=httpx.Response(500, request=request), body=None)
         if kind == "server"
-        else httpx.RemoteProtocolError(
-            "peer closed connection without sending complete message body (incomplete chunked read)"
-        )
+        else httpx.RemoteProtocolError("peer closed connection without sending complete message body (incomplete chunked read)")
     )
     mw = NetworkRetryMiddleware(network_budget_seconds=0, initial_delay=0, jitter=False)
 

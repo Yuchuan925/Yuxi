@@ -116,11 +116,7 @@ async def test_dify_http_failure_export_and_result_boundaries(test_client, admin
         def do_POST(self):
             requests.append(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
             assert self.path == "/v1/datasets/fixture-dataset/retrieve"
-            data = {
-                "records": [
-                    {"segment": {"id": str(index), "content": f"chunk-{index}"}, "score": 0.8} for index in range(201)
-                ]
-            }
+            data = {"records": [{"segment": {"id": str(index), "content": f"chunk-{index}"}, "score": 0.8} for index in range(201)]}
             body = json.dumps({"error": "unavailable"} if remote_fails else data).encode()
             self.send_response(503 if remote_fails else 200)
             self.send_header("Content-Type", "application/json")
@@ -206,9 +202,7 @@ async def test_corrupt_skill_share_config_remains_repairable(test_client, admin_
     try:
         for default_scope in ({}, {"access_level": None}, {"access_level": ""}):
             valid_default = {"version": 2, "read_scope": default_scope}
-            await conn.execute(
-                "UPDATE skills SET share_config = $1::jsonb WHERE slug = $2", json.dumps(valid_default), slug
-            )
+            await conn.execute("UPDATE skills SET share_config = $1::jsonb WHERE slug = $2", json.dumps(valid_default), slug)
             for endpoint in ("/api/skills", "/api/system/skills"):
                 response = await test_client.get(endpoint, headers=admin_headers)
                 assert response.status_code == 200, response.text

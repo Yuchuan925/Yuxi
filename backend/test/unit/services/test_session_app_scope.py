@@ -23,7 +23,5 @@ async def test_read_side_effect_rejects_same_user_other_app(monkeypatch):
 
     monkeypatch.setattr(threads, "SessionRepository", Repository)
     with pytest.raises(HTTPException) as exc:
-        await threads.mark_thread_viewed(
-            db=object(), scope=ActorScope(uid="user-1", app_id="app-b"), thread_id="thread-1"
-        )
+        await threads.mark_thread_viewed(db=object(), scope=ActorScope(uid="user-1", app_id="app-b"), thread_id="thread-1")
     assert exc.value.status_code == 404

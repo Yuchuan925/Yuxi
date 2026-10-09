@@ -379,9 +379,7 @@ async def _settle_dispatch_error(
 ) -> dict | None:
     """串行重查 Input；仅明确不可恢复错误终结触发记录。"""
     async with pg_manager.get_async_session_context() as db:
-        scheduled_run = await db.scalar(
-            select(ScheduledAgentRun).where(ScheduledAgentRun.id == scheduled_run_id).with_for_update()
-        )
+        scheduled_run = await db.scalar(select(ScheduledAgentRun).where(ScheduledAgentRun.id == scheduled_run_id).with_for_update())
         if scheduled_run is None:
             return None
         input_item = None
@@ -402,17 +400,11 @@ async def dispatch_scheduled_run(*, scheduled_run_id: str) -> dict | None:
     """用同一 Thread 接入用例提交定时任务的首批输入。"""
     try:
         async with pg_manager.get_async_session_context() as db:
-            scheduled_run = await db.scalar(
-                select(ScheduledAgentRun).where(ScheduledAgentRun.id == scheduled_run_id).with_for_update()
-            )
+            scheduled_run = await db.scalar(select(ScheduledAgentRun).where(ScheduledAgentRun.id == scheduled_run_id).with_for_update())
             if scheduled_run is None or scheduled_run.status != "dispatching":
                 return scheduled_run.to_dict() if scheduled_run else None
             job = await db.get(ScheduledAgentJob, scheduled_run.job_id)
-            user = (
-                await db.scalar(select(User).where(User.uid == job.uid, User.is_deleted == 0).with_for_update())
-                if job
-                else None
-            )
+            user = await db.scalar(select(User).where(User.uid == job.uid, User.is_deleted == 0).with_for_update()) if job else None
             if job is None or user is None:
                 scheduled_run.status = "cancelled"
                 scheduled_run.error_message = "任务已删除、停用或用户不存在"
@@ -458,9 +450,7 @@ async def dispatch_scheduled_run(*, scheduled_run_id: str) -> dict | None:
             )
 
         async with pg_manager.get_async_session_context() as result_db:
-            current = await result_db.scalar(
-                select(ScheduledAgentRun).where(ScheduledAgentRun.id == scheduled_run_id).with_for_update()
-            )
+            current = await result_db.scalar(select(ScheduledAgentRun).where(ScheduledAgentRun.id == scheduled_run_id).with_for_update())
             if current is None:
                 return None
             current.input_id = accepted["input_id"]

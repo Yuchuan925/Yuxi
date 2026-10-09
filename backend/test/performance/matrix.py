@@ -114,11 +114,7 @@ def stages_complete(requests, events):
     expected = {("event_key", row["event_key"]) for row in requests}
     expected.update(("run_id", row["run_id"]) for row in requests if row["run_id"])
     completed = {
-        (key, event[key])
-        for event in events
-        if event["event"] == "stages_done"
-        for key in ("event_key", "run_id")
-        if key in event
+        (key, event[key]) for event in events if event["event"] == "stages_done" for key in ("event_key", "run_id") if key in event
     }
     return expected.issubset(completed)
 
@@ -183,9 +179,7 @@ def join_timings(requests, events, runs):
                 ("first_output_to_finished_ms", "first_output", "finished"),
                 ("api_to_finished_ms", "api", "finished"),
             ):
-                request[metric] = (
-                    points[end] - points[start] if points[start] is not None and points[end] is not None else None
-                )
+                request[metric] = points[end] - points[start] if points[start] is not None and points[end] is not None else None
             if request["api_to_model_ms"] is not None and request["api_to_model_ms"] < 0:
                 raise ValueError("服务端时间顺序错误")
     return requests
@@ -336,12 +330,7 @@ def summarize_timings(rows):
 def verified_completed(row):
     """成功由精确 Run 的持久终态、唯一 attempt 与绑定输出共同证明。"""
     stored = row.get("db") or {}
-    return (
-        row["success"]
-        and stored.get("status") == "completed"
-        and stored.get("attempts") == 1
-        and stored.get("bound_output") is True
-    )
+    return row["success"] and stored.get("status") == "completed" and stored.get("attempts") == 1 and stored.get("bound_output") is True
 
 
 async def record_group(report, group, path, since):
@@ -368,8 +357,7 @@ async def record_group(report, group, path, since):
             missing=len(requests) - timings["api_to_model_ms"]["n"],
             timings=timings,
             by_turn={
-                turn: summarize_timings([r for r in requests if r["turn"] == turn])
-                for turn in range(1, group["rounds_per_thread"] + 1)
+                turn: summarize_timings([r for r in requests if r["turn"] == turn]) for turn in range(1, group["rounds_per_thread"] + 1)
             },
         )
         if group.get("stages_complete") is False:
@@ -481,9 +469,7 @@ async def main(args):
                     uncertain = [
                         r
                         for r in requests
-                        if not r["success"]
-                        and not r.get("cancel_confirmed")
-                        and r.get("status") not in TERMINAL_STATUSES
+                        if not r["success"] and not r.get("cancel_confirmed") and r.get("status") not in TERMINAL_STATUSES
                     ]
                     observed_threads = {r.get("thread_id") for r in requests}
                     uncertain_threads = {r.get("thread_id") for r in uncertain}
@@ -508,9 +494,7 @@ async def main(args):
                     if group_error is not None:
                         group["observation_error"] = type(group_error).__name__
                         report["groups"].append(group)
-                        (args.output_dir / "matrix.json").write_text(
-                            json.dumps(report, ensure_ascii=False, indent=2) + "\n"
-                        )
+                        (args.output_dir / "matrix.json").write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
                         raise group_error
                     await record_group(report, group, args.output_dir / "matrix.json", group_start)
                     print(
@@ -536,8 +520,7 @@ async def main(args):
                 response = await client.delete(f"/api/auth/users/{user['id']}", headers=admin)
                 response.raise_for_status()
             print(
-                f"已删除本轮 {len(users) - len(retained_users)} 个测试用户，"
-                f"保留 {len(retained_users)} 个未确认终态用户",
+                f"已删除本轮 {len(users) - len(retained_users)} 个测试用户，保留 {len(retained_users)} 个未确认终态用户",
                 flush=True,
             )
 

@@ -31,9 +31,7 @@ class Skill(Base):
     bound_agent = relationship("Agent", lazy="selectin")
     name = Column(String(128), nullable=False, comment="技能名称（来自 SKILL.md frontmatter.name）")
     description = Column(Text, nullable=False, comment="技能描述（来自 SKILL.md frontmatter.description）")
-    source_type = Column(
-        String(32), nullable=False, default="upload", index=True, comment="来源: builtin/upload/remote"
-    )
+    source_type = Column(String(32), nullable=False, default="upload", index=True, comment="来源: builtin/upload/remote")
     tool_dependencies = Column(JSON, nullable=False, default=list, comment="依赖的内置工具名列表")
     mcp_dependencies = Column(JSON, nullable=False, default=list, comment="依赖的 MCP 服务名列表")
     skill_dependencies = Column(JSON, nullable=False, default=list, comment="依赖的其他 skill slug 列表")

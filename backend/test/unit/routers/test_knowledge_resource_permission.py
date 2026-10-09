@@ -77,7 +77,5 @@ async def test_query_parameter_routes_apply_knowledge_base_acl(monkeypatch):
     assert await knowledge_router.require_knowledge_base_read("kb-1", readonly_admin) is readonly_admin
 
     with pytest.raises(HTTPException) as exc_info:
-        await knowledge_router.require_knowledge_base_read(
-            "kb-1", SimpleNamespace(uid="admin-2", role="admin", department_id=2)
-        )
+        await knowledge_router.require_knowledge_base_read("kb-1", SimpleNamespace(uid="admin-2", role="admin", department_id=2))
     assert exc_info.value.status_code == 403

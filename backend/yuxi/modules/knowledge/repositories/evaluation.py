@@ -17,9 +17,7 @@ class EvaluationRepository:
         await session.flush()
         return dataset
 
-    async def create_dataset_with_items(
-        self, dataset_data: dict[str, Any], items_data: list[dict[str, Any]]
-    ) -> EvaluationDataset:
+    async def create_dataset_with_items(self, dataset_data: dict[str, Any], items_data: list[dict[str, Any]]) -> EvaluationDataset:
         async with pg_manager.get_async_session_context() as session:
             dataset = await self.create_dataset_in_session(session, dataset_data)
             await self.add_dataset_items_in_session(session, items_data)
@@ -32,9 +30,7 @@ class EvaluationRepository:
         job_id: str,
     ) -> EvaluationDataset | None:
         """在调用方事务中关联生成作业，且不覆盖相同作业的终态。"""
-        record = await session.scalar(
-            select(EvaluationDataset).where(EvaluationDataset.dataset_id == dataset_id).with_for_update()
-        )
+        record = await session.scalar(select(EvaluationDataset).where(EvaluationDataset.dataset_id == dataset_id).with_for_update())
         if record is None:
             return None
         metadata = dict(record.build_metadata or {})
@@ -54,9 +50,7 @@ class EvaluationRepository:
 
     @staticmethod
     async def update_dataset_in_session(session, dataset_id: str, data: dict[str, Any]) -> EvaluationDataset | None:
-        record = await session.scalar(
-            select(EvaluationDataset).where(EvaluationDataset.dataset_id == dataset_id).with_for_update()
-        )
+        record = await session.scalar(select(EvaluationDataset).where(EvaluationDataset.dataset_id == dataset_id).with_for_update())
         if record is None:
             return None
         for key, value in data.items():
@@ -81,15 +75,11 @@ class EvaluationRepository:
     async def list_datasets(self, kb_id: str) -> list[EvaluationDataset]:
         async with pg_manager.get_async_session_context() as session:
             result = await session.execute(
-                select(EvaluationDataset)
-                .where(EvaluationDataset.kb_id == kb_id)
-                .order_by(EvaluationDataset.created_at.desc())
+                select(EvaluationDataset).where(EvaluationDataset.kb_id == kb_id).order_by(EvaluationDataset.created_at.desc())
             )
             return list(result.scalars().all())
 
-    async def list_dataset_items(
-        self, dataset_id: str, offset: int = 0, limit: int = 100
-    ) -> list[EvaluationDatasetItem]:
+    async def list_dataset_items(self, dataset_id: str, offset: int = 0, limit: int = 100) -> list[EvaluationDatasetItem]:
         async with pg_manager.get_async_session_context() as session:
             result = await session.execute(
                 select(EvaluationDatasetItem)
@@ -208,9 +198,7 @@ class EvaluationRepository:
 
     async def count_run_items(self, run_id: str) -> int:
         async with pg_manager.get_async_session_context() as session:
-            result = await session.execute(
-                select(func.count(EvaluationRunItem.id)).where(EvaluationRunItem.run_id == run_id)
-            )
+            result = await session.execute(select(func.count(EvaluationRunItem.id)).where(EvaluationRunItem.run_id == run_id))
             return int(result.scalar() or 0)
 
     async def delete_all(self) -> None:

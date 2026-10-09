@@ -121,9 +121,7 @@ def execute(mode="chat", *, db=None, on_prepared=None, image=None):
         on_prepared=on_prepared,
     )
     return (
-        svc.stream_agent_chat(
-            **kwargs, agent_slug="test-agent", input_messages=[build_chat_input_message("hello", image)]
-        )
+        svc.stream_agent_chat(**kwargs, agent_slug="test-agent", input_messages=[build_chat_input_message("hello", image)])
         if mode == "chat"
         else svc.stream_agent_resume(**kwargs, resume_input={"answer": "yes"})
     )
@@ -272,13 +270,9 @@ async def test_execution_failure_cannot_publish_completed_result(monkeypatch, mo
     agent = FakeAgent(missing=defect == "missing_checkpoint")
     _patch_stream_scaffolding(monkeypatch, agent=agent)
     if defect == "bad_interrupt":
-        monkeypatch.setattr(
-            svc, "_extract_interrupt_info", lambda _: (_ for _ in ()).throw(ValueError("decode failed"))
-        )
+        monkeypatch.setattr(svc, "_extract_interrupt_info", lambda _: (_ for _ in ()).throw(ValueError("decode failed")))
     if defect == "save_rejected":
-        monkeypatch.setattr(
-            svc, "save_messages_from_langgraph_state", AsyncMock(side_effect=ValueError("binding rejected"))
-        )
+        monkeypatch.setattr(svc, "save_messages_from_langgraph_state", AsyncMock(side_effect=ValueError("binding rejected")))
     results = [event async for event in execute(mode)]
     result = results[-1]
     assert isinstance(result, RunExecutionResult) and result.status == "failed"
@@ -373,9 +367,7 @@ async def test_partial_failure_saves_displayed_text_and_trace_before_done(monkey
     ("status", "worker_id", "expected_snapshot"),
     [("cancel_requested", "worker-1", True), ("running", "worker-1", False), ("cancel_requested", "other", False)],
 )
-async def test_cancel_close_preserves_only_owned_requested_partial(
-    monkeypatch, mode, close_path, status, worker_id, expected_snapshot
-):
+async def test_cancel_close_preserves_only_owned_requested_partial(monkeypatch, mode, close_path, status, worker_id, expected_snapshot):
     """两种关闭异常保留已展示正文，普通关闭和错误 Owner 不写取消快照。"""
     import yuxi.modules.agents.services.openai_events as events_module
 

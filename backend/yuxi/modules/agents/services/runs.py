@@ -83,14 +83,10 @@ async def settle_checkpoint(
             app_id=run.app_id,
         )
         if pending is not None and not await AttachmentRepository(db).has_unready(pending.id):
-            terminal, changed = await run_repo.set_terminal_status(
-                run.id, status="yielded", token_usage=token_usage, worker_id=worker_id
-            )
+            terminal, changed = await run_repo.set_terminal_status(run.id, status="yielded", token_usage=token_usage, worker_id=worker_id)
             if terminal is None or not changed:
                 raise ValueError("Steer 接管前当前 Run 所有权已失效")
-            next_run_id = await _consume_steer(
-                db=db, agent_session=agent_session, turn=turn, previous=run, pending=pending
-            )
+            next_run_id = await _consume_steer(db=db, agent_session=agent_session, turn=turn, previous=run, pending=pending)
             return RunSettlement(status="yielded", changed=True, next_run_id=next_run_id)
 
     if status == "interrupted" and turn.status == "running":
@@ -113,9 +109,7 @@ async def settle_checkpoint(
         return RunSettlement(status="interrupted", changed=True)
 
     if status == "completed" and turn.status == "running":
-        terminal, changed = await run_repo.set_terminal_status(
-            run.id, status="completed", token_usage=token_usage, worker_id=worker_id
-        )
+        terminal, changed = await run_repo.set_terminal_status(run.id, status="completed", token_usage=token_usage, worker_id=worker_id)
         if terminal is None or not changed:
             raise ValueError("完成终态的 Run 所有权已失效")
         await turn_repo.set_terminal(turn, status="completed", result_run_id=run.id)
@@ -198,9 +192,7 @@ async def get_run_langfuse_link(*, db: AsyncSession, scope: ActorScope, thread_i
     return {"run_id": run_id, "available": True, "url": url}
 
 
-async def _consume_steer(
-    *, db: AsyncSession, agent_session: Session, turn: AgentTurn, previous: AgentRun, pending
-) -> str:
+async def _consume_steer(*, db: AsyncSession, agent_session: Session, turn: AgentTurn, previous: AgentRun, pending) -> str:
     """消费 Thread 优先批次，在当前 Turn 建立下一执行段。"""
     input_repo = AgentInputRepository(db)
     messages = await input_repo.list_messages(pending.id)

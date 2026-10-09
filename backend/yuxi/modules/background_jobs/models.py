@@ -23,9 +23,7 @@ from yuxi.shared.datetime import format_utc_datetime, utc_now
 class BackgroundJobRecord(Base):
     __tablename__ = "background_jobs"
     __table_args__ = (
-        CheckConstraint(
-            "status IN ('pending', 'running', 'success', 'failed', 'cancelled')", name="ck_background_jobs_status"
-        ),
+        CheckConstraint("status IN ('pending', 'running', 'success', 'failed', 'cancelled')", name="ck_background_jobs_status"),
         UniqueConstraint("type", "dedupe_key", name="uq_background_jobs_active_dedupe"),
         Index("ix_background_jobs_status_lease_expires", "status", "lease_expires_at"),
     )

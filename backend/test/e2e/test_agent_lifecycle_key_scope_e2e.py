@@ -114,9 +114,7 @@ async def test_private_agent_key_run_uses_end_user_workspace_and_app_scope(e2e_c
         ):
             hidden = await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}", headers=headers)
             assert hidden.status_code == 404, hidden.text
-            hidden_turn = await e2e_client.get(
-                f"/api/v1/agents/sessions/{thread_id}/turns/{receipt['turn_id']}", headers=headers
-            )
+            hidden_turn = await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/turns/{receipt['turn_id']}", headers=headers)
             assert hidden_turn.status_code == 404, hidden_turn.text
 
         completed = await _turn(e2e_client, public_headers, thread_id, receipt["turn_id"])
@@ -147,10 +145,7 @@ async def test_private_agent_key_run_uses_end_user_workspace_and_app_scope(e2e_c
             await conn.close()
         assert persisted and persisted["user_kind"] == "end_user"
         assert persisted["end_user_id"] == end_user_id and persisted["uid"] != owner_uid
-        assert (
-            len({persisted[key] for key in ("uid", "thread_uid", "project_uid", "input_uid", "turn_uid", "run_uid")})
-            == 1
-        )
+        assert len({persisted[key] for key in ("uid", "thread_uid", "project_uid", "input_uid", "turn_uid", "run_uid")}) == 1
         assert {persisted[key] for key in ("input_app_id", "turn_app_id", "run_app_id")} == {app_id}
         assert persisted["api_key_id"] == key_id
         assert persisted["output_run_id"] == receipt["run_id"]

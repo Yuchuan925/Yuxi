@@ -130,9 +130,7 @@ async def test_collector_projects_tool_start_and_successful_finish(monkeypatch):
 def test_tool_output_without_content_does_not_enter_compatibility_projection():
     """原始 lifecycle envelope 不得作为普通 ToolCall 输出。"""
     assert (
-        tool_message_audit_service._tool_output_content(
-            {"type": "tool", "status": "success", "private_lifecycle_field": "audit-only"}
-        )
+        tool_message_audit_service._tool_output_content({"type": "tool", "status": "success", "private_lifecycle_field": "audit-only"})
         == ""
     )
 

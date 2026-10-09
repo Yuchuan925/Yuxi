@@ -28,8 +28,7 @@ class BackgroundJobContext:
     async def set_progress(self, progress: float, message: str | None = None) -> None:
         normalized = float(progress)
         progress_is_throttled = (
-            self._last_persisted_progress is not None
-            and abs(normalized - self._last_persisted_progress) < PROGRESS_PERSIST_DELTA
+            self._last_persisted_progress is not None and abs(normalized - self._last_persisted_progress) < PROGRESS_PERSIST_DELTA
         )
         if progress_is_throttled and (message is None or message == self._last_persisted_message):
             return

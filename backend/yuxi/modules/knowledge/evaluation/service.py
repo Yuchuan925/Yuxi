@@ -167,11 +167,7 @@ class EvaluationService:
             completed_at = job.completed_at or utc_now()
             if completed_at.tzinfo is None:
                 completed_at = completed_at.replace(tzinfo=UTC)
-        elif (
-            job is None
-            and row.started_at
-            and coerce_any_to_utc_datetime(row.started_at) < utc_now() - timedelta(minutes=1)
-        ):
+        elif job is None and row.started_at and coerce_any_to_utc_datetime(row.started_at) < utc_now() - timedelta(minutes=1):
             error = "评估任务提交中断"
             completed_at = utc_now()
 
@@ -286,9 +282,7 @@ class EvaluationService:
             logger.error(f"获取评估数据集列表失败: {e}")
             raise
 
-    async def get_dataset_detail(
-        self, kb_id: str, dataset_id: str, page: int = 1, page_size: int = 10
-    ) -> dict[str, Any]:
+    async def get_dataset_detail(self, kb_id: str, dataset_id: str, page: int = 1, page_size: int = 10) -> dict[str, Any]:
         try:
             row = await self.eval_repo.get_dataset(dataset_id)
             if row is None or row.kb_id != kb_id:
@@ -788,15 +782,11 @@ class EvaluationService:
 
                 if (index + 1) % 5 == 0 or (index + 1) == total_items:
                     current_metrics, _ = aggregate_metrics(all_retrieval_metrics, all_answer_metrics)
-                    await context.set_result(
-                        {"current_metrics": current_metrics, "completed_items": index + 1, "total_items": total_items}
-                    )
+                    await context.set_result({"current_metrics": current_metrics, "completed_items": index + 1, "total_items": total_items})
                     await persist_completed_items(index + 1)
 
             await context.set_progress(95, "计算最终指标")
-            overall_metrics, overall_score = aggregate_metrics(
-                all_retrieval_metrics, all_answer_metrics, include_overall_score=True
-            )
+            overall_metrics, overall_score = aggregate_metrics(all_retrieval_metrics, all_answer_metrics, include_overall_score=True)
             await context.raise_if_cancelled()
             await context.set_progress(100, "完成")
             return {
@@ -940,9 +930,7 @@ async def finish_dataset_generation_job(session, job_record, result) -> None:
     """在 BackgroundJob 成功事务内提交数据集完成事实。"""
     if not isinstance(result, dict) or result.get("dataset_id") != (job_record.payload or {}).get("dataset_id"):
         raise ValueError("Dataset generation result does not match BackgroundJob payload")
-    dataset = await session.scalar(
-        select(EvaluationDataset).where(EvaluationDataset.dataset_id == result["dataset_id"]).with_for_update()
-    )
+    dataset = await session.scalar(select(EvaluationDataset).where(EvaluationDataset.dataset_id == result["dataset_id"]).with_for_update())
     if dataset is None:
         raise ValueError("Dataset not found during BackgroundJob completion")
     dataset.item_count = int(result["item_count"])
@@ -952,9 +940,7 @@ async def finish_dataset_generation_job(session, job_record, result) -> None:
 async def fail_dataset_generation_job(session, job_record, error: str) -> None:
     """在 BackgroundJob 失败事务内收敛数据集构建状态。"""
     dataset_id = (job_record.payload or {}).get("dataset_id")
-    dataset = await session.scalar(
-        select(EvaluationDataset).where(EvaluationDataset.dataset_id == dataset_id).with_for_update()
-    )
+    dataset = await session.scalar(select(EvaluationDataset).where(EvaluationDataset.dataset_id == dataset_id).with_for_update())
     if dataset is None:
         return
     metadata = dict(dataset.build_metadata or {})

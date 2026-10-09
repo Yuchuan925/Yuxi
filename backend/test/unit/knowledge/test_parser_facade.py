@@ -137,8 +137,7 @@ def _build_pdf(file_path: Path, text: str | list[str]) -> None:
         objects.extend(
             [
                 (
-                    f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] "
-                    f"/Resources << /Font << /F1 3 0 R >> >> /Contents {5 + index * 2} 0 R >>"
+                    f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R >> >> /Contents {5 + index * 2} 0 R >>"
                 ).encode(),
                 b"<< /Length " + str(len(stream)).encode() + b" >>\nstream\n" + stream + b"\nendstream",
             ]
@@ -260,9 +259,7 @@ async def test_xls_preserves_single_row_text_and_blank_cells() -> None:
     assert "## 单行" in markdown
     assert "## 文本与空白" in markdown
     assert "## 空表" not in markdown
-    rows = [
-        [cell.strip() for cell in line.strip("|").split("|")] for line in markdown.splitlines() if line.startswith("|")
-    ]
+    rows = [[cell.strip() for cell in line.strip("|").split("|")] for line in markdown.splitlines() if line.startswith("|")]
     assert ["唯一内容", "53"] in rows
     assert ["编号", "标记", "备注"] in rows
     assert ["00123", "NA", ""] in rows
@@ -511,9 +508,7 @@ async def test_zip_rewrite_keeps_identity_and_legal_destinations(tmp_path):
 
     source = tmp_path / "source.zip"
     with zipfile.ZipFile(source, "w") as archive:
-        archive.writestr(
-            "full.md", r"![](chart.png)" + "\n![](images/chart.png)\n![](image%20one.png)\n" + r"![](image\(1\).png)"
-        )
+        archive.writestr("full.md", r"![](chart.png)" + "\n![](images/chart.png)\n![](image%20one.png)\n" + r"![](image\(1\).png)")
         for name, data in {
             "chart.png": b"first",
             "images/chart.png": b"second",

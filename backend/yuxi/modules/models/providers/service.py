@@ -88,8 +88,7 @@ def _normalize_model_item(model: dict[str, Any]) -> dict[str, Any]:
         if unsupported_fields:
             allowed_fields = ", ".join(sorted(ALLOWED_EXTRA_BODY_FIELDS))
             raise ValueError(
-                f"模型 {model_id} 的 request_body_overrides 包含不支持的 extra_body 字段: "
-                f"{', '.join(unsupported_fields)}；允许字段: {allowed_fields}"
+                f"模型 {model_id} 的 request_body_overrides 包含不支持的 extra_body 字段: {', '.join(unsupported_fields)}；允许字段: {allowed_fields}"
             )
 
         try:
@@ -366,10 +365,7 @@ def _restore_redacted_value(requested: Any, current: Any) -> Any:
         return {key: _restore_redacted_value(value, existing.get(key)) for key, value in requested.items()}
     if isinstance(requested, list):
         existing = current if isinstance(current, list) else []
-        return [
-            _restore_redacted_value(value, existing[index] if index < len(existing) else None)
-            for index, value in enumerate(requested)
-        ]
+        return [_restore_redacted_value(value, existing[index] if index < len(existing) else None) for index, value in enumerate(requested)]
     return requested
 
 
@@ -389,9 +385,7 @@ async def update_provider_config(
         update_data.pop("api_key", None)
     for field in ("headers_json", "extra_json"):
         if field in update_data:
-            update_data[field] = _restore_redacted_value(
-                _normalize_dict(update_data[field]) or {}, getattr(provider, field)
-            )
+            update_data[field] = _restore_redacted_value(_normalize_dict(update_data[field]) or {}, getattr(provider, field))
     if "headers_json" in update_data:
         current_headers = provider.headers_json or {}
         for key, value in current_headers.items():
@@ -478,10 +472,7 @@ async def fetch_remote_models(provider: ModelProvider) -> list[dict[str, Any]]:
     models: list[dict[str, Any]] = []
     async with httpx.AsyncClient(timeout=40.0) as client:
         results = await asyncio.gather(
-            *[
-                _fetch_models_from_endpoint(client, provider, headers, endpoint, model_type)
-                for endpoint, model_type in endpoint_specs
-            ]
+            *[_fetch_models_from_endpoint(client, provider, headers, endpoint, model_type) for endpoint, model_type in endpoint_specs]
         )
         for fetched_models in results:
             for model in fetched_models:

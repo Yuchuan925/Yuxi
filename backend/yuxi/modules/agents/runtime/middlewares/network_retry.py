@@ -67,9 +67,7 @@ class NetworkRetryMiddleware(ModelRetryMiddleware):
         # Run 失败由 worker 持久化；合成 AIMessage 没有对应的 model lifecycle 审计。
         super().__init__(max_retries=max_retries, retry_on=_retry_non_network_errors, on_failure="error", **kwargs)
         self._network_budget = (
-            network_budget_seconds
-            if network_budget_seconds is not None
-            else float(os.getenv("YUXI_NETWORK_RETRY_BUDGET_SECONDS", "600"))
+            network_budget_seconds if network_budget_seconds is not None else float(os.getenv("YUXI_NETWORK_RETRY_BUDGET_SECONDS", "600"))
         )
         self._network_initial_delay = network_initial_delay
         self._network_max_delay = network_max_delay
@@ -103,9 +101,7 @@ class NetworkRetryMiddleware(ModelRetryMiddleware):
                 except Exception as exc:  # noqa: BLE001 — 需要拦截底层 SDK 的各种异常类型
                     if not _is_network_error(exc):
                         raise
-                    if self._network_retry_exhausted(
-                        exc, elapsed=time.monotonic() - started, delay=delay, attempt=attempt + 1
-                    ):
+                    if self._network_retry_exhausted(exc, elapsed=time.monotonic() - started, delay=delay, attempt=attempt + 1):
                         raise
                     attempt += 1
                     time.sleep(delay)
@@ -128,9 +124,7 @@ class NetworkRetryMiddleware(ModelRetryMiddleware):
                 except Exception as exc:  # noqa: BLE001 — 需要拦截底层 SDK 的各种异常类型
                     if not _is_network_error(exc):
                         raise
-                    if self._network_retry_exhausted(
-                        exc, elapsed=time.monotonic() - started, delay=delay, attempt=attempt + 1
-                    ):
+                    if self._network_retry_exhausted(exc, elapsed=time.monotonic() - started, delay=delay, attempt=attempt + 1):
                         raise
                     attempt += 1
                     await asyncio.sleep(delay)
@@ -141,14 +135,9 @@ class NetworkRetryMiddleware(ModelRetryMiddleware):
     def _network_retry_exhausted(self, exc: BaseException, *, elapsed: float, delay: float, attempt: int) -> bool:
         """预算耗尽返回 True（调用方抛出），否则记日志并返回 False 继续重试。"""
         if self._network_budget <= 0 or elapsed + delay > self._network_budget:
-            logger.warning(
-                f"[network-retry] 预算耗尽({self._network_budget:.0f}s)，抛出网络错误: {type(exc).__name__}: {exc}",
-            )
+            logger.warning(f"[network-retry] 预算耗尽({self._network_budget:.0f}s)，抛出网络错误: {type(exc).__name__}: {exc}")
             return True
-        logger.warning(
-            f"[network-retry] 网络错误(第{attempt}次，已等待{elapsed:.0f}s，{delay:.0f}s后重试): "
-            f"{type(exc).__name__}: {exc}",
-        )
+        logger.warning(f"[network-retry] 网络错误(第{attempt}次，已等待{elapsed:.0f}s，{delay:.0f}s后重试): {type(exc).__name__}: {exc}")
         return False
 
 

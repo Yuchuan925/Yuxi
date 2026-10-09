@@ -42,8 +42,7 @@ def test_new_preset_file_is_discovered_without_registry(tmp_path, monkeypatch):
     monkeypatch.setattr(presets, "__file__", str(tmp_path / "__init__.py"))
     monkeypatch.setattr(presets, "__path__", [str(tmp_path)])
     (tmp_path / "test_new_role.py").write_text(
-        "from yuxi.modules.agents.presets import AgentPreset\n"
-        'PRESET = AgentPreset(slug="new-role", name="新增角色", description="测试发现")\n'
+        'from yuxi.modules.agents.presets import AgentPreset\nPRESET = AgentPreset(slug="new-role", name="新增角色", description="测试发现")\n'
     )
     invalidate_caches()
     found = presets.discover_agent_presets()
@@ -74,8 +73,7 @@ def test_duplicate_preset_slug_is_rejected(tmp_path, monkeypatch):
     monkeypatch.setattr(presets, "__path__", [str(tmp_path)])
     for name in ("test_duplicate_a", "test_duplicate_b"):
         (tmp_path / f"{name}.py").write_text(
-            "from yuxi.modules.agents.presets import AgentPreset\n"
-            'PRESET = AgentPreset(slug="duplicate", name="重复", description="测试")\n'
+            'from yuxi.modules.agents.presets import AgentPreset\nPRESET = AgentPreset(slug="duplicate", name="重复", description="测试")\n'
         )
     invalidate_caches()
     with pytest.raises(ValueError, match="重复的预置 Agent slug: duplicate"):

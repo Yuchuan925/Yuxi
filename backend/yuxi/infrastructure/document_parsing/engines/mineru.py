@@ -111,9 +111,7 @@ class MinerUParser(DocumentEngine):
 
         file_ext = Path(file_path).suffix.lower()
         if not self.supports_file_type(file_ext):
-            raise DocumentParserException(
-                f"不支持的文件类型: {file_ext}", self.get_service_name(), "unsupported_file_type"
-            )
+            raise DocumentParserException(f"不支持的文件类型: {file_ext}", self.get_service_name(), "unsupported_file_type")
 
         # 解析参数
         params = params or {}
@@ -139,9 +137,7 @@ class MinerUParser(DocumentEngine):
         try:
             start_time = time.time()
 
-            logger.info(
-                f"MinerU 开始处理: {os.path.basename(file_path)} (backend={data['backend']}, lang={data['lang_list']})"
-            )
+            logger.info(f"MinerU 开始处理: {os.path.basename(file_path)} (backend={data['backend']}, lang={data['lang_list']})")
 
             # 打开文件并发送请求
             with open(file_path, "rb") as f:
@@ -156,9 +152,7 @@ class MinerUParser(DocumentEngine):
                 )
 
             # 检查响应状态
-            logger.debug(
-                f"MinerU 响应状态: {response.status_code}, Content-Type: {response.headers.get('content-type')}"
-            )
+            logger.debug(f"MinerU 响应状态: {response.status_code}, Content-Type: {response.headers.get('content-type')}")
 
             if response.status_code != 200:
                 error_detail = "未知错误"
@@ -200,9 +194,7 @@ class MinerUParser(DocumentEngine):
                     )
 
                 processing_time = time.time() - start_time
-                logger.info(
-                    f"MinerU 处理成功: {os.path.basename(file_path)} - {len(text)} 字符 ({processing_time:.2f}s)"
-                )
+                logger.info(f"MinerU 处理成功: {os.path.basename(file_path)} - {len(text)} 字符 ({processing_time:.2f}s)")
 
                 return text
 

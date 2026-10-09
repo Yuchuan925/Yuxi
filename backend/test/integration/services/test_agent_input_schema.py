@@ -60,8 +60,7 @@ async def _create_schema():
     async with engine.begin() as connection:
         await connection.execute(
             text(
-                "INSERT INTO users (username, uid, password_hash, role, login_failed_count, is_deleted) "
-                "VALUES ('input-user', 'input-user', 'hash', 'user', 0, 0)"
+                "INSERT INTO users (username, uid, password_hash, role, login_failed_count, is_deleted) VALUES ('input-user', 'input-user', 'hash', 'user', 0, 0)"
             )
         )
         await connection.execute(
@@ -146,14 +145,10 @@ async def test_follow_up_claim_fixes_order_and_turn_only_once() -> None:
                 intent_hash="hash-three",
                 input_id=second_input.id,
             )
-            second_message = Message(
-                session_record_id=session_record_id, role="user", content="next input", delivery_status="queued"
-            )
+            second_message = Message(session_record_id=session_record_id, role="user", content="next input", delivery_status="queued")
             db.add(second_message)
             await db.flush()
-            await input_repo.add_messages(
-                input_id=second_input.id, receipt_id=second_receipt.id, message_ids=[second_message.id]
-            )
+            await input_repo.add_messages(input_id=second_input.id, receipt_id=second_receipt.id, message_ids=[second_message.id])
             await db.commit()
 
         async with sessions() as db:
@@ -167,9 +162,7 @@ async def test_follow_up_claim_fixes_order_and_turn_only_once() -> None:
                 "second",
                 "third",
             ]
-            turn = await AgentTurnRepository(db).create(
-                turn_id="turn-one", thread_id="input-thread", uid="input-user", app_id=None
-            )
+            turn = await AgentTurnRepository(db).create(turn_id="turn-one", thread_id="input-thread", uid="input-user", app_id=None)
             run = await AgentRunRepository(db).create_run(
                 run_id="run-one",
                 thread_id="input-thread",
@@ -205,9 +198,7 @@ async def test_follow_up_claim_fixes_order_and_turn_only_once() -> None:
                 "missing": [],
             }
             with pytest.raises(ValueError, match="已领取"):
-                await AgentInputRepository(db).consume(
-                    input_id="input-one", turn_id="turn-one", run_id="run-one", cutoff_seq=cutoff
-                )
+                await AgentInputRepository(db).consume(input_id="input-one", turn_id="turn-one", run_id="run-one", cutoff_seq=cutoff)
     finally:
         await _drop_schema(schema, admin_engine, engine)
 
@@ -227,9 +218,7 @@ async def test_product_key_active_turn_and_steer_uniqueness_are_enforced() -> No
                 event_type="message",
                 intent_hash="one",
             )
-            await AgentTurnRepository(db).create(
-                turn_id="turn-active", thread_id="input-thread", uid="input-user", app_id=None
-            )
+            await AgentTurnRepository(db).create(turn_id="turn-active", thread_id="input-thread", uid="input-user", app_id=None)
             await AgentInputRepository(db).create(
                 input_id="steer-one",
                 thread_id="input-thread",
@@ -254,9 +243,7 @@ async def test_product_key_active_turn_and_steer_uniqueness_are_enforced() -> No
             await db.rollback()
 
             with pytest.raises(IntegrityError):
-                await AgentTurnRepository(db).create(
-                    turn_id="turn-overlap", thread_id="input-thread", uid="input-user", app_id=None
-                )
+                await AgentTurnRepository(db).create(turn_id="turn-overlap", thread_id="input-thread", uid="input-user", app_id=None)
             await db.rollback()
 
             with pytest.raises(IntegrityError):
@@ -284,9 +271,7 @@ async def test_product_key_active_turn_and_steer_uniqueness_are_enforced() -> No
                 )
             )
         async with sessions() as db:
-            turn = await AgentTurnRepository(db).create(
-                turn_id="other-turn", thread_id="other-thread", uid="input-user", app_id=None
-            )
+            turn = await AgentTurnRepository(db).create(turn_id="other-turn", thread_id="other-thread", uid="input-user", app_id=None)
             await AgentRunRepository(db).create_run(
                 run_id="other-run",
                 thread_id="other-thread",
@@ -299,9 +284,7 @@ async def test_product_key_active_turn_and_steer_uniqueness_are_enforced() -> No
 
         with pytest.raises(IntegrityError):
             async with engine.begin() as connection:
-                await connection.execute(
-                    text("UPDATE agent_turns SET current_run_id = 'other-run' WHERE id = 'turn-active'")
-                )
+                await connection.execute(text("UPDATE agent_turns SET current_run_id = 'other-run' WHERE id = 'turn-active'"))
                 await connection.execute(text("SET CONSTRAINTS fk_agent_turns_current_run IMMEDIATE"))
     finally:
         await _drop_schema(schema, admin_engine, engine)
@@ -314,9 +297,7 @@ async def test_run_execution_sequence_orders_segments_across_a_turn() -> None:
         sessions = async_sessionmaker(engine, expire_on_commit=False)
         async with sessions() as db:
             session_record_id = await db.scalar(select(text("id")).select_from(text("sessions")))
-            turn = await AgentTurnRepository(db).create(
-                turn_id="cursor-turn", thread_id="input-thread", uid="input-user", app_id=None
-            )
+            turn = await AgentTurnRepository(db).create(turn_id="cursor-turn", thread_id="input-thread", uid="input-user", app_id=None)
             runs = AgentRunRepository(db)
             first = await runs.create_run(
                 run_id="cursor-first",
@@ -391,9 +372,7 @@ async def test_parent_and_child_usage_stays_in_its_own_turn() -> None:
         sessions = async_sessionmaker(engine, expire_on_commit=False)
         async with sessions() as db:
             parent_session = await db.scalar(select(Session).where(Session.thread_id == "input-thread"))
-            turn = await AgentTurnRepository(db).create(
-                turn_id="usage-turn", thread_id="input-thread", uid="input-user", app_id=None
-            )
+            turn = await AgentTurnRepository(db).create(turn_id="usage-turn", thread_id="input-thread", uid="input-user", app_id=None)
             runs = AgentRunRepository(db)
             parent_run = await runs.create_run(
                 run_id="usage-parent",
@@ -535,17 +514,16 @@ async def test_parent_and_child_usage_stays_in_its_own_turn() -> None:
         async with sessions() as db:
             audits = await AgentTurnRepository(db).list_model_usage_audits(turn.id)
             assert [message.operation_id for message in audits] == ["parent-model"]
-            assert {
-                key: sum(message.usage[key] for message in audits)
-                for key in ("input_tokens", "output_tokens", "total_tokens")
-            } == {"input_tokens": 3, "output_tokens": 2, "total_tokens": 5}
+            assert {key: sum(message.usage[key] for message in audits) for key in ("input_tokens", "output_tokens", "total_tokens")} == {
+                "input_tokens": 3,
+                "output_tokens": 2,
+                "total_tokens": 5,
+            }
             child_audits = await AgentTurnRepository(db).list_model_usage_audits(child_turn.id)
             assert [message.operation_id for message in child_audits] == ["child-tool-model", "child-final-model"]
             assert sum(message.usage["total_tokens"] for message in child_audits) == 10
             other_audits = await AgentTurnRepository(db).list_model_usage_audits(other_turn.id)
-            assert [(message.operation_id, message.usage["total_tokens"]) for message in other_audits] == [
-                ("other-final-model", 1800)
-            ]
+            assert [(message.operation_id, message.usage["total_tokens"]) for message in other_audits] == [("other-final-model", 1800)]
     finally:
         await _drop_schema(schema, admin_engine, engine)
 
@@ -559,10 +537,7 @@ async def test_reused_tool_call_id_never_reuses_another_message_declaration():
         sessions = async_sessionmaker(engine, expire_on_commit=False)
         async with sessions() as db:
             agent_session = await db.scalar(select(Session).where(Session.thread_id == "input-thread"))
-            messages = [
-                Message(session_record_id=agent_session.id, role="assistant", content="", extra_metadata={})
-                for _ in range(2)
-            ]
+            messages = [Message(session_record_id=agent_session.id, role="assistant", content="", extra_metadata={}) for _ in range(2)]
             db.add_all(messages)
             await db.flush()
             repository = SessionRepository(db)

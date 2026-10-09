@@ -34,13 +34,9 @@ def test_workspace_root_creates_default_agent_context_files(tmp_path: Path, monk
         os.umask(previous_umask)
 
     assert root == tmp_path / "threads" / "shared" / "user-1" / "workspace"
-    assert (root / "agents" / "AGENTS.md").read_text(encoding="utf-8") == (
-        "# AGENTS\n\n以下是约束 Agent 行为的一些要求\n"
-    )
+    assert (root / "agents" / "AGENTS.md").read_text(encoding="utf-8") == ("# AGENTS\n\n以下是约束 Agent 行为的一些要求\n")
     assert (root / "agents" / "USER.md").read_text(encoding="utf-8") == ("# USER\n\n以下是有关用户的一些信息\n")
-    assert (root / "agents" / "MEMORY.md").read_text(encoding="utf-8") == (
-        "# MEMORY\n\n以下是 Agent 需要记住的一些信息\n"
-    )
+    assert (root / "agents" / "MEMORY.md").read_text(encoding="utf-8") == ("# MEMORY\n\n以下是 Agent 需要记住的一些信息\n")
     assert {path.name for path in (root / "agents").iterdir()} == {"AGENTS.md", "USER.md", "MEMORY.md"}
     assert (root / "agents").stat().st_mode & 0o777 == 0o700
     for filename in ("AGENTS.md", "USER.md", "MEMORY.md"):
@@ -400,10 +396,7 @@ async def test_upload_workspace_files_rejects_oversized_file_and_cleans_partial_
 async def test_upload_workspace_files_rejects_more_than_limit(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "threads"))
     user = _user()
-    uploads = [
-        FileInput(filename=f"demo-{index}.txt", source=BytesIO(b"hello"))
-        for index in range(svc.MAX_WORKSPACE_UPLOAD_FILES + 1)
-    ]
+    uploads = [FileInput(filename=f"demo-{index}.txt", source=BytesIO(b"hello")) for index in range(svc.MAX_WORKSPACE_UPLOAD_FILES + 1)]
 
     with pytest.raises(HTTPException) as exc_info:
         await svc.upload_workspace_files(parent_path="/", files=uploads, current_user=user)

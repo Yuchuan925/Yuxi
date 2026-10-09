@@ -28,13 +28,7 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.e2e, pytest.mark.slow, pytest.mar
 
 def output_text(items):
     """从结果 Run 明确绑定的公开 item 读取正文。"""
-    return "".join(
-        part["text"]
-        for item in items
-        if item["type"] == "message"
-        for part in item["content"]
-        if part["type"] == "output_text"
-    )
+    return "".join(part["text"] for item in items if item["type"] == "message" for part in item["content"] if part["type"] == "output_text")
 
 
 OUTPUT = "DETERMINISTIC_AGENT_E2E_OK"
@@ -55,9 +49,7 @@ async def _provider(
             "base_url": base_url,
             "api_key": "ci-replay-key",
             "capabilities": ["chat"],
-            "enabled_models": [
-                {"id": "deterministic-chat", "display_name": "Deterministic chat", "type": "chat", "source": "manual"}
-            ],
+            "enabled_models": [{"id": "deterministic-chat", "display_name": "Deterministic chat", "type": "chat", "source": "manual"}],
             "is_enabled": True,
         },
     )
@@ -213,10 +205,7 @@ async def test_public_session_initial_text_stream_and_saved_items(e2e_client, e2
         conn = await asyncpg.connect(postgres_dsn())
         try:
             assert await conn.fetchval("SELECT count(*) FROM agent_inputs WHERE thread_id=$1", session_id) == 1
-            assert (
-                await conn.fetchval("SELECT result_run_id FROM agent_turns WHERE id=$1", turn_id)
-                == result["yuxi"]["result_run_id"]
-            )
+            assert await conn.fetchval("SELECT result_run_id FROM agent_turns WHERE id=$1", turn_id) == result["yuxi"]["result_run_id"]
         finally:
             await conn.close()
     finally:
@@ -268,15 +257,10 @@ async def test_concurrent_thread_session_creation_replays_one_receipt(e2e_client
         blocked_transaction = blocker.transaction()
         await blocked_transaction.start()
         await blocker.fetchval("SELECT id FROM projects WHERE id = $1 FOR UPDATE", project_id)
-        requests = [
-            asyncio.create_task(e2e_client.post("/api/v1/agents/sessions", headers=headers, json=body))
-            for _ in range(2)
-        ]
+        requests = [asyncio.create_task(e2e_client.post("/api/v1/agents/sessions", headers=headers, json=body)) for _ in range(2)]
         for _ in range(100):
             waiting = await observer.fetchval(
-                "SELECT COUNT(*) FROM pg_stat_activity "
-                "WHERE state = 'active' AND wait_event_type = 'Lock' "
-                "AND query ILIKE '%projects%'",
+                "SELECT COUNT(*) FROM pg_stat_activity WHERE state = 'active' AND wait_event_type = 'Lock' AND query ILIKE '%projects%'"
             )
             if waiting == 2:
                 break
@@ -299,9 +283,7 @@ async def test_concurrent_thread_session_creation_replays_one_receipt(e2e_client
             first.json()["id"],
         )
         assert dict(counts) == {"threads": 1, "receipts": 1, "inputs": 0, "turns": 0, "runs": 0}
-        conflict = await e2e_client.post(
-            "/api/v1/agents/sessions", headers=headers, json={**body, "title": "different intent"}
-        )
+        conflict = await e2e_client.post("/api/v1/agents/sessions", headers=headers, json={**body, "title": "different intent"})
         assert conflict.status_code == 409, conflict.text
     finally:
         for request in requests:
@@ -316,9 +298,7 @@ async def test_concurrent_thread_session_creation_replays_one_receipt(e2e_client
         if project_id is not None:
             deleted = await e2e_client.delete(f"/api/projects/{project_id}", headers=e2e_headers)
             assert deleted.status_code == 200, deleted.text
-        removed = await e2e_client.request(
-            "DELETE", "/api/workspace/file", headers=e2e_headers, params={"path": directory_name}
-        )
+        removed = await e2e_client.request("DELETE", "/api/workspace/file", headers=e2e_headers, params={"path": directory_name})
         assert removed.status_code in {200, 404}, removed.text
 
 
@@ -396,9 +376,7 @@ async def test_first_input_and_follow_up_fifo_cross_worker(e2e_client, e2e_heade
             queue = await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/queue", headers=e2e_headers)
             assert queue.status_code == 200, queue.text
             assert [item["input_id"] for item in queue.json()["inputs"]] == [next_input["input_id"]]
-            history = await e2e_client.get(
-                f"/api/v1/agents/sessions/{thread_id}/items?order=asc&limit=100", headers=e2e_headers
-            )
+            history = await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/items?order=asc&limit=100", headers=e2e_headers)
             assert history.status_code == 200, history.text
             assert any(
                 item["yuxi"].get("input_id") == next_input["input_id"] and item["yuxi"]["delivery_status"] == "queued"
@@ -413,9 +391,7 @@ async def test_first_input_and_follow_up_fifo_cross_worker(e2e_client, e2e_heade
             assert changed.json()["yuxi"]["tool_approval_mode"] == "always_trust"
             conn = await asyncpg.connect(postgres_dsn())
             try:
-                frozen = await conn.fetchval(
-                    "SELECT input_payload FROM agent_inputs WHERE id = $1", next_input["input_id"]
-                )
+                frozen = await conn.fetchval("SELECT input_payload FROM agent_inputs WHERE id = $1", next_input["input_id"])
             finally:
                 await conn.close()
             frozen = json.loads(frozen) if isinstance(frozen, str) else frozen
@@ -428,9 +404,7 @@ async def test_first_input_and_follow_up_fifo_cross_worker(e2e_client, e2e_heade
         assert first_turn["status"] == "completed", first_turn
         assert first_turn["yuxi"]["result_run_id"] == first["run_id"]
         assert OUTPUT in output_text(first_turn["yuxi"]["output"])
-        run_snapshot = await e2e_client.get(
-            f"/api/v1/agents/sessions/{thread_id}/runs/{first['run_id']}", headers=e2e_headers
-        )
+        run_snapshot = await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/runs/{first['run_id']}", headers=e2e_headers)
         assert run_snapshot.status_code == 200, run_snapshot.text
         assert run_snapshot.json()["thread_id"] == thread_id
         assert "conversation_thread_id" not in run_snapshot.json()
@@ -442,8 +416,7 @@ async def test_first_input_and_follow_up_fifo_cross_worker(e2e_client, e2e_heade
         conn = await asyncpg.connect(postgres_dsn())
         try:
             model_facts = await conn.fetch(
-                "SELECT id, message_type, operation_id, usage FROM messages "
-                "WHERE run_id = $1 AND role = 'assistant' AND operation_id IS NOT NULL ORDER BY id",
+                "SELECT id, message_type, operation_id, usage FROM messages WHERE run_id = $1 AND role = 'assistant' AND operation_id IS NOT NULL ORDER BY id",
                 first["run_id"],
             )
             tool_count = await conn.fetchval(
@@ -451,9 +424,7 @@ async def test_first_input_and_follow_up_fifo_cross_worker(e2e_client, e2e_heade
                 first["run_id"],
             )
             run_count = await conn.fetchval("SELECT COUNT(*) FROM agent_runs WHERE turn_id = $1", first["turn_id"])
-            output_message_id = await conn.fetchval(
-                "SELECT output_message_id FROM agent_runs WHERE id = $1", first["run_id"]
-            )
+            output_message_id = await conn.fetchval("SELECT output_message_id FROM agent_runs WHERE id = $1", first["run_id"])
         finally:
             await conn.close()
         assert len(model_facts) == 2 and tool_count >= 1 and run_count == 1
@@ -489,9 +460,7 @@ async def test_first_input_and_follow_up_fifo_cross_worker(e2e_client, e2e_heade
         streamed = []
         cursors = {}
         cursor = None
-        async with e2e_client.stream(
-            "GET", f"/api/v1/agents/sessions/{thread_id}/events", headers=e2e_headers
-        ) as response:
+        async with e2e_client.stream("GET", f"/api/v1/agents/sessions/{thread_id}/events", headers=e2e_headers) as response:
             assert response.status_code == 200, await response.aread()
             async for cursor, event in read_events(response):
                 cursors[event["event_id"]] = cursor
@@ -516,9 +485,7 @@ async def test_first_input_and_follow_up_fifo_cross_worker(e2e_client, e2e_heade
                 resumed.append(event)
                 if event["type"] == "agent.session.turn.completed":
                     break
-        assert [event["turn_id"] for event in resumed if event["type"] == "agent.session.turn.completed"] == [
-            second_turn["id"]
-        ]
+        assert [event["turn_id"] for event in resumed if event["type"] == "agent.session.turn.completed"] == [second_turn["id"]]
         first_delta = next(
             event
             for event in streamed
@@ -552,16 +519,13 @@ async def test_first_input_and_follow_up_fifo_cross_worker(e2e_client, e2e_heade
             params={"after": first_turn["yuxi"]["output"][0]["id"]},
         )
         assert rejected.status_code == 400 and "当前 Turn" in rejected.json()["detail"]
-        turns = await e2e_client.get(
-            f"/api/v1/agents/sessions/{thread_id}/turns", headers=e2e_headers, params={"limit": 1}
-        )
+        turns = await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/turns", headers=e2e_headers, params={"limit": 1})
         assert turns.json()["data"][0]["id"] == second_turn["id"] and turns.json()["has_more"]
 
         pg = await asyncpg.connect(postgres_dsn())
         try:
             rows = await pg.fetch(
-                "SELECT id, turn_id, consumed_run_id, status FROM agent_inputs "
-                "WHERE thread_id = $1 ORDER BY received_seq",
+                "SELECT id, turn_id, consumed_run_id, status FROM agent_inputs WHERE thread_id = $1 ORDER BY received_seq",
                 thread_id,
             )
             assert [(row["id"], row["turn_id"], row["consumed_run_id"], row["status"]) for row in rows] == [
@@ -613,13 +577,9 @@ async def test_tool_cycle_without_steer_stays_in_one_run(e2e_client, e2e_headers
                 "WHERE run_id = $1 AND role = 'assistant' AND operation_id IS NOT NULL ORDER BY id",
                 accepted["run_id"],
             )
-            output_message_id = await conn.fetchval(
-                "SELECT output_message_id FROM agent_runs WHERE id = $1", accepted["run_id"]
-            )
+            output_message_id = await conn.fetchval("SELECT output_message_id FROM agent_runs WHERE id = $1", accepted["run_id"])
             tool_audit = await conn.fetchrow(
-                "SELECT execution_status, turn_id FROM messages "
-                "WHERE run_id = $1 AND message_type = 'tool_audit' "
-                "AND operation_id = 'call-large-tool-result'",
+                "SELECT execution_status, turn_id FROM messages WHERE run_id = $1 AND message_type = 'tool_audit' AND operation_id = 'call-large-tool-result'",
                 accepted["run_id"],
             )
         finally:
@@ -713,16 +673,16 @@ async def test_steer_aggregates_and_yields_into_same_turn(e2e_client, e2e_header
                     steer_input_id = response.json()["input_id"]
                 else:
                     assert response.json()["input_id"] == steer_input_id
-            pending = await e2e_client.get(
-                f"/api/v1/agents/sessions/{thread_id}/inputs/{steer_input_id}", headers=e2e_headers
-            )
+            pending = await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/inputs/{steer_input_id}", headers=e2e_headers)
             assert pending.status_code == 200, pending.text
             assert pending.json()["status"] == "pending"
             assert pending.json()["turn_id"] is None
             assert [
-                "".join(part["text"] for part in message["content"] if part["type"] == "input_text")
-                for message in pending.json()["items"]
-            ] == ["STEER 一：请按新要求回答", "STEER 二：保留之前工具结果"]
+                "".join(part["text"] for part in message["content"] if part["type"] == "input_text") for message in pending.json()["items"]
+            ] == [
+                "STEER 一：请按新要求回答",
+                "STEER 二：保留之前工具结果",
+            ]
             queue = await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/queue", headers=e2e_headers)
             assert queue.status_code == 200, queue.text
             assert [item["input_id"] for item in queue.json()["inputs"]] == [steer_input_id, follow_up_id]
@@ -731,26 +691,20 @@ async def test_steer_aggregates_and_yields_into_same_turn(e2e_client, e2e_header
             assert released.status_code == 200
 
         for _ in range(100):
-            original = await e2e_client.get(
-                f"/api/v1/agents/sessions/{thread_id}/runs/{initial['run_id']}", headers=e2e_headers
-            )
+            original = await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/runs/{initial['run_id']}", headers=e2e_headers)
             assert original.status_code == 200, original.text
             if original.json()["status"] == "yielded":
                 break
             await asyncio.sleep(0.2)
         else:
             pytest.fail("旧 Run 未在安全点 yielded")
-        consumed = await e2e_client.get(
-            f"/api/v1/agents/sessions/{thread_id}/inputs/{steer_input_id}", headers=e2e_headers
-        )
+        consumed = await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/inputs/{steer_input_id}", headers=e2e_headers)
         assert consumed.status_code == 200, consumed.text
         assert consumed.json()["status"] == "consumed"
         assert consumed.json()["turn_id"] == initial["turn_id"]
         replacement_id = consumed.json()["run_id"]
         assert replacement_id and replacement_id != initial["run_id"]
-        replacement = await e2e_client.get(
-            f"/api/v1/agents/sessions/{thread_id}/runs/{replacement_id}", headers=e2e_headers
-        )
+        replacement = await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/runs/{replacement_id}", headers=e2e_headers)
         assert replacement.status_code == 200, replacement.text
         assert replacement.json()["resume_from_run_id"] == initial["run_id"]
         turn = await _turn(e2e_client, e2e_headers, thread_id, initial["turn_id"])
@@ -758,9 +712,7 @@ async def test_steer_aggregates_and_yields_into_same_turn(e2e_client, e2e_header
         assert turn["yuxi"]["result_run_id"] == replacement_id
         assert OUTPUT in output_text(turn["yuxi"]["output"])
         for _ in range(100):
-            next_input = await e2e_client.get(
-                f"/api/v1/agents/sessions/{thread_id}/inputs/{follow_up_id}", headers=e2e_headers
-            )
+            next_input = await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/inputs/{follow_up_id}", headers=e2e_headers)
             assert next_input.status_code == 200, next_input.text
             if next_input.json()["status"] == "consumed":
                 break
@@ -843,9 +795,7 @@ async def test_waiting_turn_requires_complete_answers_and_resumes_same_turn(e2e_
             json=resume_event([{"question_id": "q-1", "answer": "是"}]),
         )
         assert invalid.status_code == 422, invalid.text
-        still_waiting = await e2e_client.get(
-            f"/api/v1/agents/sessions/{thread_id}/turns/{turn_id}", headers=e2e_headers
-        )
+        still_waiting = await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/turns/{turn_id}", headers=e2e_headers)
         assert still_waiting.status_code == 200
         assert still_waiting.json()["status"] == "requires_action"
         resumed_at = datetime.now(UTC)
@@ -884,16 +834,12 @@ async def test_waiting_turn_requires_complete_answers_and_resumes_same_turn(e2e_
         assert completed["yuxi"]["result_run_id"] == resume_id
         assert completed["yuxi"]["waitpoint"] is None
         assert OUTPUT in output_text(completed["yuxi"]["output"])
-        run_response = await e2e_client.get(
-            f"/api/v1/agents/sessions/{thread_id}/runs/{resume_id}", headers=e2e_headers
-        )
+        run_response = await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/runs/{resume_id}", headers=e2e_headers)
         assert run_response.status_code == 200, run_response.text
         assert run_response.json()["resume_from_run_id"] == initial["run_id"]
         streamed = []
         async with asyncio.timeout(8):
-            async with e2e_client.stream(
-                "GET", f"/api/v1/agents/sessions/{thread_id}/events", headers=e2e_headers
-            ) as response:
+            async with e2e_client.stream("GET", f"/api/v1/agents/sessions/{thread_id}/events", headers=e2e_headers) as response:
                 assert response.status_code == 200, await response.aread()
                 async for cursor, event in read_events(response):
                     streamed.append(event)
@@ -912,12 +858,9 @@ async def test_waiting_turn_requires_complete_answers_and_resumes_same_turn(e2e_
             assert langfuse is not None
             conn = await asyncpg.connect(postgres_dsn())
             try:
-                turn_trace = await conn.fetchrow(
-                    "SELECT langfuse_root_observation_id FROM agent_turns WHERE id = $1", turn_id
-                )
+                turn_trace = await conn.fetchrow("SELECT langfuse_root_observation_id FROM agent_turns WHERE id = $1", turn_id)
                 traced_runs = await conn.fetch(
-                    "SELECT id, langfuse_trace_id, langfuse_observation_id FROM agent_runs "
-                    "WHERE turn_id = $1 AND run_type IN ('chat', 'resume') ORDER BY execution_seq",
+                    "SELECT id, langfuse_trace_id, langfuse_observation_id FROM agent_runs WHERE turn_id = $1 AND run_type IN ('chat', 'resume') ORDER BY execution_seq",
                     turn_id,
                 )
             finally:
@@ -926,9 +869,7 @@ async def test_waiting_turn_requires_complete_answers_and_resumes_same_turn(e2e_
             root_id = turn_trace["langfuse_root_observation_id"]
             trace_id = traced_runs[0]["langfuse_trace_id"]
             assert (
-                root_id
-                and trace_id
-                and all(row["langfuse_trace_id"] == trace_id and row["langfuse_observation_id"] for row in traced_runs)
+                root_id and trace_id and all(row["langfuse_trace_id"] == trace_id and row["langfuse_observation_id"] for row in traced_runs)
             )
             for _ in range(60):
                 observations = await asyncio.to_thread(langfuse.api.observations.get_many, trace_id=trace_id, limit=100)
@@ -984,18 +925,14 @@ def question_replay_url():
         server.server_close()
 
 
-async def test_invalid_question_parameters_return_tool_error_without_waitpoint(
-    e2e_client, e2e_headers, question_replay_url
-):
+async def test_invalid_question_parameters_return_tool_error_without_waitpoint(e2e_client, e2e_headers, question_replay_url):
     """真实工具入口拒绝字符串布尔值，工具错误落库且不产生人工等待。"""
     me = await e2e_client.get("/api/auth/me", headers=e2e_headers)
     assert me.status_code == 200, me.text
     provider_id = f"ci-replay-question-{uuid.uuid4().hex[:8]}"
     model_spec = f"{provider_id}:deterministic-chat"
     await _provider(e2e_client, e2e_headers, base_url=question_replay_url, provider_id=provider_id)
-    slug = await _agent(
-        e2e_client, e2e_headers, str(me.json()["uid"]), tools=["ask_user_question"], model_spec=model_spec
-    )
+    slug = await _agent(e2e_client, e2e_headers, str(me.json()["uid"]), tools=["ask_user_question"], model_spec=model_spec)
     try:
         created = await e2e_client.post(
             "/api/v1/agents/sessions",
@@ -1027,8 +964,7 @@ async def test_invalid_question_parameters_return_tool_error_without_waitpoint(
         conn = await asyncpg.connect(postgres_dsn())
         try:
             audit = await conn.fetchrow(
-                "SELECT execution_status, content, turn_id FROM messages "
-                "WHERE run_id = $1 AND message_type = 'tool_audit' AND operation_id = 'call-ask-user'",
+                "SELECT execution_status, content, turn_id FROM messages WHERE run_id = $1 AND message_type = 'tool_audit' AND operation_id = 'call-ask-user'",
                 accepted["run_id"],
             )
         finally:
@@ -1145,9 +1081,7 @@ async def test_cancel_waiting_turn_pauses_queue_until_continue(e2e_client, e2e_h
         )
         assert continued.status_code == 202, continued.text
         for _ in range(100):
-            consumed = await e2e_client.get(
-                f"/api/v1/agents/sessions/{thread_id}/inputs/{queued_id}", headers=e2e_headers
-            )
+            consumed = await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/inputs/{queued_id}", headers=e2e_headers)
             assert consumed.status_code == 200, consumed.text
             if consumed.json()["status"] == "consumed":
                 break
@@ -1246,13 +1180,11 @@ async def test_cancel_running_model_closes_audit_without_foreign_output(e2e_clie
                 run_id,
             )
             audits = await conn.fetch(
-                "SELECT turn_id, run_id, execution_status FROM messages "
-                "WHERE run_id = $1 AND message_type = 'model_audit'",
+                "SELECT turn_id, run_id, execution_status FROM messages WHERE run_id = $1 AND message_type = 'model_audit'",
                 run_id,
             )
             visible = await conn.fetchval(
-                "SELECT COUNT(*) FROM messages WHERE run_id = $1 AND role = 'assistant' "
-                "AND message_type != 'model_audit'",
+                "SELECT COUNT(*) FROM messages WHERE run_id = $1 AND role = 'assistant' AND message_type != 'model_audit'",
                 run_id,
             )
         finally:
@@ -1261,9 +1193,7 @@ async def test_cancel_running_model_closes_audit_without_foreign_output(e2e_clie
         if os.getenv("LANGFUSE_PUBLIC_KEY") and os.getenv("LANGFUSE_SECRET_KEY"):
             assert run["langfuse_trace_id"]
         assert run["output_message_id"] is None and visible == 0
-        assert [(row["turn_id"], row["run_id"], row["execution_status"]) for row in audits] == [
-            (turn_id, run_id, "interrupted")
-        ]
+        assert [(row["turn_id"], row["run_id"], row["execution_status"]) for row in audits] == [(turn_id, run_id, "interrupted")]
     finally:
         async with httpx.AsyncClient(base_url="http://localhost:8765", timeout=5) as replay:
             await replay.get("/release-blocking", params={"token": token})
@@ -1299,8 +1229,7 @@ async def test_attachment_survives_run_runtime_recreation(e2e_client, e2e_header
         conn = await asyncpg.connect(postgres_dsn())
         try:
             workdir_path = await conn.fetchval(
-                "SELECT project.workdir_path FROM sessions AS thread "
-                "JOIN projects AS project ON project.id = thread.project_id WHERE thread.thread_id = $1",
+                "SELECT project.workdir_path FROM sessions AS thread JOIN projects AS project ON project.id = thread.project_id WHERE thread.thread_id = $1",
                 thread_id,
             )
         finally:
@@ -1329,9 +1258,7 @@ async def test_attachment_survives_run_runtime_recreation(e2e_client, e2e_header
         assert accepted.status_code == 202, accepted.text
         completed = await _turn(e2e_client, e2e_headers, thread_id, accepted.json()["turn_id"])
         assert completed["status"] == "completed", completed
-        [attachment] = (
-            await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/attachments", headers=e2e_headers)
-        ).json()["attachments"]
+        [attachment] = (await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/attachments", headers=e2e_headers)).json()["attachments"]
         path = str(attachment["original_path"])
         assert path.startswith(f"/home/gem/user-data/{workdir_path}/uploads/")
         sandbox = ProvisionerSandboxBackend(thread_id=thread_id, uid=uid, workdir_path=workdir_path)
@@ -1340,18 +1267,14 @@ async def test_attachment_survives_run_runtime_recreation(e2e_client, e2e_header
         assert sandbox.edit(path, content, edited).error is None
         artifact = await e2e_client.get(attachment["original_artifact_url"], headers=e2e_headers)
         assert artifact.status_code == 200 and artifact.text.strip() == edited
-        received = await e2e_client.get(
-            f"/api/v1/agents/sessions/{thread_id}/inputs/{accepted.json()['input_id']}", headers=e2e_headers
-        )
+        received = await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/inputs/{accepted.json()['input_id']}", headers=e2e_headers)
         assert received.status_code == 200, received.text
         user_item = received.json()["items"][0]
         assert user_item["yuxi"]["attachments"][0]["file_id"] == attachment["file_id"]
         assert user_item["yuxi"]["attachments"][0]["input_id"] == accepted.json()["input_id"]
         completed = await _turn(e2e_client, e2e_headers, thread_id, accepted.json()["turn_id"])
         assert completed["status"] == "completed", completed
-        history = (
-            await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/items?order=asc&limit=100", headers=e2e_headers)
-        ).json()
+        history = (await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/items?order=asc&limit=100", headers=e2e_headers)).json()
         restored = next(item for item in history["data"] if item["id"] == user_item["id"])
         assert restored["yuxi"]["delivery_status"] == "complete"
         assert restored == {**user_item, "yuxi": {**user_item["yuxi"], "delivery_status": "complete"}}
@@ -1359,9 +1282,7 @@ async def test_attachment_survives_run_runtime_recreation(e2e_client, e2e_header
         recreated = ProvisionerSandboxBackend(thread_id=thread_id, uid=uid, workdir_path=workdir_path)
         assert recreated.read(path).file_data["content"] == edited
 
-        removed = await e2e_client.delete(
-            f"/api/v1/agents/sessions/{thread_id}/attachments/{attachment['file_id']}", headers=e2e_headers
-        )
+        removed = await e2e_client.delete(f"/api/v1/agents/sessions/{thread_id}/attachments/{attachment['file_id']}", headers=e2e_headers)
         assert removed.status_code == 200, removed.text
         assert recreated.read(path).file_data is None
     finally:
@@ -1396,9 +1317,7 @@ async def test_model_rate_limit_failure_preserves_error_and_queue_can_continue(e
         first_run_id = created.json()["yuxi"]["receipt"]["run_id"]
         failed = await _turn(e2e_client, e2e_headers, thread_id, first_turn_id)
         assert failed["status"] == "failed", failed
-        first_run = await e2e_client.get(
-            f"/api/v1/agents/sessions/{thread_id}/runs/{first_run_id}", headers=e2e_headers
-        )
+        first_run = await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/runs/{first_run_id}", headers=e2e_headers)
         assert first_run.status_code == 200, first_run.text
         assert first_run.json()["status"] == "failed"
         assert "DETERMINISTIC_RATE_LIMIT" in first_run.json()["error_message"]
@@ -1409,9 +1328,7 @@ async def test_model_rate_limit_failure_preserves_error_and_queue_can_continue(e
                 first_run_id,
             )
             attempts = await conn.fetchval("SELECT COUNT(*) FROM agent_run_attempts WHERE run_id = $1", first_run_id)
-            output = await conn.fetchrow(
-                "SELECT run_id, turn_id, extra_metadata FROM messages WHERE id = $1", row["output_message_id"]
-            )
+            output = await conn.fetchrow("SELECT run_id, turn_id, extra_metadata FROM messages WHERE id = $1", row["output_message_id"])
         finally:
             await conn.close()
         assert row["status"] == "failed" and "DETERMINISTIC_RATE_LIMIT" in row["error_message"]
@@ -1423,11 +1340,7 @@ async def test_model_rate_limit_failure_preserves_error_and_queue_can_continue(e
         queued = await e2e_client.post(
             f"/api/v1/agents/sessions/{thread_id}/events",
             headers={**e2e_headers, "Idempotency-Key": f"rate-limit-next-{uuid.uuid4().hex}"},
-            json={
-                "events": [
-                    {"type": "agent.session.input.message", "input": [_message(OUTPUT)], "yuxi": {"mode": "follow_up"}}
-                ]
-            },
+            json={"events": [{"type": "agent.session.input.message", "input": [_message(OUTPUT)], "yuxi": {"mode": "follow_up"}}]},
         )
         assert queued.status_code == 202, queued.text
         assert queued.json()["turn_id"] is None
@@ -1440,9 +1353,7 @@ async def test_model_rate_limit_failure_preserves_error_and_queue_can_continue(e
             json={"events": [{"type": "yuxi.session.input.continue"}]},
         )
         assert continued.status_code == 202, continued.text
-        next_input = await e2e_client.get(
-            f"/api/v1/agents/sessions/{thread_id}/inputs/{queued.json()['input_id']}", headers=e2e_headers
-        )
+        next_input = await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/inputs/{queued.json()['input_id']}", headers=e2e_headers)
         assert next_input.status_code == 200, next_input.text
         assert next_input.json()["status"] == "consumed"
         recovered = await _turn(e2e_client, e2e_headers, thread_id, next_input.json()["turn_id"])
@@ -1450,9 +1361,7 @@ async def test_model_rate_limit_failure_preserves_error_and_queue_can_continue(e
         assert OUTPUT in output_text(recovered["yuxi"]["output"])
     finally:
         if thread_id and first_turn_id:
-            current = await e2e_client.get(
-                f"/api/v1/agents/sessions/{thread_id}/turns/{first_turn_id}", headers=e2e_headers
-            )
+            current = await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/turns/{first_turn_id}", headers=e2e_headers)
             if current.status_code == 200 and current.json()["status"] in {"running", "waiting", "cancelling"}:
                 await e2e_client.post(
                     f"/api/v1/agents/sessions/{thread_id}/events",
@@ -1504,8 +1413,7 @@ async def test_large_tool_approval_resume_keeps_original_audit(e2e_client, e2e_h
         conn = await asyncpg.connect(postgres_dsn())
         try:
             workdir_path = await conn.fetchval(
-                "SELECT project.workdir_path FROM sessions AS thread "
-                "JOIN projects AS project ON project.id = thread.project_id WHERE thread.thread_id = $1",
+                "SELECT project.workdir_path FROM sessions AS thread JOIN projects AS project ON project.id = thread.project_id WHERE thread.thread_id = $1",
                 thread_id,
             )
         finally:
@@ -1531,13 +1439,9 @@ async def test_large_tool_approval_resume_keeps_original_audit(e2e_client, e2e_h
             ]
         }
         resume_headers = {**e2e_headers, "Idempotency-Key": f"large-tool-resume-{uuid.uuid4().hex}"}
-        resumed = await e2e_client.post(
-            f"/api/v1/agents/sessions/{thread_id}/events", headers=resume_headers, json=resume_body
-        )
+        resumed = await e2e_client.post(f"/api/v1/agents/sessions/{thread_id}/events", headers=resume_headers, json=resume_body)
         assert resumed.status_code == 202, resumed.text
-        resumed_again = await e2e_client.post(
-            f"/api/v1/agents/sessions/{thread_id}/events", headers=resume_headers, json=resume_body
-        )
+        resumed_again = await e2e_client.post(f"/api/v1/agents/sessions/{thread_id}/events", headers=resume_headers, json=resume_body)
         assert resumed_again.status_code == 202 and resumed_again.json() == resumed.json()
         resume_run_id = resumed.json()["run_id"]
         assert resume_run_id != first_run_id and resumed.json()["turn_id"] == turn_id
@@ -1549,8 +1453,7 @@ async def test_large_tool_approval_resume_keeps_original_audit(e2e_client, e2e_h
         conn = await asyncpg.connect(postgres_dsn())
         try:
             runs = await conn.fetch(
-                "SELECT id, input_payload, resume_from_run_id FROM agent_runs "
-                "WHERE turn_id = $1 ORDER BY execution_seq",
+                "SELECT id, input_payload, resume_from_run_id FROM agent_runs WHERE turn_id = $1 ORDER BY execution_seq",
                 turn_id,
             )
             audit = await conn.fetchrow(
@@ -1566,9 +1469,7 @@ async def test_large_tool_approval_resume_keeps_original_audit(e2e_client, e2e_h
         assert runs[1]["input_payload"] == runs[0]["input_payload"]
         assert audit and audit["turn_id"] == turn_id and audit["run_id"] == resume_run_id
         assert audit["execution_status"] == "completed" and len(audit["content"]) > 12_000
-        metadata = (
-            json.loads(audit["extra_metadata"]) if isinstance(audit["extra_metadata"], str) else audit["extra_metadata"]
-        )
+        metadata = json.loads(audit["extra_metadata"]) if isinstance(audit["extra_metadata"], str) else audit["extra_metadata"]
         assert metadata["tool_name"] == "execute"
         assert metadata["output"]["content"] == audit["content"]
         offloaded = user_workspace_dir(uid) / workdir_path / "outputs/large_tool_results/call-large-tool-result"
@@ -1612,9 +1513,7 @@ async def test_thread_sse_releases_validation_transaction(e2e_client, e2e_header
             "agent": {"model": MODEL},
             "input": [_message(OUTPUT)],
         }
-        created = await e2e_client.post(
-            "/api/v1/agents/sessions", headers={**e2e_headers, "Idempotency-Key": key}, json=body
-        )
+        created = await e2e_client.post("/api/v1/agents/sessions", headers={**e2e_headers, "Idempotency-Key": key}, json=body)
         assert created.status_code == 201, created.text
         thread_id, turn_id = created.json()["id"], created.json()["yuxi"]["receipt"]["turn_id"]
         async with httpx.AsyncClient(base_url="http://localhost:8765", timeout=5) as replay:
@@ -1653,9 +1552,7 @@ async def test_thread_sse_releases_validation_transaction(e2e_client, e2e_header
                     cutoff,
                 )
                 assert not idle, f"SSE 持有入口事务: {idle}"
-                active = await e2e_client.get(
-                    f"/api/v1/agents/sessions/{thread_id}/turns/{turn_id}", headers=e2e_headers
-                )
+                active = await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/turns/{turn_id}", headers=e2e_headers)
                 assert active.status_code == 200 and active.json()["status"] == "in_progress"
                 assert active.json()["status"] == "in_progress"
         finally:

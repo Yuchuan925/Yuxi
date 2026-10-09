@@ -42,13 +42,9 @@ async def test_session_resource_operations_preserve_identity_and_activity(test_c
         assert updated["yuxi"]["title"] == "更名"
         assert updated["agent"] == before["agent"] == created["agent"]
         assert updated["last_active_at"] == before["last_active_at"]
+        assert (await test_client.patch(f"/api/v1/agents/sessions/{target}", json={}, headers=admin_headers)).status_code == 405
         assert (
-            await test_client.patch(f"/api/v1/agents/sessions/{target}", json={}, headers=admin_headers)
-        ).status_code == 405
-        assert (
-            await test_client.post(
-                f"/api/v1/agents/sessions/{target}", json={"model_spec": "old"}, headers=admin_headers
-            )
+            await test_client.post(f"/api/v1/agents/sessions/{target}", json={"model_spec": "old"}, headers=admin_headers)
         ).status_code == 422
         listed = await test_client.get("/api/v1/agents/sessions", params={"limit": 1}, headers=admin_headers)
         assert listed.status_code == 200, listed.text
@@ -56,22 +52,14 @@ async def test_session_resource_operations_preserve_identity_and_activity(test_c
         assert page["object"] == "list"
         assert len(page["data"]) == 1
         assert page["data"][0].keys() == before.keys()
-        next_page = await test_client.get(
-            "/api/v1/agents/sessions", params={"limit": 1, "after": page["last_id"]}, headers=admin_headers
-        )
+        next_page = await test_client.get("/api/v1/agents/sessions", params={"limit": 1, "after": page["last_id"]}, headers=admin_headers)
         assert next_page.status_code == 200, next_page.text
         assert next_page.json()["data"][0]["id"] != page["data"][0]["id"]
-        invalid = await test_client.get(
-            "/api/v1/agents/sessions", params={"after": str(uuid.uuid4())}, headers=admin_headers
-        )
+        invalid = await test_client.get("/api/v1/agents/sessions", params={"after": str(uuid.uuid4())}, headers=admin_headers)
         assert invalid.status_code == 400
-        foreign_cursor = await test_client.get(
-            "/api/v1/agents/sessions", params={"after": target}, headers=standard_user["headers"]
-        )
+        foreign_cursor = await test_client.get("/api/v1/agents/sessions", params={"after": target}, headers=standard_user["headers"])
         assert foreign_cursor.status_code == 400
-        pinned = await test_client.get(
-            "/api/v1/agents/sessions", params={"is_pinned": True, "limit": 100}, headers=admin_headers
-        )
+        pinned = await test_client.get("/api/v1/agents/sessions", params={"is_pinned": True, "limit": 100}, headers=admin_headers)
         assert pinned.status_code == 200, pinned.text
         assert target in {item["id"] for item in pinned.json()["data"]}
         assert all(item["yuxi"]["is_pinned"] for item in pinned.json()["data"])
@@ -127,9 +115,7 @@ async def test_merged_steer_receipts_advance_session_activity(test_client, stand
         second_at = first_at + timedelta(seconds=2)
         await conn.execute("UPDATE agent_inputs SET created_at=$2 WHERE id=$1", receipts[0]["input_id"], first_at)
         for receipt, timestamp in zip(receipts, (first_at, second_at), strict=True):
-            await conn.execute(
-                "UPDATE agent_input_receipts SET created_at=$2 WHERE id=$1", receipt["event_id"], timestamp
-            )
+            await conn.execute("UPDATE agent_input_receipts SET created_at=$2 WHERE id=$1", receipt["event_id"], timestamp)
         detail = await test_client.get(f"/api/v1/agents/sessions/{session_id}", headers=admin_headers)
         assert detail.status_code == 200, detail.text
         assert detail.json()["last_active_at"] == int(second_at.timestamp())

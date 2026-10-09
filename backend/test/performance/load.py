@@ -179,11 +179,7 @@ def _build_sse_event(name: str, event_id: str | None, data_lines: Sequence[str])
 def observe_tool_evidence(event: dict, evidence: ToolEvidence) -> None:
     """通过实际 function_call 与 call_id 关联 execute 的公开执行结果。"""
     item = event.get("item") or {}
-    if (
-        event.get("type") == "agent.session.turn.item.added"
-        and item.get("type") == "function_call"
-        and item.get("name") == "execute"
-    ):
+    if event.get("type") == "agent.session.turn.item.added" and item.get("type") == "function_call" and item.get("name") == "execute":
         evidence.execute_started = True
         evidence.call_ids.add(item["call_id"])
     if (
@@ -263,9 +259,7 @@ class LocalResourceSampler:
         )
         try:
             compose_containers = self._compose_containers()
-            sandbox_containers = [
-                container_id for container_id in self._sandbox_containers() if container_id not in compose_containers
-            ]
+            sandbox_containers = [container_id for container_id in self._sandbox_containers() if container_id not in compose_containers]
             service_by_id = {container_id: service for container_id, service in compose_containers.items()}
             service_by_id.update({container_id: "sandbox" for container_id in sandbox_containers})
             memory, cpu = self._container_stats(service_by_id)
@@ -304,12 +298,7 @@ class LocalResourceSampler:
                 '{{.ID}}\t{{.Label "com.docker.compose.service"}}',
             ]
         )
-        return {
-            container_id: service
-            for line in output.splitlines()
-            if line.strip()
-            for container_id, service in [line.split("\t", 1)]
-        }
+        return {container_id: service for line in output.splitlines() if line.strip() for container_id, service in [line.split("\t", 1)]}
 
     def _sandbox_containers(self) -> list[str]:
         output = _run_local_command(
@@ -343,11 +332,7 @@ class LocalResourceSampler:
             row = json.loads(line)
             container_id = str(row.get("ID") or "")
             service = next(
-                (
-                    value
-                    for key, value in service_by_id.items()
-                    if key.startswith(container_id) or container_id.startswith(key)
-                ),
+                (value for key, value in service_by_id.items() if key.startswith(container_id) or container_id.startswith(key)),
                 None,
             )
             if service is None and str(row.get("Name") or "").startswith(self.sandbox_container_prefix):
@@ -388,9 +373,7 @@ class LocalResourceSampler:
                 "sh",
                 "-c",
                 (
-                    'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc '
-                    '"SELECT count(*), count(*) FILTER '
-                    "(WHERE state = 'active') FROM pg_stat_activity\""
+                    'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT count(*), count(*) FILTER (WHERE state = \'active\') FROM pg_stat_activity"'
                 ),
             ]
         )
@@ -598,9 +581,7 @@ class AgentLoadClient:
     async def wait_for_run_id(self, thread_id: str, input_id: str) -> tuple[str, str]:
         """消费 Thread SSE，直到目标 Input 固定 Turn 和 Run。"""
 
-        async with self.client.stream(
-            "GET", f"/api/v1/agents/sessions/{thread_id}/events", headers=self.headers
-        ) as response:
+        async with self.client.stream("GET", f"/api/v1/agents/sessions/{thread_id}/events", headers=self.headers) as response:
             await _raise_for_stream_status(response, "读取 Thread SSE")
             async for event in iter_sse(response.aiter_lines()):
                 if event.data.get("session_id") != thread_id:
@@ -691,11 +672,7 @@ class AgentLoadClient:
         response = await self.client.post(
             f"/api/v1/agents/sessions/{thread_id}/events",
             headers={**self.headers, "Idempotency-Key": f"cancel:{event_key}"},
-            json={
-                "events": [
-                    {"type": "agent.session.input.cancel", "yuxi": {"turn_id": turn_id, "expected_run_id": run_id}}
-                ]
-            },
+            json={"events": [{"type": "agent.session.input.cancel", "yuxi": {"turn_id": turn_id, "expected_run_id": run_id}}]},
         )
         _raise_for_status(response, "取消 Turn")
 
@@ -819,12 +796,8 @@ def summarize(
             "preparation_p95_ms": _percentile([item.preparation_ms for item in items], 0.95),
             "first_model_request_p50_ms": _percentile([item.first_model_request_ms for item in items], 0.50),
             "first_model_request_p95_ms": _percentile([item.first_model_request_ms for item in items], 0.95),
-            "created_to_first_model_request_p50_ms": _percentile(
-                [item.created_to_first_model_request_ms for item in items], 0.50
-            ),
-            "created_to_first_model_request_p95_ms": _percentile(
-                [item.created_to_first_model_request_ms for item in items], 0.95
-            ),
+            "created_to_first_model_request_p50_ms": _percentile([item.created_to_first_model_request_ms for item in items], 0.50),
+            "created_to_first_model_request_p95_ms": _percentile([item.created_to_first_model_request_ms for item in items], 0.95),
             "missing_model_request_timing": sum(item.created_to_first_model_request_ms is None for item in items),
             "first_token_p50_ms": _percentile([item.first_token_ms for item in items], 0.50),
             "first_token_p95_ms": _percentile([item.first_token_ms for item in items], 0.95),
@@ -873,18 +846,14 @@ def _summarize_resources(samples: Sequence[ResourceSample]) -> dict[str, Any]:
         values = [value for sample in valid_samples if (value := getattr(sample, field_name)) is not None]
         summary[f"{field_name}_peak"] = round(max(values), 2) if values else None
 
-    available_memory = [
-        sample.host_available_memory_mb for sample in valid_samples if sample.host_available_memory_mb is not None
-    ]
+    available_memory = [sample.host_available_memory_mb for sample in valid_samples if sample.host_available_memory_mb is not None]
     summary["host_available_memory_mb_min"] = round(min(available_memory), 2) if available_memory else None
     baseline = valid_samples[0]
     for field_name in ("worker_memory_mb", "sandbox_memory_mb", "total_memory_mb"):
         peak = summary.get(f"{field_name}_peak")
         baseline_value = getattr(baseline, field_name)
         summary[f"{field_name}_baseline"] = baseline_value
-        summary[f"{field_name}_increase"] = (
-            round(peak - baseline_value, 2) if peak is not None and baseline_value is not None else None
-        )
+        summary[f"{field_name}_increase"] = round(peak - baseline_value, 2) if peak is not None and baseline_value is not None else None
     return summary
 
 
@@ -1136,8 +1105,7 @@ async def async_main(args: argparse.Namespace) -> int:
         "resource_interval_seconds": args.resource_interval_seconds if args.collect_local_resources else None,
         "timing_metric": "created_to_first_model_request_ms",
         "timing_metric_definition": (
-            "PostgreSQL AgentRun.created_at 到 LangChain on_chat_model_start 的差值；"
-            "回调在供应商 HTTP 发送前触发，是发送前近似边界，不包含首 token 等待。"
+            "PostgreSQL AgentRun.created_at 到 LangChain on_chat_model_start 的差值；回调在供应商 HTTP 发送前触发，是发送前近似边界，不包含首 token 等待。"
         ),
         "client_timing_metric": "first_model_request_ms",
     }

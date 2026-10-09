@@ -78,9 +78,7 @@ async def test_compress_thread_context_uses_locked_idle_thread(
             pass
 
         async def get_visible_by_slug(self, **_kwargs):
-            return SimpleNamespace(
-                backend_id="ChatbotAgent", config_json={"context": {"summary_prompt": "CHANGED_SUMMARY"}}
-            )
+            return SimpleNamespace(backend_id="ChatbotAgent", config_json={"context": {"summary_prompt": "CHANGED_SUMMARY"}})
 
     async def idle(**_kwargs):
         events.append("idle")
@@ -119,9 +117,7 @@ async def test_compress_thread_context_uses_locked_idle_thread(
 
     if config_snapshot is None:
         with pytest.raises(ValueError, match="Session 缺少配置快照"):
-            await service.compress_thread_context(
-                thread_id=thread_id, current_user=SimpleNamespace(uid="user-1", role="user"), db=Db()
-            )
+            await service.compress_thread_context(thread_id=thread_id, current_user=SimpleNamespace(uid="user-1", role="user"), db=Db())
         assert events == [("lock", thread_id), "idle"]
         return
 
@@ -157,9 +153,7 @@ async def test_compress_rejects_same_user_from_other_app(monkeypatch: pytest.Mon
 
     monkeypatch.setattr(service, "SessionRepository", SessionRepo)
     with pytest.raises(HTTPException) as exc:
-        await service.compress_thread_context(
-            thread_id="thread-1", current_user=SimpleNamespace(uid="user-1"), db=object(), app_id="app-b"
-        )
+        await service.compress_thread_context(thread_id="thread-1", current_user=SimpleNamespace(uid="user-1"), db=object(), app_id="app-b")
     assert exc.value.status_code == 404
 
 

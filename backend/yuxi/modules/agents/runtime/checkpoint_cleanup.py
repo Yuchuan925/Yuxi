@@ -22,9 +22,7 @@ async def cancel_waitpoint_checkpoint(graph: CompiledStateGraph, config: Runnabl
     # 首次 END 提交后失联时 next 已为空，仍需为当前批次补齐缺失的工具结果。
     if pending is not None:
         cancelled = [
-            ToolMessage(
-                id=f"cancelled:{pending.id}:{call['id']}", tool_call_id=call["id"], content="[已取消]", status="error"
-            )
+            ToolMessage(id=f"cancelled:{pending.id}:{call['id']}", tool_call_id=call["id"], content="[已取消]", status="error")
             for call in pending.tool_calls
             if call["id"] not in completed
         ]

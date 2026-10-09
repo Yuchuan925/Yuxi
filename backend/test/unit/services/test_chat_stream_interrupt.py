@@ -48,9 +48,7 @@ def test_question_projection_preserves_checkpoint_structure_and_ids():
             "operation": "确认风格",
         },
     ]
-    result = svc.build_pending_interrupt_payload(
-        SimpleNamespace(value={"questions": questions, "source": "ask_user_question"}), "thread-1"
-    )
+    result = svc.build_pending_interrupt_payload(SimpleNamespace(value={"questions": questions, "source": "ask_user_question"}), "thread-1")
     assert result == {
         "status": "ask_user_question_required",
         "questions": questions,

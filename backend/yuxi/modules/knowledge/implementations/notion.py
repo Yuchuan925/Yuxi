@@ -449,13 +449,9 @@ class NotionKB(ReadOnlyConnectors):
 
     @staticmethod
     def _get_connection_config(kb_id: str, additional_params: dict[str, Any]) -> tuple[str, str, str]:
-        token = str(
-            additional_params.get("notion_token") or os.getenv("NOTION_TOKEN") or os.getenv("NOTION_API_KEY") or ""
-        ).strip()
+        token = str(additional_params.get("notion_token") or os.getenv("NOTION_TOKEN") or os.getenv("NOTION_API_KEY") or "").strip()
         data_source_id = str(additional_params.get("notion_data_source_id") or "").strip()
-        notion_version = (
-            str(additional_params.get("notion_version") or NOTION_DEFAULT_VERSION).strip() or NOTION_DEFAULT_VERSION
-        )
+        notion_version = str(additional_params.get("notion_version") or NOTION_DEFAULT_VERSION).strip() or NOTION_DEFAULT_VERSION
         if not token or not data_source_id:
             raise ValueError(f"Notion config incomplete for kb_id={kb_id}")
         return token, data_source_id, notion_version
@@ -602,9 +598,7 @@ class NotionKB(ReadOnlyConnectors):
             return ", ".join(str(item.get("name") or "") for item in prop.get("files") or [] if item.get("name"))
         if prop_type == "formula":
             formula = prop.get("formula") or {}
-            return cls._property_to_text(
-                {"type": formula.get("type"), formula.get("type"): formula.get(formula.get("type"))}
-            )
+            return cls._property_to_text({"type": formula.get("type"), formula.get("type"): formula.get(formula.get("type"))})
         return ""
 
     @staticmethod
@@ -628,10 +622,7 @@ class NotionKB(ReadOnlyConnectors):
 
         known_data_source_ids = [candidate_id for candidate_id in data_source_parent_ids if candidate_id]
         if known_data_source_ids:
-            return any(
-                cls._normalize_notion_id(str(candidate_id)) == normalized_data_source_id
-                for candidate_id in known_data_source_ids
-            )
+            return any(cls._normalize_notion_id(str(candidate_id)) == normalized_data_source_id for candidate_id in known_data_source_ids)
 
         database_id = parent.get("database_id") or (parent.get(parent_type) if parent_type == "database_id" else None)
         if database_id and cls._normalize_notion_id(str(database_id)) == normalized_data_source_id:

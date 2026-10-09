@@ -188,9 +188,7 @@ async def test_index_documents_uses_uid_for_operator(monkeypatch):
     async def fake_ensure_database_supports_documents(kb_id: str, operation: str) -> dict:
         return await fake_get_database_info(kb_id)
 
-    async def fake_index_file(
-        kb_id: str, file_id: str, operator_id: str | None = None, params: dict | None = None, **_kwargs
-    ):
+    async def fake_index_file(kb_id: str, file_id: str, operator_id: str | None = None, params: dict | None = None, **_kwargs):
         captured["operator_id"] = operator_id
         return {"file_id": file_id, "status": "indexed"}
 
@@ -243,9 +241,7 @@ async def test_parse_pending_documents_enqueues_status_scoped_job(monkeypatch):
         return _database_detail(pending_parse_count=2)
 
     async def fake_list_document_file_ids_by_statuses(kb_id: str, *, statuses, after_file_id, limit):
-        captured["list_calls"].append(
-            {"kb_id": kb_id, "statuses": statuses, "after_file_id": after_file_id, "limit": limit}
-        )
+        captured["list_calls"].append({"kb_id": kb_id, "statuses": statuses, "after_file_id": after_file_id, "limit": limit})
         return ["file_1", "file_2"] if after_file_id is None else []
 
     async def fake_parse_file(kb_id: str, file_id: str, operator_id: str | None = None, **_kwargs):
@@ -365,17 +361,13 @@ async def test_index_pending_documents_uses_pending_statuses_and_params(monkeypa
         return _database_detail(pending_index_count=2)
 
     async def fake_list_document_file_ids_by_statuses(kb_id: str, *, statuses, after_file_id, limit):
-        captured["list_calls"].append(
-            {"kb_id": kb_id, "statuses": statuses, "after_file_id": after_file_id, "limit": limit}
-        )
+        captured["list_calls"].append({"kb_id": kb_id, "statuses": statuses, "after_file_id": after_file_id, "limit": limit})
         return ["file_1", "file_2"] if after_file_id is None else []
 
     async def fake_update_file_params(kb_id: str, file_id: str, params: dict, operator_id: str | None = None):
         captured["updated"].append({"kb_id": kb_id, "file_id": file_id, "params": params, "operator_id": operator_id})
 
-    async def fake_index_file(
-        kb_id: str, file_id: str, operator_id: str | None = None, params: dict | None = None, **_kwargs
-    ):
+    async def fake_index_file(kb_id: str, file_id: str, operator_id: str | None = None, params: dict | None = None, **_kwargs):
         captured["indexed"].append({"kb_id": kb_id, "file_id": file_id, "operator_id": operator_id, "params": params})
         return {"file_id": file_id, "status": "indexed"}
 
@@ -443,9 +435,7 @@ async def test_add_documents_auto_index_returns_one_final_result_per_item(monkey
     async def fake_update_file_params(kb_id: str, file_id: str, params: dict, operator_id: str | None = None):
         return None
 
-    async def fake_index_file(
-        kb_id: str, file_id: str, operator_id: str | None = None, params: dict | None = None, **_kwargs
-    ):
+    async def fake_index_file(kb_id: str, file_id: str, operator_id: str | None = None, params: dict | None = None, **_kwargs):
         return {"file_id": file_id, "status": "indexed", "error": None}
 
     async def fake_enqueue(name: str, job_type: str, payload: dict):
@@ -720,18 +710,13 @@ async def test_parse_pending_documents_uses_params(monkeypatch):
 
     assert result["status"] == "queued"
     assert captured["payload"]["params"] == params
-    assert captured["updated"] == [
-        {"kb_id": "kb_1", "file_id": "file_pending_1", "params": params, "operator_id": "uid-user"}
-    ]
+    assert captured["updated"] == [{"kb_id": "kb_1", "file_id": "file_pending_1", "params": params, "operator_id": "uid-user"}]
     assert captured["parsed"] == [{"kb_id": "kb_1", "file_id": "file_pending_1", "operator_id": "uid-user"}]
 
 
 async def test_document_job_result_keeps_bounded_references_and_counts():
     """任务摘要不携带完整文件数据或异常秘密，计数仍覆盖全部结果。"""
-    items = [
-        {"file_id": f"file-{index}", "status": "failed", "error": "private-token", "markdown": "private-body"}
-        for index in range(250)
-    ]
+    items = [{"file_id": f"file-{index}", "status": "failed", "error": "private-token", "markdown": "private-body"} for index in range(250)]
     result = knowledge_job_service._document_result(items, processed=250, failed=250)
     assert result["failed"] == 250 and result["succeeded"] == 0
     assert result["result_truncated"] is True

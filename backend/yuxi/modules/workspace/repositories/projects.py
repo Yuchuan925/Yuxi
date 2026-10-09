@@ -59,9 +59,7 @@ class ProjectRepository:
 
     async def get_by_idempotency_key(self, idempotency_key: str, uid: str) -> Project | None:
         """按用户和幂等键读取 Project。"""
-        return await self.db.scalar(
-            select(Project).where(Project.uid == str(uid), Project.idempotency_key == idempotency_key)
-        )
+        return await self.db.scalar(select(Project).where(Project.uid == str(uid), Project.idempotency_key == idempotency_key))
 
     async def list_selectable_for_user(self, uid: str) -> list[Project]:
         """列出用户可选择的 Project。"""
@@ -122,9 +120,7 @@ class ProjectRepository:
                 .limit(1)
             )
             pending_input = await self.db.scalar(
-                select(AgentInput.id)
-                .where(AgentInput.thread_id.in_(thread_ids), AgentInput.status == "pending")
-                .limit(1)
+                select(AgentInput.id).where(AgentInput.thread_id.in_(thread_ids), AgentInput.status == "pending").limit(1)
             )
             active_run = await self.db.scalar(
                 select(AgentRun.id)

@@ -170,9 +170,7 @@ class UserRepository:
             result = await session.execute(select(User).where(User.phone_number == phone, User.id != exclude_user_id))
             return result.scalar_one_or_none()
 
-    async def list_users(
-        self, skip: int = 0, limit: int = 100, department_id: int | None = None, role: str | None = None
-    ) -> list[User]:
+    async def list_users(self, skip: int = 0, limit: int = 100, department_id: int | None = None, role: str | None = None) -> list[User]:
         """获取有效系统用户列表，终端用户仅由管理分页显式查询。"""
         async with self._session() as session:
             query = select(User).where(User.is_deleted == 0, User.user_kind == "human")
@@ -367,9 +365,7 @@ class UserRepository:
     async def get_admin_count_in_department(self, department_id: int, exclude_user_id: int | None = None) -> int:
         """统计部门中管理员数量"""
         async with self._session() as session:
-            query = select(func.count(User.id)).where(
-                User.department_id == department_id, User.role == "admin", User.is_deleted == 0
-            )
+            query = select(func.count(User.id)).where(User.department_id == department_id, User.role == "admin", User.is_deleted == 0)
             if exclude_user_id is not None:
                 query = query.where(User.id != exclude_user_id)
             result = await session.execute(query)

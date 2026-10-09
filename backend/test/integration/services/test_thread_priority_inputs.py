@@ -126,9 +126,7 @@ async def _start(sessions, *, running: bool = True):
         dispatch = await scheduler.claim_next_input(db=db, agent_session=agent_session, binding=_binding())
         run = await db.get(AgentRun, dispatch.run_id)
         if running:
-            run, acquired = await AgentRunRepository(db).mark_running(
-                dispatch.run_id, worker_id="owner", lease_seconds=60
-            )
+            run, acquired = await AgentRunRepository(db).mark_running(dispatch.run_id, worker_id="owner", lease_seconds=60)
             assert acquired
         await db.commit()
         return run
@@ -141,9 +139,7 @@ async def test_empty_session_freezes_system_default_before_first_input(sessions,
 
     defaults = {"default_model": "test:original-default"}
     monkeypatch.setattr(input_config, "system_options", SimpleNamespace(get=AsyncMock(return_value=defaults)))
-    monkeypatch.setattr(
-        inputs, "resolve_session_workdir_binding", AsyncMock(return_value=replace(_binding(), directory_mode="linked"))
-    )
+    monkeypatch.setattr(inputs, "resolve_session_workdir_binding", AsyncMock(return_value=replace(_binding(), directory_mode="linked")))
     async with sessions() as db:
         agent = await db.scalar(select(Agent).where(Agent.slug == "main"))
         agent.config_json = {"context": {"model": "", "system_prompt": "ORIGINAL"}}
@@ -205,9 +201,7 @@ async def test_idle_steer_batch_precedes_fifo_and_is_sealed_on_claim(sessions):
             ("follow_up", "message-1"),
         ]
         assert all(item["turn_id"] is None for item in snapshot["inputs"])
-        accepted = await threads.continue_queue(
-            db=db, scope=SCOPE, thread_id="input-thread", idempotency_key="continue"
-        )
+        accepted = await threads.continue_queue(db=db, scope=SCOPE, thread_id="input-thread", idempotency_key="continue")
     third = await _send(sessions, "S3")
     assert third["input_id"] != first["input_id"]
     async with sessions() as db:
@@ -225,9 +219,7 @@ async def test_idle_steer_batch_precedes_fifo_and_is_sealed_on_claim(sessions):
             ("S1", accepted["run_id"], "dispatched"),
             ("S2", accepted["run_id"], "dispatched"),
         ]
-        pending = await AgentInputRepository(db).list_pending_inputs(
-            thread_id="input-thread", uid=SCOPE.uid, app_id=None
-        )
+        pending = await AgentInputRepository(db).list_pending_inputs(thread_id="input-thread", uid=SCOPE.uid, app_id=None)
         assert [item.id for item in pending] == [third["input_id"], "input-0", "input-1"]
         assert (await db.get(AgentRun, accepted["run_id"])).resume_from_run_id is None
         retry = await inputs.accept_message(
@@ -239,12 +231,7 @@ async def test_idle_steer_batch_precedes_fifo_and_is_sealed_on_claim(sessions):
             messages=[build_chat_input_message("S1")],
         )
         assert retry["input_id"] == batch.id and retry["run_id"] == batch.consumed_run_id
-        assert (
-            await db.scalar(
-                select(func.count()).select_from(AgentInputReceipt).where(AgentInputReceipt.idempotency_key == "S1")
-            )
-            == 1
-        )
+        assert await db.scalar(select(func.count()).select_from(AgentInputReceipt).where(AgentInputReceipt.idempotency_key == "S1")) == 1
 
 
 async def test_safe_handoff_consumes_batch_in_same_turn_with_current_config(sessions):
@@ -375,9 +362,7 @@ async def test_steer_before_first_model_is_saved_as_yielded_not_failed(sessions,
             assert batch.status == "cancelled" and batch.consumed_run_id is None
             assert await db.scalar(select(func.count()).select_from(AgentRun)) == 1
             status = await messages.save_messages_from_langgraph_state(
-                state=SimpleNamespace(
-                    values={"messages": [AIMessage(content="original task done", id="after-cancel")]}
-                ),
+                state=SimpleNamespace(values={"messages": [AIMessage(content="original task done", id="after-cancel")]}),
                 thread_id="input-thread",
                 session_repo=SessionRepository(db),
                 run_id=current.id,
@@ -426,11 +411,7 @@ async def test_cancelled_steer_continuation_preserves_wire_ids_and_audit_order(s
             graph_inputs.append([message.content for message in value])
             if self.calls == 1:
                 self.history = list(value)
-            operations = (
-                [("model-one", "first", 0), ("model-two", "second", 10)]
-                if self.calls == 1
-                else [("model-three", "final", 0)]
-            )
+            operations = [("model-one", "first", 0), ("model-two", "second", 10)] if self.calls == 1 else [("model-three", "final", 0)]
             for operation, text, seq in operations:
                 packets = [
                     {"event": "message-start", "id": operation},
@@ -490,9 +471,7 @@ async def test_cancelled_steer_continuation_preserves_wire_ids_and_audit_order(s
             )
         ]
     assert events[-1].status == "completed"
-    deltas = [
-        event for event in events if isinstance(event, dict) and event["type"] == "agent.session.turn.output_text.delta"
-    ]
+    deltas = [event for event in events if isinstance(event, dict) and event["type"] == "agent.session.turn.output_text.delta"]
     assert [event["delta"] for event in deltas] == ["first", "second", "final"]
     assert len({event["event_id"] for event in deltas}) == 3
     assert graph_inputs == [["message-0"], []]
@@ -531,9 +510,7 @@ async def test_completion_winning_thread_lock_still_accepts_steer(sessions):
             db.add(output)
             await db.flush()
             await AgentRunRepository(db).set_output_message(run.id, output.id, worker_id="owner")
-            settled = await runs.settle_checkpoint(
-                db=db, run=run, worker_id="owner", status="completed", token_usage=None
-            )
+            settled = await runs.settle_checkpoint(db=db, run=run, worker_id="owner", status="completed", token_usage=None)
             assert settled.status == "completed"
             await db.commit()
             return output.id
@@ -598,9 +575,7 @@ async def test_http_steer_has_no_target_or_effective_mode_and_keeps_scope(sessio
         body["events"][0]["yuxi"]["turn_id"] = "stale-turn"
         assert (await client.post(url, headers={"Idempotency-Key": "http-stale"}, json=body)).status_code == 422
         del body["events"][0]["yuxi"]["turn_id"]
-        app.dependency_overrides[require_public_context] = lambda: SimpleNamespace(
-            scope=ActorScope(uid="another-user", app_id=None)
-        )
+        app.dependency_overrides[require_public_context] = lambda: SimpleNamespace(scope=ActorScope(uid="another-user", app_id=None))
         assert (await client.post(url, headers={"Idempotency-Key": "http-spoof"}, json=body)).status_code == 404
     async with sessions() as db:
         persisted = await db.get(AgentInput, accepted["input_id"])

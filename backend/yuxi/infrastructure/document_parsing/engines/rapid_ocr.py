@@ -77,8 +77,8 @@ class RapidOCRParser(DocumentEngine):
                 if result.txts:
                     text = "\n".join(result.txts)
                     logger.info(
-                        f"RapidOCR 成功: {os.path.basename(image_path) if isinstance(image, str) else 'temp_image'}"
-                        f" ({processing_time:.2f}s)"
+                        f"RapidOCR 成功: {os.path.basename(image_path) if isinstance(image, str) else 'temp_image'} "
+                        f"({processing_time:.2f}s)"
                     )
                     return text
                 else:

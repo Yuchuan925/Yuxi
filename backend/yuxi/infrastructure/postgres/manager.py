@@ -32,10 +32,7 @@ class PostgresManager(metaclass=SingletonMeta):
 
         db_url = os.getenv(self.KB_DATABASE_URL_ENV)
         if not db_url:
-            logger.error(
-                f"环境变量 {self.KB_DATABASE_URL_ENV} 未设置，"
-                "请在 docker-compose.yml 或 .env 中配置 PostgreSQL 连接字符串"
-            )
+            logger.error(f"环境变量 {self.KB_DATABASE_URL_ENV} 未设置，请在 docker-compose.yml 或 .env 中配置 PostgreSQL 连接字符串")
             return
 
         try:

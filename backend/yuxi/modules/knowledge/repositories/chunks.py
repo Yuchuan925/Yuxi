@@ -108,8 +108,7 @@ class KnowledgeChunkRepository:
                     select(KnowledgeChunk)
                     .join(
                         KnowledgeFile,
-                        (KnowledgeFile.file_id == KnowledgeChunk.file_id)
-                        & (KnowledgeFile.kb_id == KnowledgeChunk.kb_id),
+                        (KnowledgeFile.file_id == KnowledgeChunk.file_id) & (KnowledgeFile.kb_id == KnowledgeChunk.kb_id),
                     )
                     .where(
                         KnowledgeChunk.chunk_id.in_(batch),
@@ -124,9 +123,7 @@ class KnowledgeChunkRepository:
         if not chunks:
             return []
 
-        sanitized_chunks = [
-            {key: value for key, value in chunk.items() if key in self._writable_fields} for chunk in chunks
-        ]
+        sanitized_chunks = [{key: value for key, value in chunk.items() if key in self._writable_fields} for chunk in chunks]
         chunk_ids = [chunk["chunk_id"] for chunk in sanitized_chunks]
 
         async with pg_manager.get_async_session_context() as session:
@@ -177,9 +174,7 @@ class KnowledgeChunkRepository:
         async with pg_manager.get_async_session_context() as session:
             rows = (
                 await session.execute(
-                    select(status, func.count())
-                    .where(KnowledgeChunk.kb_id == kb_id, self.visible_scope())
-                    .group_by(status)
+                    select(status, func.count()).where(KnowledgeChunk.kb_id == kb_id, self.visible_scope()).group_by(status)
                 )
             ).all()
         for value, count in rows:
@@ -234,9 +229,7 @@ class KnowledgeChunkRepository:
     async def _count_by_kb_id(self, kb_id: str, *conditions: Any) -> int:
         async with pg_manager.get_async_session_context() as session:
             result = await session.execute(
-                select(func.count())
-                .select_from(KnowledgeChunk)
-                .where(KnowledgeChunk.kb_id == kb_id, self.visible_scope(), *conditions)
+                select(func.count()).select_from(KnowledgeChunk).where(KnowledgeChunk.kb_id == kb_id, self.visible_scope(), *conditions)
             )
             return int(result.scalar() or 0)
 
@@ -321,9 +314,7 @@ class KnowledgeChunkRepository:
     async def mark_graph_structure_indexed(self, chunk_id: str, ent_ids: list[str]) -> None:
         async with pg_manager.get_async_session_context() as session:
             await session.execute(
-                update(KnowledgeChunk)
-                .where(KnowledgeChunk.chunk_id == chunk_id)
-                .values(graph_structure_indexed=True, ent_ids=ent_ids)
+                update(KnowledgeChunk).where(KnowledgeChunk.chunk_id == chunk_id).values(graph_structure_indexed=True, ent_ids=ent_ids)
             )
 
     async def reset_graph_state_by_kb_id(self, kb_id: str, clear_extraction_result: bool) -> int:

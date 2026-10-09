@@ -94,9 +94,7 @@ def _docx_heading_tree(markdown_content: str) -> list[str]:
     return [element for element in root.get_tree() if element]
 
 
-def _ensure_chunk_token_limit(
-    chunks: list[str], chunk_token_num: int, delimiter: str, overlapped_percent: int
-) -> list[str]:
+def _ensure_chunk_token_limit(chunks: list[str], chunk_token_num: int, delimiter: str, overlapped_percent: int) -> list[str]:
     """
     对输出 chunk 做 token 上限保护：
     1) 先尝试按行用 naive_merge 再切一次；

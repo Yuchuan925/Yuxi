@@ -198,8 +198,6 @@ async def test_ensure_default_agent_backfills_missing_description(monkeypatch):
     db.refresh.assert_awaited_once_with(agent)
 
 
-
-
 @pytest.mark.asyncio
 async def test_ensure_preset_is_idempotent(monkeypatch):
     db = FakeDb()
@@ -305,9 +303,7 @@ async def test_share_private_agent_updates_same_definition(role, owner):
     user = User(uid="manager", role=role, user_kind="human", is_deleted=0)
     db.scalar = AsyncMock(side_effect=[agent, user])
 
-    updated = await AgentRepository(db).update(
-        agent, visibility="shared", share_config=DEFAULT_SHARE_CONFIG, updater=user
-    )
+    updated = await AgentRepository(db).update(agent, visibility="shared", share_config=DEFAULT_SHARE_CONFIG, updater=user)
 
     assert updated is agent
     assert (agent.id, agent.slug, agent.created_by, agent.visibility) == (1, "shared-bot", owner, "shared")
@@ -350,9 +346,7 @@ def test_resource_write_rejects_invalid_selection(field, invalid):
 def test_all_selection_is_not_a_previous_reference_list():
     """all 不授予新增不可见引用的权限。"""
     with pytest.raises(ValueError, match="无权新增"):
-        merge_agent_config_json(
-            {"context": {"skills": "all"}}, {"context": {"skills": ["a"]}}, resource_access={"skills": set()}
-        )
+        merge_agent_config_json({"context": {"skills": "all"}}, {"context": {"skills": ["a"]}}, resource_access={"skills": set()})
     merged = merge_agent_config_json(
         {"context": {"skills": "all", "tools": "all"}},
         {"context": {"skills": ["a"]}},

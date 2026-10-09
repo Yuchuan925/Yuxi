@@ -31,12 +31,7 @@ class PublicEventWriter:
         self.events.append(event)
         self.chars += len(event.get("delta", ""))
         is_delta = event["type"].endswith(".delta")
-        if (
-            not is_delta
-            or self.first_output
-            or self.chars >= self.max_chars
-            or time.monotonic() - self.last_flush >= self.interval_seconds
-        ):
+        if not is_delta or self.first_output or self.chars >= self.max_chars or time.monotonic() - self.last_flush >= self.interval_seconds:
             if contains_model_output(event):
                 self.first_output = False
             await self.flush()

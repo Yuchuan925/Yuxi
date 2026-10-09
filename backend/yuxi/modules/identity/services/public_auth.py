@@ -45,9 +45,7 @@ async def verify_api_key(key: str, db: AsyncSession) -> tuple[User | None, APIKe
     return None, None
 
 
-async def resolve_public_user(
-    *, owner: User, api_key: APIKey | None, end_user_id: str | None, db: AsyncSession
-) -> User:
+async def resolve_public_user(*, owner: User, api_key: APIKey | None, end_user_id: str | None, db: AsyncSession) -> User:
     """按产品凭据或 App 凭据解析资源用户并提交终端身份。"""
     if api_key is None:
         if end_user_id is not None:
@@ -64,9 +62,7 @@ async def resolve_public_user(
     if not identity or identity != identity.strip() or len(identity) > 128:
         raise InvalidEndUserId("X-End-User-Id 必须为 1 至 128 个无首尾空白的字符")
 
-    user = await UserRepository(db).get_or_create_public_end_user(
-        owner=owner, app_id=api_key.app_id, end_user_id=identity
-    )
+    user = await UserRepository(db).get_or_create_public_end_user(owner=owner, app_id=api_key.app_id, end_user_id=identity)
     if user.is_deleted:
         raise PublicIdentityDenied("终端用户已停用")
     await db.commit()

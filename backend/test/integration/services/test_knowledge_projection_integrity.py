@@ -107,14 +107,10 @@ async def test_new_generation_isolates_old_tail_and_cleanup_bounds_generation_re
             },
         ]
     )
-    await repo.finish_index_generation(
-        kb_id="kb-test", file_id="file-test", generation=current, chunk_count=1, token_count=2
-    )
+    await repo.finish_index_generation(kb_id="kb-test", file_id="file-test", generation=current, chunk_count=1, token_count=2)
     assert [item.content for item in await KnowledgeChunkRepository().list_by_file_id("file-test")] == ["current"]
     with pytest.raises(ValueError, match="owner"):
-        await repo.finish_index_generation(
-            kb_id="kb-test", file_id="file-test", generation=first, chunk_count=2, token_count=3
-        )
+        await repo.finish_index_generation(kb_id="kb-test", file_id="file-test", generation=first, chunk_count=2, token_count=3)
 
     async def delete_chunks(kb_id, file_id, generation):
         """此例核对 PG 最终事实；真实 Milvus 清理由 E2E 覆盖。"""
@@ -141,9 +137,7 @@ async def test_deleted_database_rejects_activation_and_new_files(database):
     generation = await repo.begin_index_generation(kb_id="kb-test", file_id="file-test")
     await repo.mark_deleted_by_kb_id("kb-test")
     with pytest.raises(ValueError, match="deleted"):
-        await repo.finish_index_generation(
-            kb_id="kb-test", file_id="file-test", generation=generation, chunk_count=1, token_count=2
-        )
+        await repo.finish_index_generation(kb_id="kb-test", file_id="file-test", generation=generation, chunk_count=1, token_count=2)
     with pytest.raises(ValueError, match="deleted"):
         await repo.upsert("new-file", {"kb_id": "kb-test", "filename": "new.md"})
     assert await repo.get_by_file_id("file-test") is None
@@ -268,9 +262,7 @@ async def test_cleanup_waits_for_late_index_write_before_marking_applied(databas
     monkeypatch.setattr(
         background_jobs.knowledge_base,
         "get_cleanup_executor",
-        AsyncMock(
-            return_value=SimpleNamespace(delete_file_chunks_only=delete_chunks, cleanup_file_resources=AsyncMock())
-        ),
+        AsyncMock(return_value=SimpleNamespace(delete_file_chunks_only=delete_chunks, cleanup_file_resources=AsyncMock())),
     )
     writer = asyncio.create_task(kb.index_file("kb-test", "file-test"))
     cleaner = None
@@ -284,7 +276,8 @@ async def test_cleanup_waits_for_late_index_write_before_marking_applied(databas
                 async with database() as session:
                     waiting = await session.scalar(
                         text(
-                            "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype='advisory' AND NOT granted AND objid=((hashtextextended('knowledge-projection:kb-test',0) & 4294967295)::oid))"
+                            "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype='advisory' AND NOT granted AND "
+                            "objid=((hashtextextended('knowledge-projection:kb-test',0) & 4294967295)::oid))"
                         )
                     )
                     assert await session.scalar(select(KnowledgeProjectionOutbox.status)) == "pending"
@@ -351,9 +344,7 @@ async def test_http_delete_does_not_remove_original_before_tombstone_commit(data
     monkeypatch.setattr(knowledge_router, "_ensure_database_supports_documents", AsyncMock())
     app = FastAPI()
     app.include_router(knowledge_router.knowledge, prefix="/api")
-    app.dependency_overrides[knowledge_router.require_knowledge_base_manage] = lambda: SimpleNamespace(
-        role="superadmin"
-    )
+    app.dependency_overrides[knowledge_router.require_knowledge_base_manage] = lambda: SimpleNamespace(role="superadmin")
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         response = await client.request(
             "DELETE",
@@ -421,9 +412,7 @@ async def test_graph_pending_candidates_and_counts_use_only_visible_active_gener
     chunks = KnowledgeChunkRepository()
     assert [c.chunk_id for c in await chunks.list_graph_pending_by_kb_id("kb-test", 10)] == ["old"]
     assert await chunks.count_graph_pending_by_kb_id("kb-test") == 1
-    await repo.finish_index_generation(
-        kb_id="kb-test", file_id="file-test", generation=generation, chunk_count=1, token_count=1
-    )
+    await repo.finish_index_generation(kb_id="kb-test", file_id="file-test", generation=generation, chunk_count=1, token_count=1)
     assert [c.chunk_id for c in await chunks.list_graph_pending_by_kb_id("kb-test", 10)] == ["current"]
     assert await chunks.count_by_kb_id("kb-test") == 1
     await repo.mark_deleted(kb_id="kb-test", file_id="file-test")
@@ -473,9 +462,7 @@ async def test_graph_parallel_vector_cancel_drains_both_branches_before_cleanup(
         count_graph_indexed_by_kb_id=AsyncMock(return_value=0),
         list_graph_pending_by_kb_id=AsyncMock(return_value=[]),
     )
-    service = MilvusGraphService(
-        chunk_repo=chunks, graph_repo=graph_repo, graph_vector_store=SimpleNamespace(upsert_graph_records=upsert)
-    )
+    service = MilvusGraphService(chunk_repo=chunks, graph_repo=graph_repo, graph_vector_store=SimpleNamespace(upsert_graph_records=upsert))
     monkeypatch.setattr(
         service,
         "_get_milvus_kb",

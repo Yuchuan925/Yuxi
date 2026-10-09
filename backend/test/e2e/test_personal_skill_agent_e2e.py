@@ -67,8 +67,7 @@ async def test_main_agent_reads_personal_skill_directly_from_user_workspace(
         default_context = ((default_response.json().get("agent") or {}).get("config_json") or {}).get("context") or {}
         context: dict[str, Any] = {
             "system_prompt": (
-                f"收到请求后从可用 Skills 中找到 {slug} 并读取其 SKILL.md，"
-                "然后严格遵循其中的 Verification 指令，不要添加解释。"
+                f"收到请求后从可用 Skills 中找到 {slug} 并读取其 SKILL.md，然后严格遵循其中的 Verification 指令，不要添加解释。"
             ),
             "tools": [],
             "knowledges": [],
@@ -135,10 +134,7 @@ async def test_main_agent_reads_personal_skill_directly_from_user_workspace(
             """观察本 Run 的模型增量直到同一 Turn 终态。"""
             message_events = 0
             async for event in iter_public_thread_events(e2e_client, e2e_headers, thread_id):
-                if (
-                    event.get("yuxi", {}).get("run_id") == run_id
-                    and event["type"] == "agent.session.turn.output_text.delta"
-                ):
+                if event.get("yuxi", {}).get("run_id") == run_id and event["type"] == "agent.session.turn.output_text.delta":
                     message_events += 1
                 if event.get("turn_id") == turn_id and event["type"] in {
                     "agent.session.turn.completed",
@@ -150,9 +146,7 @@ async def test_main_agent_reads_personal_skill_directly_from_user_workspace(
 
         event_count = await asyncio.wait_for(consume_output(), timeout=RUN_TIMEOUT_SECONDS)
         assert event_count > 0, event_count
-        turn_response = await e2e_client.get(
-            f"/api/v1/agents/sessions/{thread_id}/turns/{turn_id}", headers=e2e_headers
-        )
+        turn_response = await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/turns/{turn_id}", headers=e2e_headers)
         assert turn_response.status_code == 200, turn_response.text
         turn = turn_response.json()
         if turn["status"] != "completed":

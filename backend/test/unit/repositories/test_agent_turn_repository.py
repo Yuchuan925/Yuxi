@@ -28,9 +28,7 @@ async def session():
 
 async def test_usage_includes_bound_final_output_across_runs_but_excludes_unbound_text(session):
     """最终 Model 行发布为 text 后仍计费，旁路 text 不能伪装为输出。"""
-    agent_session = Session(
-        thread_id="usage-thread", project_id="usage-project", uid="user-1", agent_id="main", status="active"
-    )
+    agent_session = Session(thread_id="usage-thread", project_id="usage-project", uid="user-1", agent_id="main", status="active")
     session.add(agent_session)
     await session.flush()
     turn = AgentTurn(id="usage-turn", thread_id="usage-thread", uid="user-1", status="completed")
@@ -137,12 +135,17 @@ async def test_usage_includes_bound_final_output_across_runs_but_excludes_unboun
 
 async def test_usage_includes_child_run_final_model_output_but_not_child_unbound_text(session):
     """父子 Turn 分别计量，子结果不得进入父 Turn 的输出与用量。"""
-    parent_session = Session(
-        thread_id="parent-thread", project_id="usage-project", uid="user-1", agent_id="main", status="active"
-    )
+    parent_session = Session(thread_id="parent-thread", project_id="usage-project", uid="user-1", agent_id="main", status="active")
     child_session = Session(
-        thread_id="child-thread", project_id="usage-project", uid="user-1", agent_id="main", status="active", tree_root_thread_id="parent-thread",
-        parent_thread_id="parent-thread", cooperation_name="child", cooperation_path="/root/child"
+        thread_id="child-thread",
+        project_id="usage-project",
+        uid="user-1",
+        agent_id="main",
+        status="active",
+        tree_root_thread_id="parent-thread",
+        parent_thread_id="parent-thread",
+        cooperation_name="child",
+        cooperation_path="/root/child",
     )
     session.add_all([parent_session, child_session])
     await session.flush()

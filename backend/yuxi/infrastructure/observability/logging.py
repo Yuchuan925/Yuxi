@@ -71,12 +71,7 @@ def setup_logger(name, level="DEBUG", console=True):
         loguru_logger.add(
             sys.stderr,
             level=level,
-            format=(
-                "<green>{time:MM-DD HH:mm:ss}</green> "
-                "<level>{level}</level> "
-                "<cyan>{file}:{line}</cyan>: "
-                "<level>{message}</level>"
-            ),
+            format=("<green>{time:MM-DD HH:mm:ss}</green> <level>{level}</level> <cyan>{file}:{line}</cyan>: <level>{message}</level>"),
             colorize=True,
             enqueue=True,
         )

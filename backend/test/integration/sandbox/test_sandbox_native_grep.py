@@ -78,9 +78,7 @@ async def test_native_grep_http_and_model_tool(monkeypatch):
             backend=CompositeBackend(default=backend, routes={}, artifacts_root=f"{user_root}/outputs")
         )
         tool = next(tool for tool in middleware.tools if tool.name == "grep")
-        runtime = ToolRuntime(
-            state={}, context=None, config={}, stream_writer=lambda _: None, tool_call_id="grep-probe", store=None
-        )
+        runtime = ToolRuntime(state={}, context=None, config={}, stream_writer=lambda _: None, tool_call_id="grep-probe", store=None)
         message = await tool.coroutine(pattern="PEARL", output_mode="content", max_count=1, runtime=runtime)
         assert message.status == "success"
         assert "PEARL" in message.content and "note:one.txt" in message.content

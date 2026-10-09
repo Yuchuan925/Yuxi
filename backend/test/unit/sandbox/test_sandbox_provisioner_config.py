@@ -285,16 +285,12 @@ def test_sandbox_container_limits_defaults_and_environment_overrides(monkeypatch
         ("2g", "2", "many", "SANDBOX_PIDS_LIMIT"),
     ],
 )
-def test_sandbox_container_limits_reject_invalid_configuration(
-    mem_limit, cpus, pids_limit, error_match
-):
+def test_sandbox_container_limits_reject_invalid_configuration(mem_limit, cpus, pids_limit, error_match):
     """非法上限显式失败，不回退到默认值；每个案例覆盖一条守卫路径。"""
     module = _load_module()
 
     with pytest.raises(RuntimeError, match=error_match):
-        module.sandbox_container_limits(
-            mem_limit=mem_limit, cpus=cpus, pids_limit=pids_limit
-        )
+        module.sandbox_container_limits(mem_limit=mem_limit, cpus=cpus, pids_limit=pids_limit)
 
 
 def test_sandbox_container_limits_reject_invalid_environment_at_startup(monkeypatch):
@@ -314,9 +310,7 @@ def test_docker_backend_init_fails_on_invalid_container_limits(monkeypatch):
     errors_module.DockerException = type("DockerException", (Exception,), {})
     docker_module = ModuleType("docker")
     docker_module.errors = errors_module
-    docker_module.from_env = lambda: pytest.fail(
-        "docker client was created before container limits were validated"
-    )
+    docker_module.from_env = lambda: pytest.fail("docker client was created before container limits were validated")
     monkeypatch.setitem(sys.modules, "docker", docker_module)
     monkeypatch.setitem(sys.modules, "docker.errors", errors_module)
 
@@ -324,13 +318,9 @@ def test_docker_backend_init_fails_on_invalid_container_limits(monkeypatch):
         module.LocalContainerProvisionerBackend()
 
 
-def test_docker_create_applies_resource_limits_to_sandbox_container(
-    monkeypatch, tmp_path
-):
+def test_docker_create_applies_resource_limits_to_sandbox_container(monkeypatch, tmp_path):
     monkeypatch.setenv("PROVISIONER_BACKEND", "memory")
-    _module, backend, captured = _docker_backend_with_running_container(
-        monkeypatch, tmp_path
-    )
+    _module, backend, captured = _docker_backend_with_running_container(monkeypatch, tmp_path)
 
     backend.create("sandbox-1", "thread-1", "user-1")
 
@@ -463,9 +453,7 @@ def test_docker_host_paths_require_explicit_storage_mounts(monkeypatch):
 
     backend._user_data_host_path = None
     backend._skill_projections_host_path = None
-    backend._client.api.inspect_container = lambda _container_id: {
-        "Mounts": [{"Destination": "/app/saves", "Source": "/host/legacy"}]
-    }
+    backend._client.api.inspect_container = lambda _container_id: {"Mounts": [{"Destination": "/app/saves", "Source": "/host/legacy"}]}
     with pytest.raises(RuntimeError, match="explicit UserWorkspace/Skill"):
         backend._resolve_host_paths()
 
@@ -508,9 +496,7 @@ def test_memory_backend_concurrent_get_or_create_returns_one_generation(monkeypa
     assert records[0].workdir_path == "projects/11111111-1111-4111-8111-111111111111"
 
     with pytest.raises(ValueError, match="does not match"):
-        backend.create(
-            "sandbox-shared", "root-thread", "user-1", workdir_path="projects/22222222-2222-4222-8222-222222222222"
-        )
+        backend.create("sandbox-shared", "root-thread", "user-1", workdir_path="projects/22222222-2222-4222-8222-222222222222")
 
     with pytest.raises(module.SandboxGenerationMismatchError, match="generation"):
         backend.delete("sandbox-shared", expected_generation="stale-generation")
@@ -612,15 +598,11 @@ def test_docker_mount_checks_reject_uploads_and_outputs_mounts(monkeypatch, tmp_
     assert backend._is_expected_skills_mount(container, "user-1") is False
     container.attrs["Mounts"][1]["RW"] = False
 
-    container.attrs["Mounts"].append(
-        {"Destination": "/home/gem/user-data/outputs", "Source": str(tmp_path / "legacy-outputs")}
-    )
+    container.attrs["Mounts"].append({"Destination": "/home/gem/user-data/outputs", "Source": str(tmp_path / "legacy-outputs")})
     assert backend._has_expected_user_data_mounts(container, "user-1") is False
     container.attrs["Mounts"].pop()
 
-    container.attrs["Mounts"].append(
-        {"Destination": "/home/gem/user-data/uploads", "Source": str(tmp_path / "legacy-uploads")}
-    )
+    container.attrs["Mounts"].append({"Destination": "/home/gem/user-data/uploads", "Source": str(tmp_path / "legacy-uploads")})
     assert backend._has_expected_user_data_mounts(container, "user-1") is False
 
 
@@ -645,9 +627,7 @@ def test_docker_project_workdir_contract_mounts_shared_posix_roots(monkeypatch, 
 
     workdir = tmp_path / "shared" / "user-1" / "workspace" / "projects" / "11111111-1111-4111-8111-111111111111"
     workdir.mkdir(parents=True)
-    record = backend.create(
-        "sandbox-project", "root-thread", "user-1", workdir_path="projects/11111111-1111-4111-8111-111111111111"
-    )
+    record = backend.create("sandbox-project", "root-thread", "user-1", workdir_path="projects/11111111-1111-4111-8111-111111111111")
 
     run_kwargs = captured[0][1]
     destinations = {mount["bind"] for mount in run_kwargs["volumes"].values()}
@@ -698,9 +678,7 @@ def test_docker_rejects_rebinding_existing_runtime_to_another_workdir(monkeypatc
     monkeypatch.setattr(backend, "_get_container", lambda _sandbox_id: FakeContainer())
 
     with pytest.raises(ValueError, match="workdir identity"):
-        backend.create(
-            "sandbox-project", "root-thread", "user-1", workdir_path="projects/22222222-2222-4222-8222-222222222222"
-        )
+        backend.create("sandbox-project", "root-thread", "user-1", workdir_path="projects/22222222-2222-4222-8222-222222222222")
 
 
 def test_kubernetes_mount_check_rejects_uploads_and_outputs_mounts(monkeypatch):
@@ -1275,9 +1253,7 @@ def test_kubernetes_rejects_rebinding_existing_runtime_to_another_workdir(monkey
     monkeypatch.setattr(backend, "delete", lambda *_args, **_kwargs: pytest.fail("sandbox was deleted"))
 
     with pytest.raises(ValueError, match="identity does not match"):
-        backend.create(
-            "sandbox-1", "root-thread", "user-1", workdir_path="projects/22222222-2222-4222-8222-222222222222"
-        )
+        backend.create("sandbox-1", "root-thread", "user-1", workdir_path="projects/22222222-2222-4222-8222-222222222222")
 
 
 def test_kubernetes_pod_conflict_is_revalidated_before_creating_service(monkeypatch):
@@ -1316,9 +1292,7 @@ def test_kubernetes_pod_conflict_is_revalidated_before_creating_service(monkeypa
     backend._discovered_matches_request = lambda *_args, **_kwargs: False
 
     with pytest.raises(ValueError, match="identity does not match"):
-        backend.create(
-            "sandbox-1", "root-thread", "user-1", workdir_path="projects/22222222-2222-4222-8222-222222222222"
-        )
+        backend.create("sandbox-1", "root-thread", "user-1", workdir_path="projects/22222222-2222-4222-8222-222222222222")
 
 
 def test_kubernetes_delete_uses_uid_generation_precondition(monkeypatch):
@@ -1528,9 +1502,7 @@ def test_docker_backend_reports_dedicated_address_pool_exhaustion():
     backend = object.__new__(module.LocalContainerProvisionerBackend)
     backend._network_pool = (module.ipaddress.ip_network("10.253.240.0/29"), 29)
     backend._client = SimpleNamespace(
-        networks=SimpleNamespace(
-            list=lambda: [SimpleNamespace(attrs={"IPAM": {"Config": [{"Subnet": "10.253.240.0/29"}]}})]
-        )
+        networks=SimpleNamespace(list=lambda: [SimpleNamespace(attrs={"IPAM": {"Config": [{"Subnet": "10.253.240.0/29"}]}})])
     )
 
     with pytest.raises(module.SandboxCapacityError, match="has no available /29 subnet"):
@@ -1607,9 +1579,7 @@ def test_docker_backend_deletes_distinct_sandboxes_with_bounded_parallelism():
             assert v is True
             assert force is True
 
-    containers = {
-        sandbox_id: FakeContainer(sandbox_id) for sandbox_id in ("sandbox-1", "sandbox-2", "sandbox-3", "sandbox-4")
-    }
+    containers = {sandbox_id: FakeContainer(sandbox_id) for sandbox_id in ("sandbox-1", "sandbox-2", "sandbox-3", "sandbox-4")}
     backend._get_container = containers.get
     deleted_networks = []
     backend._delete_network = deleted_networks.append

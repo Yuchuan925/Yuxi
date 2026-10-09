@@ -43,9 +43,7 @@ async def _seed_agent(session):
         share_config={"version": 2, "read_scope": {"access_level": "global"}, "manage_scope": None},
         created_by=user.uid,
     )
-    thread = Session(
-        thread_id="agent-thread", project_id="agent-project", uid=user.uid, agent_id=agent.slug, status="active"
-    )
+    thread = Session(thread_id="agent-thread", project_id="agent-project", uid=user.uid, agent_id=agent.slug, status="active")
     session.add_all([user, agent, thread])
     await session.flush()
     return user, agent, thread

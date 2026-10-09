@@ -176,11 +176,7 @@ class AgentTurnRepository:
             position = tuple_(AgentTurn.created_at, AgentTurn.id)
             boundary = tuple_(cursor.created_at, cursor.id)
             statement = statement.where(position > boundary if order == "asc" else position < boundary)
-        sorting = (
-            (AgentTurn.created_at.asc(), AgentTurn.id.asc())
-            if order == "asc"
-            else (AgentTurn.created_at.desc(), AgentTurn.id.desc())
-        )
+        sorting = (AgentTurn.created_at.asc(), AgentTurn.id.asc()) if order == "asc" else (AgentTurn.created_at.desc(), AgentTurn.id.desc())
         return list((await self.db.execute(statement.order_by(*sorting).limit(limit + 1))).all())
 
     async def set_current(self, turn: AgentTurn, *, run_id: str) -> AgentTurn:
@@ -245,9 +241,7 @@ class AgentTurnRepository:
 
     async def list_runs(self, turn_id: str) -> list[AgentRun]:
         """只读取明确绑定的顶层执行段。"""
-        result = await self.db.execute(
-            select(AgentRun).where(AgentRun.turn_id == turn_id).order_by(AgentRun.execution_seq, AgentRun.id)
-        )
+        result = await self.db.execute(select(AgentRun).where(AgentRun.turn_id == turn_id).order_by(AgentRun.execution_seq, AgentRun.id))
         return list(result.scalars())
 
     async def list_model_usage_audits(self, turn_id: str) -> list[Message]:

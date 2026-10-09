@@ -70,10 +70,7 @@ def describe_table(table_name: str) -> str:
                 extra_str = col.get("Extra") or ""
                 comment_str = column_comments.get(field, "")
 
-                result += (
-                    f"{field:<16}\t{type_str:<16}\t{null_str:<8}\t{key_str:<4}\t"
-                    f"{default_str:<16}\t{extra_str:<16}\t{comment_str}\n"
-                )
+                result += f"{field:<16}\t{type_str:<16}\t{null_str:<8}\t{key_str:<4}\t{default_str:<16}\t{extra_str:<16}\t{comment_str}\n"
 
             try:
                 cursor.execute(f"SHOW INDEX FROM `{table_name}`")

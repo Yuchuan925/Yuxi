@@ -89,9 +89,7 @@ def make_model(monkeypatch, provider, field="reasoning_content", *, enabled=True
                 text="".join(f"data: {json.dumps(e)}\n\n" for e in events) + "data: [DONE]\n\n",
                 headers={"content-type": "text/event-stream"},
             )
-        return httpx.Response(
-            200, json={**base, "choices": [{"index": 0, "message": message, "finish_reason": finish}]}
-        )
+        return httpx.Response(200, json={**base, "choices": [{"index": 0, "message": message, "finish_reason": finish}]})
 
     info = ModelInfo(provider, "test", "chat", "Test", "test-key", "https://example.com/v1", "openai")
     monkeypatch.setattr("yuxi.modules.models.chat.model_cache.get_model_info", lambda _: info)
@@ -169,9 +167,7 @@ async def test_real_v3_reasoning_projection_and_checkpoint(monkeypatch):
             emitted.extend(await adapter.consume(event))
     assert "".join(e["delta"] for e in emitted if e["type"] == "yuxi.session.turn.reasoning.delta") == REASONING
     assert any(
-        e["type"] == "agent.session.turn.item.added"
-        and e["item"]["type"] == "function_call"
-        and e["item"]["call_id"] == "call-test"
+        e["type"] == "agent.session.turn.item.added" and e["item"]["type"] == "function_call" and e["item"]["call_id"] == "call-test"
         for e in emitted
     )
     state = await compiled.aget_state(config)

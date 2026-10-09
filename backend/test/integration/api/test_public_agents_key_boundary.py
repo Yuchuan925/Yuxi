@@ -140,9 +140,7 @@ async def test_agents_key_cannot_use_product_routes_or_spoof_source(test_client,
         conn = await asyncpg.connect(os.environ["POSTGRES_URL"].replace("+asyncpg", ""))
         try:
             stored = await conn.fetchrow(
-                "UPDATE sessions SET extra_metadata = "
-                "jsonb_set(extra_metadata::jsonb, '{app_id}', to_jsonb($1::text))::json "
-                "WHERE thread_id = $2 RETURNING app_id, extra_metadata",
+                "UPDATE sessions SET extra_metadata = jsonb_set(extra_metadata::jsonb, '{app_id}', to_jsonb($1::text))::json WHERE thread_id = $2 RETURNING app_id, extra_metadata",
                 "integration-app",
                 product_thread_id,
             )
@@ -176,9 +174,7 @@ async def test_agents_key_cannot_use_product_routes_or_spoof_source(test_client,
             conflict = await test_client.post("/api/user/apikey/", json={**payload, **changed}, headers=admin_headers)
             assert conflict.status_code == 409, conflict.text
 
-        widened = await test_client.put(
-            f"/api/user/apikey/{key_id}", json={"access_level": "full"}, headers=admin_headers
-        )
+        widened = await test_client.put(f"/api/user/apikey/{key_id}", json={"access_level": "full"}, headers=admin_headers)
         assert widened.status_code == 200, widened.text
         restored = await test_client.get("/api/agent", headers=headers)
         assert restored.status_code == 200, restored.text

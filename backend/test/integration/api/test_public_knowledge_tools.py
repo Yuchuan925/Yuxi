@@ -116,9 +116,7 @@ async def test_jwt_can_call_five_read_only_knowledge_tools(test_client, admin_he
         assert response.status_code == expected, (name, response.text)
 
 
-async def test_document_tools_return_persisted_results(
-    test_client, admin_headers, knowledge_database, readable_knowledge_tool_data
-):
+async def test_document_tools_return_persisted_results(test_client, admin_headers, knowledge_database, readable_knowledge_tool_data):
     """保留的文档工具经真实 HTTP 回读 PostgreSQL 和 MinIO 文档内容。"""
     kb_id = knowledge_database["kb_id"]
     file_id = readable_knowledge_tool_data
@@ -188,7 +186,7 @@ async def test_knowledge_key_can_call_tools_but_not_unlisted_operations(test_cli
         assert queried.status_code == 200, queried.text
 
         for name, payload, expected in (
-                ("open_kb_document", {"kb_id": kb_id, "file_id": "missing-file"}, 400),
+            ("open_kb_document", {"kb_id": kb_id, "file_id": "missing-file"}, 400),
             ("find_kb_document", {"kb_id": kb_id, "file_id": "missing-file", "patterns": ["hello"]}, 400),
             ("search_file", {"query": "missing-needle"}, 200),
         ):

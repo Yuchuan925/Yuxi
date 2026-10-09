@@ -177,11 +177,7 @@ class FakeKnowledgeFileRepository:
 
     async def list_active_generations(self, kb_id):
         """提供实际 Repository 的可见代次接口。"""
-        return [
-            (file_id, row.active_generation)
-            for file_id, row in self.records.items()
-            if row.kb_id == kb_id and row.deleted_at is None
-        ]
+        return [(file_id, row.active_generation) for file_id, row in self.records.items() if row.kb_id == kb_id and row.deleted_at is None]
 
     async def get_chunk_sources_by_file_ids(self, *, kb_id: str, file_ids: list[str]):
         return {
@@ -224,9 +220,7 @@ def patch_chunk_records(monkeypatch, records):
     repository = types.SimpleNamespace(
         list_by_chunk_ids=AsyncMock(
             return_value=[
-                types.SimpleNamespace(
-                    kb_id="db", generation=1, chunk_index=0, **{"start_line": None, "end_line": None, **record}
-                )
+                types.SimpleNamespace(kb_id="db", generation=1, chunk_index=0, **{"start_line": None, "end_line": None, **record})
                 for record in records
             ]
         )
@@ -461,9 +455,7 @@ async def test_index_file_persists_chunk_stats(monkeypatch):
 async def test_cancellation_marks_file_retryable(monkeypatch, operation, expected_status, expected_message):
     kb = MilvusKB.__new__(MilvusKB)
     if operation == "parse":
-        file_repo = FakeKnowledgeFileRepository(
-            {"file-1": make_file_record(markdown_file=None, status=FileStatus.UPLOADED)}
-        )
+        file_repo = FakeKnowledgeFileRepository({"file-1": make_file_record(markdown_file=None, status=FileStatus.UPLOADED)})
         patch_file_repository(monkeypatch, file_repo)
         started = asyncio.Event()
 
@@ -539,9 +531,7 @@ async def test_delete_file_chunks_only_resets_file_stats(monkeypatch):
             return 2
 
     monkeypatch.setattr("yuxi.modules.knowledge.implementations.milvus.KnowledgeChunkRepository", FakeChunkRepo)
-    file_repo = FakeKnowledgeFileRepository(
-        {"file-1": make_file_record(chunk_count=2, token_count=10, status=FileStatus.INDEXED)}
-    )
+    file_repo = FakeKnowledgeFileRepository({"file-1": make_file_record(chunk_count=2, token_count=10, status=FileStatus.INDEXED)})
     patch_file_repository(monkeypatch, file_repo)
     kb = MilvusKB.__new__(MilvusKB)
 
@@ -866,9 +856,7 @@ async def test_graph_retrieval_limits_reach_query_executors(monkeypatch, exceeds
         search_triples=AsyncMock(return_value=[]),
     )
     graph_service = types.SimpleNamespace(query_and_rank_chunks_by_ppr=AsyncMock(return_value=[("chunk-1", 0.5)]))
-    monkeypatch.setattr(
-        "yuxi.modules.knowledge.graphs.milvus_graph_vector_store.MilvusGraphVectorStore", lambda: vector_store
-    )
+    monkeypatch.setattr("yuxi.modules.knowledge.graphs.milvus_graph_vector_store.MilvusGraphVectorStore", lambda: vector_store)
     monkeypatch.setattr("yuxi.modules.knowledge.graphs.milvus_graph_service.MilvusGraphService", lambda: graph_service)
     chunk = types.SimpleNamespace(chunk_id="chunk-1", file_id="file-1", chunk_index=0, content="graph result")
     repository = types.SimpleNamespace(list_by_chunk_ids=AsyncMock(return_value=[chunk]))
@@ -1114,9 +1102,7 @@ async def test_hydrate_chunk_sources_returns_all_chunks_when_no_orphans(monkeypa
         ("indexed", 1, "", "content_unavailable"),
     ],
 )
-async def test_document_preview_location_requires_matching_index_snapshot(
-    monkeypatch, status, generation, content, reason
-):
+async def test_document_preview_location_requires_matching_index_snapshot(monkeypatch, status, generation, content, reason):
     """完整原文和 Chunk 代次不自洽时，预览不得沿用片段行号高亮。"""
     kb = MilvusKB.__new__(MilvusKB)
     chunk = types.SimpleNamespace(
@@ -1229,9 +1215,7 @@ async def test_cancelled_old_attempt_cleanup_preserves_published_result(monkeypa
     kb = MilvusKB.__new__(MilvusKB)
     previous_url = "http://minio:9000/knowledgebases/db/parsed/file-1/old-attempt/document.md"
     current_url = "http://minio:9000/knowledgebases/db/parsed/file-1/new-attempt/document.md"
-    repository = FakeKnowledgeFileRepository(
-        {"file-1": make_file_record(status=FileStatus.UPLOADED, markdown_file=previous_url)}
-    )
+    repository = FakeKnowledgeFileRepository({"file-1": make_file_record(status=FileStatus.UPLOADED, markdown_file=previous_url)})
     patch_file_repository(monkeypatch, repository)
     monkeypatch.setattr("yuxi.modules.documents.service.parse_to_hosted_markdown", AsyncMock(return_value="text"))
     monkeypatch.setattr(kb, "_save_markdown_to_minio", AsyncMock(return_value=current_url))

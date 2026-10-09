@@ -40,9 +40,7 @@ class DeepSeekOCRParser(DocumentEngine):
 
         self.api_key = api_key or os.getenv("SILICONFLOW_API_KEY")
         if not self.api_key:
-            raise DocumentParserException(
-                "SILICONFLOW_API_KEY environment variable not set", "deepseek_ocr", "missing_api_key"
-            )
+            raise DocumentParserException("SILICONFLOW_API_KEY environment variable not set", "deepseek_ocr", "missing_api_key")
 
         self.api_url = api_url or "https://api.siliconflow.cn/v1/chat/completions"
         self.model = "deepseek-ai/DeepSeek-OCR"
@@ -85,9 +83,7 @@ class DeepSeekOCRParser(DocumentEngine):
 
         file_ext = Path(file_path).suffix.lower()
         if not self.supports_file_type(file_ext):
-            raise DocumentParserException(
-                f"Unsupported file type: {file_ext}", self.get_service_name(), "unsupported_file_type"
-            )
+            raise DocumentParserException(f"Unsupported file type: {file_ext}", self.get_service_name(), "unsupported_file_type")
 
         try:
             start_time = time.time()
@@ -100,9 +96,7 @@ class DeepSeekOCRParser(DocumentEngine):
                 content = self._process_image(file_path, params)
 
             processing_time = time.time() - start_time
-            logger.info(
-                f"DeepSeek OCR finished: {os.path.basename(file_path)} - {len(content)} chars ({processing_time:.2f}s)"
-            )
+            logger.info(f"DeepSeek OCR finished: {os.path.basename(file_path)} - {len(content)} chars ({processing_time:.2f}s)")
 
             return content
 

@@ -309,9 +309,7 @@ def test_create_agent_filesystem_middleware_uses_context_scope(monkeypatch):
         uid="user-1",
     )
 
-    middleware = create_agent_filesystem_middleware(
-        backend=create_agent_composite_backend(context),
-    )
+    middleware = create_agent_filesystem_middleware(backend=create_agent_composite_backend(context))
 
     assert middleware.backend.default._thread_id == "parent-thread"
 
@@ -470,7 +468,7 @@ def test_filesystem_middleware_tool_allowlist_excludes_delete() -> None:
         pass
 
     middleware = create_agent_filesystem_middleware(
-        backend=CompositeBackend(default=_Backend(), routes={}, artifacts_root=f"{WORKDIR_PATH}/outputs"),
+        backend=CompositeBackend(default=_Backend(), routes={}, artifacts_root=f"{WORKDIR_PATH}/outputs")
     )
 
     tool_names = {tool.name for tool in middleware.tools}
@@ -527,8 +525,7 @@ def test_skills_middleware_extracts_slug_for_new_paths() -> None:
     ]
     assert middleware._extract_skill_slug_from_skill_md_path("/home/gem/skills/demo-skill/SKILL.md") == "demo-skill"
     assert (
-        middleware._extract_skill_slug_from_skill_md_path("/home/gem/user-data/agents/skills/personal-skill/SKILL.md")
-        == "personal-skill"
+        middleware._extract_skill_slug_from_skill_md_path("/home/gem/user-data/agents/skills/personal-skill/SKILL.md") == "personal-skill"
     )
 
 
@@ -870,9 +867,7 @@ def test_provisioner_uses_runtime_scope_directly(monkeypatch) -> None:
 
 def test_provisioner_denies_reads_outside_allowed_roots(monkeypatch) -> None:
     monkeypatch.setattr("yuxi.modules.agents.runtime.sandbox.backend.get_sandbox_provider", lambda: object())
-    backend = ProvisionerSandboxBackend(
-        thread_id="thread-1", uid="user-1", workdir_path="projects/11111111-1111-4111-8111-111111111111"
-    )
+    backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1", workdir_path="projects/11111111-1111-4111-8111-111111111111")
 
     result = backend.read("/etc/passwd")
 
@@ -891,9 +886,7 @@ def test_provisioner_rejects_skill_projection_writes(monkeypatch) -> None:
 
 def test_provisioner_allows_project_upload_writes(monkeypatch) -> None:
     monkeypatch.setattr("yuxi.modules.agents.runtime.sandbox.backend.get_sandbox_provider", lambda: object())
-    backend = ProvisionerSandboxBackend(
-        thread_id="thread-1", uid="user-1", workdir_path="projects/11111111-1111-4111-8111-111111111111"
-    )
+    backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1", workdir_path="projects/11111111-1111-4111-8111-111111111111")
     written: list[str] = []
 
     def read_file(**kwargs):
@@ -1008,9 +1001,7 @@ def test_provisioner_read_binary_preserves_or_decodes_base64_content(monkeypatch
     backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
 
     fake_client = SimpleNamespace(
-        file=SimpleNamespace(
-            read_file=lambda **_kwargs: SimpleNamespace(data=SimpleNamespace(content="SGVsbG8=", encoding=encoding))
-        )
+        file=SimpleNamespace(read_file=lambda **_kwargs: SimpleNamespace(data=SimpleNamespace(content="SGVsbG8=", encoding=encoding)))
     )
     backend._get_client = MethodType(lambda self: fake_client, backend)
 
@@ -1132,9 +1123,7 @@ def test_provisioner_read_routes_documents_to_ocr(monkeypatch, extension: str) -
     result = backend.read(f"/home/gem/user-data/uploads/document.{extension}")
 
     assert result.file_data is None
-    assert result.error == (
-        "read_file does not support PDF or Office documents. Use ocr_parse_file to convert the file to Markdown first."
-    )
+    assert result.error == ("read_file does not support PDF or Office documents. Use ocr_parse_file to convert the file to Markdown first.")
 
 
 @pytest.mark.parametrize("extension", ["mp3", "mp4", "wav"])
@@ -1348,8 +1337,7 @@ async def test_provisioner_aread_image_rejects_stream_over_limit(monkeypatch) ->
     [
         (
             "/home/gem/user-data/uploads/document.pdf",
-            "read_file does not support PDF or Office documents. "
-            "Use ocr_parse_file to convert the file to Markdown first.",
+            "read_file does not support PDF or Office documents. Use ocr_parse_file to convert the file to Markdown first.",
         ),
         (
             "/home/gem/user-data/uploads/audio.mp3",
@@ -1439,9 +1427,7 @@ async def test_provisioner_grep_maps_native_results_for_sync_and_async(monkeypat
                 "data": {
                     "path": "/home/gem/user-data",
                     "pattern": "a.b",
-                    "matches": [
-                        {"file": "/home/gem/user-data/nested/note:one.py", "line_number": 2, "line_content": "a.b"}
-                    ],
+                    "matches": [{"file": "/home/gem/user-data/nested/note:one.py", "line_number": 2, "line_content": "a.b"}],
                     "truncated": True,
                 },
             },
@@ -1641,9 +1627,7 @@ def test_provisioner_download_files_streams_binary_bytes(monkeypatch) -> None:
 
 def test_authorized_download_enforces_limit_during_actual_transfer(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr("yuxi.modules.agents.runtime.sandbox.backend.get_sandbox_provider", lambda: object())
-    backend = ProvisionerSandboxBackend(
-        thread_id="thread-1", uid="user-1", workdir_path="projects/11111111-1111-4111-8111-111111111111"
-    )
+    backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1", workdir_path="projects/11111111-1111-4111-8111-111111111111")
     content = b"12345678"
     execute_calls = 0
 
@@ -1658,9 +1642,7 @@ def test_authorized_download_enforces_limit_during_actual_transfer(monkeypatch, 
 
     backend.execute = execute
     backend._get_client = MethodType(
-        lambda self: SimpleNamespace(
-            file=SimpleNamespace(download_file=lambda **_kwargs: iter([content[:4], content[4:]]))
-        ),
+        lambda self: SimpleNamespace(file=SimpleNamespace(download_file=lambda **_kwargs: iter([content[:4], content[4:]]))),
         backend,
     )
     target_path = tmp_path / "snapshot.bin"
@@ -1687,9 +1669,7 @@ def test_authorized_download_maps_sandbox_overflow_to_stable_limit_error() -> No
 
 def test_authorized_snapshot_attempts_cleanup_after_snapshot_command_failure(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr("yuxi.modules.agents.runtime.sandbox.backend.get_sandbox_provider", lambda: object())
-    backend = ProvisionerSandboxBackend(
-        thread_id="thread-1", uid="user-1", workdir_path="projects/11111111-1111-4111-8111-111111111111"
-    )
+    backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1", workdir_path="projects/11111111-1111-4111-8111-111111111111")
     execute_results = iter(
         [
             SimpleNamespace(exit_code=1, output="connection lost", truncated=False),
@@ -1711,9 +1691,7 @@ def test_authorized_snapshot_attempts_cleanup_after_snapshot_command_failure(mon
 
 def test_authorized_download_preserves_missing_and_symlink_boundary_errors(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr("yuxi.modules.agents.runtime.sandbox.backend.get_sandbox_provider", lambda: object())
-    backend = ProvisionerSandboxBackend(
-        thread_id="thread-1", uid="user-1", workdir_path="projects/11111111-1111-4111-8111-111111111111"
-    )
+    backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1", workdir_path="projects/11111111-1111-4111-8111-111111111111")
 
     for output, expected_error in (
         ("FileNotFoundError: [Errno 2] No such file or directory", FileNotFoundError),
@@ -1737,9 +1715,7 @@ def test_authorized_download_preserves_missing_and_symlink_boundary_errors(monke
 
 def test_authorized_download_recovers_snapshot_metadata_when_first_stdout_is_missing(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr("yuxi.modules.agents.runtime.sandbox.backend.get_sandbox_provider", lambda: object())
-    backend = ProvisionerSandboxBackend(
-        thread_id="thread-1", uid="user-1", workdir_path="projects/11111111-1111-4111-8111-111111111111"
-    )
+    backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1", workdir_path="projects/11111111-1111-4111-8111-111111111111")
     content = b"live bytes"
     marker = f"YUXI_FILE_SNAPSHOT {len(content)} {hashlib.sha256(content).hexdigest()}"
     execute_results = iter(
@@ -1768,13 +1744,9 @@ def test_authorized_download_recovers_snapshot_metadata_when_first_stdout_is_mis
 
 def test_authorized_upload_rejects_symlink_parent_as_permission_error(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr("yuxi.modules.agents.runtime.sandbox.backend.get_sandbox_provider", lambda: object())
-    backend = ProvisionerSandboxBackend(
-        thread_id="thread-1", uid="user-1", workdir_path="projects/11111111-1111-4111-8111-111111111111"
-    )
+    backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1", workdir_path="projects/11111111-1111-4111-8111-111111111111")
     backend._get_client = MethodType(
-        lambda self: SimpleNamespace(
-            file=SimpleNamespace(upload_file=lambda **_kwargs: SimpleNamespace(success=True, message=""))
-        ),
+        lambda self: SimpleNamespace(file=SimpleNamespace(upload_file=lambda **_kwargs: SimpleNamespace(success=True, message=""))),
         backend,
     )
     backend.execute = lambda _command: SimpleNamespace(
@@ -1794,9 +1766,7 @@ def test_authorized_upload_rejects_symlink_parent_as_permission_error(monkeypatc
 
 def test_authorized_snapshot_cleanup_failure_blocks_download(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr("yuxi.modules.agents.runtime.sandbox.backend.get_sandbox_provider", lambda: object())
-    backend = ProvisionerSandboxBackend(
-        thread_id="thread-1", uid="user-1", workdir_path="projects/11111111-1111-4111-8111-111111111111"
-    )
+    backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1", workdir_path="projects/11111111-1111-4111-8111-111111111111")
     content = b"report"
     execute_results = iter(
         [

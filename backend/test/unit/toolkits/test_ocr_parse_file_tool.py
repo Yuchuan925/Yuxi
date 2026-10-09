@@ -120,9 +120,7 @@ def _runtime(
 
 
 @pytest.mark.asyncio
-async def test_ocr_parse_file_writes_markdown_to_outputs(
-    tmp_path, workspace_root, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_ocr_parse_file_writes_markdown_to_outputs(tmp_path, workspace_root, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "threads"))
     _mock_system_options(monkeypatch)
 
@@ -159,9 +157,7 @@ async def test_ocr_parse_file_writes_markdown_to_outputs(
     )
 
     output_virtual_path = result["parsed_path"]
-    assert output_virtual_path.startswith(
-        "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/outputs/ocr/scan_"
-    )
+    assert output_virtual_path.startswith("/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/outputs/ocr/scan_")
     assert output_virtual_path.endswith("/document.md")
     output_file = workspace_root / output_virtual_path.removeprefix("/home/gem/user-data/")
     markdown = output_file.read_text()
@@ -247,9 +243,7 @@ async def test_ocr_parse_file_accepts_disable_for_pdf(tmp_path, monkeypatch: pyt
         "/home/gem/user-data/../secrets.png",
     ],
 )
-async def test_ocr_parse_file_rejects_path_outside_user_data(
-    tmp_path, monkeypatch: pytest.MonkeyPatch, file_path: str
-) -> None:
+async def test_ocr_parse_file_rejects_path_outside_user_data(tmp_path, monkeypatch: pytest.MonkeyPatch, file_path: str) -> None:
     monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "threads"))
     _mock_system_options(monkeypatch)
 

@@ -102,9 +102,7 @@ async def test_state_view_reads_persisted_fields_without_agent_runtime(checkpoin
         return SimpleNamespace(status="completed")
 
     monkeypatch.setattr(svc, "SessionRepository", lambda db: SimpleNamespace(get_session_by_thread_id=agent_session))
-    monkeypatch.setattr(
-        svc, "AgentRunRepository", lambda db: SimpleNamespace(get_latest_run_by_thread_for_user=latest_run)
-    )
+    monkeypatch.setattr(svc, "AgentRunRepository", lambda db: SimpleNamespace(get_latest_run_by_thread_for_user=latest_run))
     from yuxi.modules.agents.repositories.public_items import PublicItemRepository
     from unittest.mock import AsyncMock
 
@@ -115,9 +113,7 @@ async def test_state_view_reads_persisted_fields_without_agent_runtime(checkpoin
         db=None,
         include_relations=False,
     )
-    assert response["agent_state"] == {
-        key: payload[key] for key in ("todos", "artifacts", "cooperation", "token_usage")
-    }
+    assert response["agent_state"] == {key: payload[key] for key in ("todos", "artifacts", "cooperation", "token_usage")}
     assert "items" not in response
     assert "saved message" not in str(response)
     assert "interrupt" not in response

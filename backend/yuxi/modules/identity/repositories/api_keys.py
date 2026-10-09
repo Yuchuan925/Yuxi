@@ -70,17 +70,9 @@ class APIKeyRepository:
         encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
         return hashlib.sha256(encoded).hexdigest()
 
-    async def list_visible(
-        self, *, requester_user_id: int, is_superadmin: bool, skip: int, limit: int
-    ) -> tuple[list[APIKey], int]:
+    async def list_visible(self, *, requester_user_id: int, is_superadmin: bool, skip: int, limit: int) -> tuple[list[APIKey], int]:
         """列出请求者可见的 API Key 并返回总数。"""
-        query = (
-            select(APIKey)
-            .where(APIKey.revoked_at.is_(None))
-            .order_by(APIKey.created_at.desc())
-            .offset(skip)
-            .limit(limit)
-        )
+        query = select(APIKey).where(APIKey.revoked_at.is_(None)).order_by(APIKey.created_at.desc()).offset(skip).limit(limit)
         count_query = select(func.count(APIKey.id)).where(APIKey.revoked_at.is_(None))
         if not is_superadmin:
             query = query.where(APIKey.user_id == requester_user_id)
@@ -90,9 +82,7 @@ class APIKeyRepository:
         count_result = await self.db_session.execute(count_query)
         return list(result.scalars().all()), count_result.scalar() or 0
 
-    async def get_accessible(
-        self, *, api_key_id: int, requester_user_id: int, is_superadmin: bool
-    ) -> APIKeyAccessResult:
+    async def get_accessible(self, *, api_key_id: int, requester_user_id: int, is_superadmin: bool) -> APIKeyAccessResult:
         """按请求者可见性读取 API Key，并区分不存在与无权访问。"""
         query = select(APIKey).where(APIKey.id == api_key_id, APIKey.revoked_at.is_(None))
         if not is_superadmin:
@@ -102,9 +92,7 @@ class APIKeyRepository:
         if api_key is not None:
             return APIKeyAccessResult(api_key=api_key, exists=True)
 
-        exists_result = await self.db_session.execute(
-            select(APIKey.id).where(APIKey.id == api_key_id, APIKey.revoked_at.is_(None))
-        )
+        exists_result = await self.db_session.execute(select(APIKey.id).where(APIKey.id == api_key_id, APIKey.revoked_at.is_(None)))
         return APIKeyAccessResult(api_key=None, exists=exists_result.scalar_one_or_none() is not None)
 
     async def create(
@@ -130,9 +118,7 @@ class APIKeyRepository:
                 {"scope": f"api-key:{request_id}"},
             )
 
-        subject = await self.db_session.scalar(
-            select(User).where(User.id == user_id, User.is_deleted == 0).with_for_update()
-        )
+        subject = await self.db_session.scalar(select(User).where(User.id == user_id, User.is_deleted == 0).with_for_update())
         if subject is None or subject.user_kind == "end_user":
             raise APIKeySubjectUnavailable("关联的用户不存在")
         if department_id is not None and department_id != subject.department_id:

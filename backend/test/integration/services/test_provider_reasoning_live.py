@@ -50,9 +50,7 @@ async def test_live_reasoning_tool_roundtrip(spec):
     ]
     started = monotonic()
     async with httpx.AsyncClient(event_hooks={"request": [capture]}, timeout=120) as client:
-        model = load_chat_model(
-            spec, session_id=f"yuxi-provider-probe-{uuid4()}", http_async_client=client, max_retries=0, timeout=120
-        )
+        model = load_chat_model(spec, session_id=f"yuxi-provider-probe-{uuid4()}", http_async_client=client, max_retries=0, timeout=120)
         request_options = {}
         if enable_thinking:
             extra_body = dict(info.request_body_overrides)

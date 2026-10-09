@@ -93,8 +93,7 @@ class AgentLoadTestScriptTest(unittest.IsolatedAsyncioTestCase):
             return httpx.Response(
                 200,
                 text=(
-                    "event: yuxi.session.run.created\n"
-                    'data: {"session_id":"other","input_id":"input-1","turn_id":"turn-2","yuxi":{"run_id":"run-2"}}\n\n'
+                    'event: yuxi.session.run.created\ndata: {"session_id":"other","input_id":"input-1","turn_id":"turn-2","yuxi":{"run_id":"run-2"}}\n\n'
                 ),
             )
 
@@ -187,9 +186,7 @@ class AgentLoadTestScriptTest(unittest.IsolatedAsyncioTestCase):
     def test_first_model_output_accepts_text_and_full_function_call(self):
         self.assertTrue(contains_model_output({"type": "agent.session.turn.output_text.delta", "delta": "你"}))
         self.assertTrue(
-            contains_model_output(
-                {"type": "agent.session.turn.item.added", "item": {"type": "function_call", "arguments": {}}}
-            )
+            contains_model_output({"type": "agent.session.turn.item.added", "item": {"type": "function_call", "arguments": {}}})
         )
 
     def test_metadata_does_not_count_as_first_model_output(self) -> None:

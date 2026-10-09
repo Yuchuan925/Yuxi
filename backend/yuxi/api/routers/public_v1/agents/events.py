@@ -30,9 +30,7 @@ from yuxi.modules.agents.services.turns import cancel_turn, resume_turn
 router = APIRouter(dependencies=[Depends(require_public_context)], responses=PUBLIC_ERRORS)
 
 
-@router.post(
-    "/sessions/{session_id}/events", status_code=202, summary="提交消息或控制事件", response_model=EventAccepted
-)
+@router.post("/sessions/{session_id}/events", status_code=202, summary="提交消息或控制事件", response_model=EventAccepted)
 async def submit_public_event(
     session_id: str,
     payload: SessionEventCreate,
@@ -57,9 +55,7 @@ async def submit_public_event(
     return event_receipt(result)
 
 
-async def submit_thread_event(
-    *, db: AsyncSession, scope: ActorScope, thread_id: str, event: ThreadEvent, idempotency_key: str
-) -> dict:
+async def submit_thread_event(*, db: AsyncSession, scope: ActorScope, thread_id: str, event: ThreadEvent, idempotency_key: str) -> dict:
     """把已规范化事件交给唯一的生命周期用例。"""
     if isinstance(event, TreeControlEvent):
         from yuxi.modules.agents.services.cooperation import control_tree
@@ -105,9 +101,7 @@ async def submit_thread_event(
     elif isinstance(event, ContinueEvent):
         result = await continue_queue(db=db, scope=scope, thread_id=thread_id, idempotency_key=idempotency_key)
     elif isinstance(event, CancelInputEvent):
-        result = await cancel_input(
-            db=db, scope=scope, thread_id=thread_id, input_id=event.input_id, idempotency_key=idempotency_key
-        )
+        result = await cancel_input(db=db, scope=scope, thread_id=thread_id, input_id=event.input_id, idempotency_key=idempotency_key)
     return result
 
 

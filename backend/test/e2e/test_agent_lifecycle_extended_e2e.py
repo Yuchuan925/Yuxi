@@ -155,9 +155,7 @@ async def test_public_run_persists_preloaded_tool_and_model_audit(e2e_client, e2
             assert [skill["slug"] for skill in manifest["resources"]["skills"]] == ["image-gen"]
             assert (
                 binding["manifest_fingerprint"]
-                == hashlib.sha256(
-                    json.dumps(manifest, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode()
-                ).hexdigest()
+                == hashlib.sha256(json.dumps(manifest, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
             )
             attempts = await conn.fetch(
                 "SELECT attempt_no, outcome, finished_at FROM agent_run_attempts WHERE run_id = $1",
@@ -219,9 +217,7 @@ async def test_standard_user_run_uses_admin_execution_limit(e2e_client, e2e_head
 
             conn = await asyncpg.connect(postgres_dsn())
             try:
-                row = await conn.fetchrow(
-                    "SELECT status, error_message, manifest FROM agent_runs WHERE id = $1", run_id
-                )
+                row = await conn.fetchrow("SELECT status, error_message, manifest FROM agent_runs WHERE id = $1", run_id)
                 assert row and row["status"] == expected_status
                 manifest = row["manifest"]
                 if isinstance(manifest, str):
@@ -353,9 +349,7 @@ async def test_scheduled_task_run_now_reaches_exact_thread_and_turn(e2e_client, 
             deleted = await e2e_client.delete(f"/api/projects/{project_id}", headers=e2e_headers)
             assert deleted.status_code in {200, 404}, deleted.text
         if directory_name:
-            deleted = await e2e_client.delete(
-                "/api/workspace/file", headers=e2e_headers, params={"path": f"/{directory_name}"}
-            )
+            deleted = await e2e_client.delete("/api/workspace/file", headers=e2e_headers, params={"path": f"/{directory_name}"})
             assert deleted.status_code in {200, 404}, deleted.text
         if slug:
             await delete_agent(e2e_client, e2e_headers, slug)
@@ -379,9 +373,7 @@ async def test_tool_error_is_persisted_by_tool_message(e2e_client, e2e_headers):
         audits_response = await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/audits", headers=e2e_headers)
         assert audits_response.status_code == 200, audits_response.text
         tool_audits = [
-            item
-            for item in audits_response.json()["audits"]
-            if item["run_id"] == run_id and item["message_type"] == "tool_audit"
+            item for item in audits_response.json()["audits"] if item["run_id"] == run_id and item["message_type"] == "tool_audit"
         ]
         assert len(tool_audits) == 1
         audit = tool_audits[0]
@@ -428,9 +420,7 @@ async def _provider(client: httpx.AsyncClient, headers: dict[str, str]) -> bool:
             "base_url": "http://api:8765/v1",
             "api_key": "ci-replay-key",
             "capabilities": ["chat"],
-            "enabled_models": [
-                {"id": "deterministic-chat", "display_name": "Deterministic chat", "type": "chat", "source": "manual"}
-            ],
+            "enabled_models": [{"id": "deterministic-chat", "display_name": "Deterministic chat", "type": "chat", "source": "manual"}],
             "is_enabled": True,
         },
     )

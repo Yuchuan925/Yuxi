@@ -141,9 +141,7 @@ async def test_generated_questions_require_successful_save(monkeypatch, missing)
     """保存失败或目标消失时不能声称问题已生成并保存。"""
     monkeypatch.setattr(sq, "knowledge_base", FakeKnowledgeBase(_database_detail({"file_1": {"filename": "demo.md"}})))
     monkeypatch.setattr(sq.KnowledgeBaseFactory, "get_kb_class", lambda _: SimpleNamespace(supports_documents=True))
-    monkeypatch.setattr(
-        sq, "system_options", SimpleNamespace(get=AsyncMock(return_value={"default_model": "test:model"}))
-    )
+    monkeypatch.setattr(sq, "system_options", SimpleNamespace(get=AsyncMock(return_value={"default_model": "test:model"})))
     model = SimpleNamespace(call=AsyncMock(return_value=SimpleNamespace(content='{"questions":["测试？"]}')))
     monkeypatch.setattr(sq, "select_model", lambda **_: model)
     error = RuntimeError("database unavailable")

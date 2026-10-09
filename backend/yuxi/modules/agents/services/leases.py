@@ -115,9 +115,7 @@ async def _release_idle_sandbox(root_id: str, cutoff: datetime) -> None:
             return
         if (
             await db.scalar(
-                select(AgentRun.id)
-                .where(AgentRun.runtime_scope_id == root_id, AgentRun.status.notin_(TERMINAL_RUN_STATUSES))
-                .limit(1)
+                select(AgentRun.id).where(AgentRun.runtime_scope_id == root_id, AgentRun.status.notin_(TERMINAL_RUN_STATUSES)).limit(1)
             )
             is not None
         ):

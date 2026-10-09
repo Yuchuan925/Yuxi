@@ -44,9 +44,7 @@ def validate_request(authorization: str | None, request: dict) -> str | None:
     if EXPECTED_PRELOADED_SKILL_MARKER not in serialized_messages:
         return "preloaded_skill_missing"
     if "DETERMINISTIC_FROZEN_CONFIG" in serialized_messages:
-        system_messages = " ".join(
-            str(message.get("content", "")) for message in messages if message.get("role") == "system"
-        )
+        system_messages = " ".join(str(message.get("content", "")) for message in messages if message.get("role") == "system")
         if "FROZEN_SESSION_PROMPT" not in system_messages or "CHANGED_DEFINITION_PROMPT" in system_messages:
             return "session_config_snapshot_mismatch"
     bound_roots = re.findall(r"DETERMINISTIC_BOUND_ROOT:([0-9a-f]+)", serialized_messages)
@@ -69,9 +67,7 @@ def validate_request(authorization: str | None, request: dict) -> str | None:
             return "png_input_mime_changed"
     tools = request.get("tools")
     tool_names = {
-        item.get("function", {}).get("name")
-        for item in tools or []
-        if isinstance(item, dict) and isinstance(item.get("function"), dict)
+        item.get("function", {}).get("name") for item in tools or [] if isinstance(item, dict) and isinstance(item.get("function"), dict)
     }
     tool_messages = [message for message in messages if isinstance(message, dict) and message.get("role") == "tool"]
     if "DETERMINISTIC_CREATE_MCP" in serialized_messages and "effect_probe" not in tool_names:
@@ -92,10 +88,7 @@ def validate_request(authorization: str | None, request: dict) -> str | None:
     if tool_messages and not any(
         (
             message.get("tool_call_id") == EXPECTED_TOOL_CALL_ID
-            and (
-                EXPECTED_TOOL_RESULT_MARKER in str(message.get("content", ""))
-                or TOOL_ERROR_MARKER in serialized_messages
-            )
+            and (EXPECTED_TOOL_RESULT_MARKER in str(message.get("content", "")) or TOOL_ERROR_MARKER in serialized_messages)
         )
         or (
             LARGE_TOOL_RESULT_MARKER in serialized_messages
@@ -116,16 +109,12 @@ def _stream_payloads(model: str, messages: list[dict]) -> list[dict]:
         "created": int(time.time()),
         "model": model,
     }
-    tool_results = {
-        message.get("tool_call_id"): message.get("content") for message in messages if message.get("role") == "tool"
-    }
+    tool_results = {message.get("tool_call_id"): message.get("content") for message in messages if message.get("role") == "tool"}
     if "DETERMINISTIC_CANCEL_FOLLOWUP" in serialized_messages:
         return [
             {
                 **common,
-                "choices": [
-                    {"index": 0, "delta": {"role": "assistant", "content": EXPECTED_OUTPUT}, "finish_reason": None}
-                ],
+                "choices": [{"index": 0, "delta": {"role": "assistant", "content": EXPECTED_OUTPUT}, "finish_reason": None}],
             },
             {
                 **common,
@@ -256,9 +245,7 @@ class ReplayHandler(BaseHTTPRequestHandler):
         last_user = max(index for index, message in enumerate(messages) if message.get("role") == "user")
         current_input = json.dumps(messages[last_user], ensure_ascii=False)
         if "DETERMINISTIC_RATE_LIMIT" in current_input:
-            messages = [message for message in messages[:last_user] if message.get("role") == "system"] + messages[
-                last_user:
-            ]
+            messages = [message for message in messages[:last_user] if message.get("role") == "system"] + messages[last_user:]
             has_tool_result = any(message.get("role") == "tool" for message in messages)
             if has_tool_result or "RATE_LIMIT_FIRST_CALL" in current_input:
                 self._write_json(

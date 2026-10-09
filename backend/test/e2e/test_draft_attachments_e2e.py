@@ -35,9 +35,7 @@ async def test_draft_initial_send_queue_cancel_and_model_attachment_isolation(e2
 
             async def upload(name, content):
                 """上传未关联会话的原文件。"""
-                response = await e2e_client.post(
-                    "/api/v1/agents/files", headers=e2e_headers, files={"file": (name, content, "text/plain")}
-                )
+                response = await e2e_client.post("/api/v1/agents/files", headers=e2e_headers, files={"file": (name, content, "text/plain")})
                 assert response.status_code == 201, response.text
                 file = response.json()
                 files.append(file)
@@ -112,9 +110,7 @@ async def test_draft_initial_send_queue_cancel_and_model_attachment_isolation(e2
             result = await _turn(e2e_client, e2e_headers, session_id, turn_id)
             assert result["status"] == "completed", result
             assert output_text(result["yuxi"]["output"]) == OUTPUT
-            refs_response = await e2e_client.get(
-                f"/api/v1/agents/sessions/{session_id}/attachments", headers=e2e_headers
-            )
+            refs_response = await e2e_client.get(f"/api/v1/agents/sessions/{session_id}/attachments", headers=e2e_headers)
             assert refs_response.status_code == 200, refs_response.text
             refs = {record["file_id"]: record for record in refs_response.json()["attachments"]}
             assert set(refs) == {first["id"], future["id"]}
@@ -124,31 +120,21 @@ async def test_draft_initial_send_queue_cancel_and_model_attachment_isolation(e2
             assert await conn.fetchval("SELECT status FROM agent_inputs WHERE id=$1", queued_id) == "cancelled"
             assert await conn.fetchval("SELECT count(*) FROM agent_runs WHERE input_id=$1", queued_id) == 0
             assert (
-                await conn.fetchval(
-                    "SELECT count(*) FROM agent_input_receipts WHERE idempotency_key=$1", headers["Idempotency-Key"]
-                )
-                == 1
+                await conn.fetchval("SELECT count(*) FROM agent_input_receipts WHERE idempotency_key=$1", headers["Idempotency-Key"]) == 1
             )
-            payload = json.loads(
-                await conn.fetchval("SELECT input_payload FROM agent_inputs WHERE id=$1", receipt["input_id"])
-            )
+            payload = json.loads(await conn.fetchval("SELECT input_payload FROM agent_inputs WHERE id=$1", receipt["input_id"]))
             assert not {"attachments_ready", "attachment_drafts", "attachment_error"} & payload.keys()
             rows = await conn.fetch(
-                "SELECT status,object_name,parsed_source,input_id,receipt_id FROM agent_attachments "
-                "WHERE id=ANY($1::varchar[])",
+                "SELECT status,object_name,parsed_source,input_id,receipt_id FROM agent_attachments WHERE id=ANY($1::varchar[])",
                 [first["id"], future["id"]],
             )
             assert len(rows) == 2 and all(row["status"] == "ready" for row in rows)
             assert all(row["object_name"] is None and row["parsed_source"] is None for row in rows)
             assert {row["input_id"] for row in rows} == {receipt["input_id"], queued_id}
-            items = await e2e_client.get(
-                f"/api/v1/agents/sessions/{session_id}/items", headers=e2e_headers, params={"order": "asc"}
-            )
+            items = await e2e_client.get(f"/api/v1/agents/sessions/{session_id}/items", headers=e2e_headers, params={"order": "asc"})
             assert items.status_code == 200, items.text
             user_item = next(
-                item
-                for item in items.json()["data"]
-                if any(part.get("type") == "input_image" for part in item.get("content", []))
+                item for item in items.json()["data"] if any(part.get("type") == "input_image" for part in item.get("content", []))
             )
             assert user_item["content"][1]["image_url"] == image_url
 
@@ -160,9 +146,7 @@ async def test_draft_initial_send_queue_cancel_and_model_attachment_isolation(e2
             )
             assert sibling.status_code == 201, sibling.text
             second_session = sibling.json()["id"]
-            shared = await e2e_client.get(
-                refs[first["id"]]["artifact_url"].replace(session_id, second_session), headers=e2e_headers
-            )
+            shared = await e2e_client.get(refs[first["id"]]["artifact_url"].replace(session_id, second_session), headers=e2e_headers)
             assert shared.status_code == 200 and shared.content == b"first input bytes"
         finally:
             await replay.get("/release-blocking", params={"token": gate})
@@ -180,6 +164,4 @@ async def test_draft_initial_send_queue_cancel_and_model_attachment_isolation(e2
             await delete_agent(e2e_client, e2e_headers, slug)
             minio = get_minio_client()
             for file in files:
-                await minio.adelete_objects_by_prefix(
-                    minio.KB_BUCKETS["documents"], f"tmp/chat_attachments/{uid}/{file['id']}/"
-                )
+                await minio.adelete_objects_by_prefix(minio.KB_BUCKETS["documents"], f"tmp/chat_attachments/{uid}/{file['id']}/")

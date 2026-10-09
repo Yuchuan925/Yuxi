@@ -40,9 +40,7 @@ BUILTIN_SKILL_SHARE_CONFIG = {"access_level": "global", "department_ids": [], "u
 SKILL_STORAGE_LOCK = 0x5958534B
 
 
-async def get_skill_dependency_options(
-    db: AsyncSession, user: User, slug: str | None = None
-) -> dict[str, list[str] | list[dict]]:
+async def get_skill_dependency_options(db: AsyncSession, user: User, slug: str | None = None) -> dict[str, list[str] | list[dict]]:
     """返回当前 Skill 可选择的依赖项。"""
     from yuxi.modules.extensions.tools.catalog import get_tool_metadata
 
@@ -98,7 +96,12 @@ async def confirm_skill_install_draft(
                 created_by=operator.uid,
             )
             await commit_skill_content(
-                db, item=item, operator=operator, expected_revision=None, source=draft_item.source_dir, source_slug=slug
+                db,
+                item=item,
+                operator=operator,
+                expected_revision=None,
+                source=draft_item.source_dir,
+                source_slug=slug,
             )
             results.append({"slug": item.slug, "requested_slug": slug, "success": True, "skill": item.to_dict()})
         except Exception as exc:
@@ -375,9 +378,7 @@ async def get_manageable_skill_or_raise(db: AsyncSession, user: User, slug: str,
 
 def resolved_shared_skill(item: Skill) -> ResolvedSkill:
     """将数据库 Skill 适配为统一的有效 Skill 描述。"""
-    source_scope = (
-        "agent_bound" if item.bound_agent_id is not None else ("builtin" if is_builtin_skill(item) else "shared")
-    )
+    source_scope = "agent_bound" if item.bound_agent_id is not None else ("builtin" if is_builtin_skill(item) else "shared")
     try:
         share_config = {} if item.bound_agent_id is not None else normalize_permission_config(item.share_config)
     except (TypeError, ValueError) as exc:
@@ -431,17 +432,14 @@ def can_skill_depend_on(parent: Skill, dependency: Skill) -> bool:
     dependency_scopes = [scope for scope in (dep_config["read_scope"], dep_config["manage_scope"]) if scope]
     parent_scopes = [scope for scope in (parent_config["read_scope"], parent_config["manage_scope"]) if scope]
     if parent.bound_agent_id is not None and parent.bound_agent.visibility != "private":
-        parent_scopes.append(
-            {"access_level": "user", "department_ids": [], "user_uids": [parent.bound_agent.created_by]}
-        )
+        parent_scopes.append({"access_level": "user", "department_ids": [], "user_uids": [parent.bound_agent.created_by]})
     owner_scope = {"access_level": "user", "department_ids": [], "user_uids": []}
     if not dependency_scopes:
         dependency_scopes = [{**owner_scope, "user_uids": [str(dependency.created_by or "")]}]
     if not parent_scopes:
         parent_scopes = [{**owner_scope, "user_uids": [str(parent.created_by or "")]}]
     return all(
-        any(_scope_contains(dependency_scope, parent_scope) for dependency_scope in dependency_scopes)
-        for parent_scope in parent_scopes
+        any(_scope_contains(dependency_scope, parent_scope) for dependency_scope in dependency_scopes) for parent_scope in parent_scopes
     )
 
 

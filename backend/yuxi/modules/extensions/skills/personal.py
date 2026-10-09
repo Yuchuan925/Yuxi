@@ -86,7 +86,13 @@ async def install_personal_skills_from_source(
     if source.startswith("/"):
         with tempfile.TemporaryDirectory(prefix=".skill-install-") as tmp:
             source_dir = await asyncio.to_thread(
-                _download_sandbox_skill, source, thread_id, uid, Path(tmp), workdir_relative_path, workdir_path
+                _download_sandbox_skill,
+                source,
+                thread_id,
+                uid,
+                Path(tmp),
+                workdir_relative_path,
+                workdir_path,
             )
             item = await install_personal_skill_dir(uid, source_dir)
             return [item.slug], []
@@ -235,9 +241,7 @@ def _personal_skills_root(uid: str) -> Path:
     ensure_user_workspace(uid)
     workspace = user_workspace_dir(uid)
     workspace_root = workspace.resolve()
-    root = ensure_within_root(
-        (workspace / "agents" / "skills").resolve(), workspace_root, error_message="个人 Skill 路径越界"
-    )
+    root = ensure_within_root((workspace / "agents" / "skills").resolve(), workspace_root, error_message="个人 Skill 路径越界")
     root.mkdir(parents=True, exist_ok=True)
     return root
 
@@ -266,9 +270,7 @@ def _download_sandbox_skill(
     allowed = sandbox_path.startswith(f"{VIRTUAL_PATH_PREFIX.rstrip('/')}/")
     allowed = allowed or bool(workdir_path and sandbox_path.startswith(f"{workdir_path.rstrip('/')}/"))
     if not allowed:
-        raise ValueError(
-            f"不支持的沙盒路径: {sandbox_path}。请使用当前 Project Workdir 下的目录，或 /home/gem/user-data/..."
-        )
+        raise ValueError(f"不支持的沙盒路径: {sandbox_path}。请使用当前 Project Workdir 下的目录，或 /home/gem/user-data/...")
 
     staging = staging_root / "package"
     backend = ProvisionerSandboxBackend(

@@ -154,9 +154,7 @@ async def test_scheduled_task_crud_persists_and_enforces_owner_scope(
     turn_id = first_run.json()["turn_id"]
     cancel_sent = False
     for _ in range(150):
-        turn = await test_client.get(
-            f"/api/v1/agents/sessions/{thread_id}/turns/{turn_id}", headers=owner_headers
-        )
+        turn = await test_client.get(f"/api/v1/agents/sessions/{thread_id}/turns/{turn_id}", headers=owner_headers)
         assert turn.status_code == 200, turn.text
         if turn.json()["status"] in {"completed", "failed", "cancelled"}:
             break

@@ -489,9 +489,7 @@ def create_summary_middleware_from_context(context, *, backend, model=None) -> Y
     trigger_tokens = getattr(context, "summary_threshold", DEFAULT_SUMMARY_THRESHOLD_K) * 1024
     if model is None:
         model_spec = resolve_chat_model_spec(context.model)
-        model = load_chat_model(
-            fully_specified_name=model_spec, session_id=context.thread_id, uid=context.uid, max_retries=0
-        )
+        model = load_chat_model(fully_specified_name=model_spec, session_id=context.thread_id, uid=context.uid, max_retries=0)
     return create_summary_middleware(
         model=model,
         backend=backend,
@@ -732,9 +730,7 @@ def _search_result_record(tool_name: str, result: Any) -> tuple[dict[str, Any], 
             "graph_score",
             "distance",
         )
-        selected_metadata = {
-            key: _bounded_search_scalar(metadata[key]) for key in metadata_keys if metadata.get(key) is not None
-        }
+        selected_metadata = {key: _bounded_search_scalar(metadata[key]) for key in metadata_keys if metadata.get(key) is not None}
         if selected_metadata:
             record["metadata"] = selected_metadata
     body = next((result[key] for key in _SEARCH_CONTENT_KEYS if isinstance(result.get(key), str)), "")
@@ -824,9 +820,7 @@ def _truncate_tool_call_args(tool_call: dict[str, Any], max_length: int) -> tupl
     if tool_call.get("name") not in {"write_file", "edit_file"} or not isinstance(args, dict):
         return tool_call, False
 
-    truncated_args = {
-        key: _truncate_string_arg(value, max_length) if isinstance(value, str) else value for key, value in args.items()
-    }
+    truncated_args = {key: _truncate_string_arg(value, max_length) if isinstance(value, str) else value for key, value in args.items()}
     if truncated_args == args:
         return tool_call, False
     return {**tool_call, "args": truncated_args}, True
@@ -853,9 +847,7 @@ def _truncate_provider_tool_calls(
         ):
             updated_tool_calls.append(raw_call)
             continue
-        updated_tool_calls.append(
-            {**raw_call, "function": {**function, "arguments": _truncate_string_arg(arguments, max_length)}}
-        )
+        updated_tool_calls.append({**raw_call, "function": {**function, "arguments": _truncate_string_arg(arguments, max_length)}})
         modified = True
 
     if not modified:

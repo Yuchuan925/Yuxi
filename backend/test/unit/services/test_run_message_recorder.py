@@ -94,9 +94,7 @@ async def test_same_recorder_keeps_interleaved_model_and_tool_states_separate(mo
             {"event": "content-block-delta", "delta": {"fields": {"type": "text-delta", "text": "一"}}},
             namespace=["first"],
         ),
-        native(
-            3, {"event": "content-block-delta", "delta": {"type": "text-delta", "text": "二"}}, namespace=["second"]
-        ),
+        native(3, {"event": "content-block-delta", "delta": {"type": "text-delta", "text": "二"}}, namespace=["second"]),
         native(4, {"event": "message-finish", "usage": {"input_tokens": 5}}, namespace=["first"]),
         native(
             5,
@@ -109,9 +107,7 @@ async def test_same_recorder_keeps_interleaved_model_and_tool_states_separate(mo
     for event in events:
         await recorder.consume(event)
 
-    first, second, tool = (
-        recorded_messages[key] for key in [("model", "shared"), ("model", "second"), ("tool", "shared")]
-    )
+    first, second, tool = (recorded_messages[key] for key in [("model", "shared"), ("model", "second"), ("tool", "shared")])
     assert first["content"] == "一" and first["usage"] == {"input_tokens": 5}
     assert second["content"] == "二" and second["usage"] == {"output_tokens": 3}
     assert tool["content"] == "工具结果" and tool["tool_input"] == {"q": "实际输入"}
@@ -126,9 +122,7 @@ async def test_same_recorder_keeps_interleaved_model_and_tool_states_separate(mo
 async def test_command_result_is_committed_once_before_public_projection(monkeypatch, recorded_messages):
     """记录器提交同一结果后才返回事件，公开适配失败也保留已提交工具事实。"""
     recorder = RunMessageRecorder(run_id="run", thread_id="thread", worker_id="worker")
-    await recorder.consume(
-        native(0, {"event": "tool-started", "tool_call_id": "call", "tool_name": "search", "input": {}}, method="tools")
-    )
+    await recorder.consume(native(0, {"event": "tool-started", "tool_call_id": "call", "tool_name": "search", "input": {}}, method="tools"))
     command = Command(
         update={
             "messages": [
@@ -137,9 +131,7 @@ async def test_command_result_is_committed_once_before_public_projection(monkeyp
             ]
         }
     )
-    source = native(
-        1, {"event": "tool-finished", "tool_call_id": "call", "output": command}, method="tools", namespace=["tools"]
-    )
+    source = native(1, {"event": "tool-finished", "tool_call_id": "call", "output": command}, method="tools", namespace=["tools"])
     extract = service.tool_event_output
     extractions = []
 

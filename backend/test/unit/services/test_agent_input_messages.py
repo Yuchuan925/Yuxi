@@ -73,9 +73,7 @@ def test_十张图全部进入模型输入且顺序保持():
     parts = _image_url_parts(message)
     assert len(parts) == MAX_CHAT_IMAGES
     # 第 10 张必须在、且顺序与请求一致：只进第一张的实现会在这里失败
-    assert [part["image_url"]["url"] for part in parts] == [
-        f"data:image/jpeg;base64,IMG{index}" for index in range(MAX_CHAT_IMAGES)
-    ]
+    assert [part["image_url"]["url"] for part in parts] == [f"data:image/jpeg;base64,IMG{index}" for index in range(MAX_CHAT_IMAGES)]
     assert message.image_content == "IMG0"
     assert len(message.raw_message()["content"]) == MAX_CHAT_IMAGES + 1
 

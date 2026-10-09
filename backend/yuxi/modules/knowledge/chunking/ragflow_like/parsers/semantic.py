@@ -50,9 +50,7 @@ def _flush_content(
         result.extend([header, content, "-" * 10])
     else:
         if count_tokens(content) > max_length:
-            chunks = split_text_by_length_and_newline(
-                content, max_length, embed_fn=embed_fn, token_count_fn=count_tokens
-            )
+            chunks = split_text_by_length_and_newline(content, max_length, embed_fn=embed_fn, token_count_fn=count_tokens)
             cursor = 0
             for idx, chunk in enumerate(chunks, 1):
                 base_header = f"{'#' * level} {title_path}" if title_path else f"{'#' * level}"
@@ -117,9 +115,7 @@ def _handle_image_caption(tokens, i, result, current_content, title_stack, max_l
                     _flush_content(result, current_content, title_stack, max_length, embed_fn)
                     current_content.append(LocatedText(content, tuple(inline_token.map or token.map)))
                     current_content.append(LocatedText(next_content, tuple(next_inline.map)))
-                    _flush_content(
-                        result, current_content, title_stack, max_length, embed_fn, special_element=next_content
-                    )
+                    _flush_content(result, current_content, title_stack, max_length, embed_fn, special_element=next_content)
                     return True, i + 6
 
     if current_content and re.match(caption_pattern, content, re.IGNORECASE):
@@ -135,9 +131,7 @@ def _handle_image_caption(tokens, i, result, current_content, title_stack, max_l
     return False, i
 
 
-def chunk_markdown(
-    markdown_content: str, parser_config: dict[str, Any] | None = None, embed_fn: Any | None = None
-) -> list[str]:
+def chunk_markdown(markdown_content: str, parser_config: dict[str, Any] | None = None, embed_fn: Any | None = None) -> list[str]:
     """
     语义化切分 Markdown 内容。
 
@@ -204,9 +198,7 @@ def chunk_markdown(
             i = j + 1 if j < len(tokens) else len(tokens)
             continue
         elif token.type == "paragraph_open":
-            handled, new_i = _handle_image_caption(
-                tokens, i, result, current_content, title_stack, max_length, embed_fn
-            )
+            handled, new_i = _handle_image_caption(tokens, i, result, current_content, title_stack, max_length, embed_fn)
             if handled:
                 i = new_i
                 continue
@@ -250,16 +242,8 @@ def chunk_markdown(
                 if tokens[j].type == "list_item_open":
                     k = j + 1
                     while k < len(tokens) and tokens[k].type != "list_item_close":
-                        if (
-                            tokens[k].type == "paragraph_open"
-                            and k + 1 < len(tokens)
-                            and tokens[k + 1].type == "inline"
-                        ):
-                            list_content.append(
-                                LocatedText(
-                                    f"{list_item_counter}. {tokens[k + 1].content.strip()}", tuple(tokens[k].map)
-                                )
-                            )
+                        if tokens[k].type == "paragraph_open" and k + 1 < len(tokens) and tokens[k + 1].type == "inline":
+                            list_content.append(LocatedText(f"{list_item_counter}. {tokens[k + 1].content.strip()}", tuple(tokens[k].map)))
                             list_item_counter += 1
                         k += 1
                 j += 1
@@ -276,11 +260,7 @@ def chunk_markdown(
                 if tokens[j].type == "list_item_open":
                     k = j + 1
                     while k < len(tokens) and tokens[k].type != "list_item_close":
-                        if (
-                            tokens[k].type == "paragraph_open"
-                            and k + 1 < len(tokens)
-                            and tokens[k + 1].type == "inline"
-                        ):
+                        if tokens[k].type == "paragraph_open" and k + 1 < len(tokens) and tokens[k + 1].type == "inline":
                             list_content.append(LocatedText(f"- {tokens[k + 1].content.strip()}", tuple(tokens[k].map)))
                         k += 1
                 j += 1

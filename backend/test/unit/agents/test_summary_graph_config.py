@@ -63,9 +63,7 @@ async def test_graph_uses_shared_summary_middleware_factory(
     assert captured["summary_context"].summary_threshold == threshold
     assert captured["summary_backend"] is build_args[0]
     middleware_names = [type(middleware).__name__ for middleware in middlewares]
-    assert middleware_names.index("NetworkRetryMiddleware") < middleware_names.index(
-        "ImageInputCompatibilityMiddleware"
-    )
+    assert middleware_names.index("NetworkRetryMiddleware") < middleware_names.index("ImageInputCompatibilityMiddleware")
 
 
 @pytest.mark.unit
@@ -175,9 +173,7 @@ async def test_checkpoint_cleanup_preserves_original_tasks_and_state(monkeypatch
     await original.aupdate_state(
         config,
         {
-            "messages": [
-                AIMessage(id="pending", content="", tool_calls=[{"id": "one", "name": "write_file", "args": {}}])
-            ],
+            "messages": [AIMessage(id="pending", content="", tool_calls=[{"id": "one", "name": "write_file", "args": {}}])],
             "activated_skills": ["retained"],
         },
         as_node="model",

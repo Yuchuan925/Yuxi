@@ -452,9 +452,7 @@ class ObservationPersistenceTest(unittest.IsolatedAsyncioTestCase):
                     output_dir=Path(directory),
                 )
                 with (
-                    patch.dict(
-                        "os.environ", {"COMPOSE_PROJECT_NAME": "yuxi-alpha", "YUXI_STATE_DIR": "../.yuxi/slots/alpha"}
-                    ),
+                    patch.dict("os.environ", {"COMPOSE_PROJECT_NAME": "yuxi-alpha", "YUXI_STATE_DIR": "../.yuxi/slots/alpha"}),
                     patch("test.performance.matrix.httpx.AsyncClient", return_value=client),
                     patch("test.performance.matrix.authenticate", new=AsyncMock(return_value={})),
                     patch("test.performance.matrix.resolve_agent_slug", new=AsyncMock(return_value="a")),

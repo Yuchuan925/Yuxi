@@ -37,9 +37,7 @@ async def test_install_personal_skill_does_not_require_agent_config_access(monke
     monkeypatch.setattr(personal_service, "_download_sandbox_skill", lambda *args: source_dir)
     runtime = _runtime(uid="user-1", thread_id="shared-agent-thread", skills=[])
 
-    result = await install_skill_module.install_skill.coroutine(
-        "/home/gem/user-data/demo-skill", runtime=runtime, tool_call_id="tool-1"
-    )
+    result = await install_skill_module.install_skill.coroutine("/home/gem/user-data/demo-skill", runtime=runtime, tool_call_id="tool-1")
 
     installed = user_workspace_dir("user-1") / "agents" / "skills" / "demo-skill" / "SKILL.md"
     assert installed.read_text(encoding="utf-8") == content

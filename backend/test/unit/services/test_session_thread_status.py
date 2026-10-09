@@ -70,9 +70,7 @@ async def _seed_thread(
     return agent_session
 
 
-async def _seed_run(
-    db, agent_session: Session, run_id: str, status: str, *, created_at: datetime | None = None
-) -> AgentRun:
+async def _seed_run(db, agent_session: Session, run_id: str, status: str, *, created_at: datetime | None = None) -> AgentRun:
     """建立显式 Turn→Run 关系供状态读取。"""
     turn = AgentTurn(
         id=f"turn-{run_id}",

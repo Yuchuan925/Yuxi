@@ -62,9 +62,7 @@ class SkillsMiddleware(AgentMiddleware):
             f"{VIRTUAL_PERSONAL_SKILLS_PATH}/",
         ]
 
-    async def awrap_model_call(
-        self, request: ModelRequest, handler: Callable[[ModelRequest], ModelResponse]
-    ) -> ModelResponse:
+    async def awrap_model_call(self, request: ModelRequest, handler: Callable[[ModelRequest], ModelResponse]) -> ModelResponse:
         """包装模型调用，处理 skills 提示词注入、动态激活和依赖展开"""
         runtime_context = request.runtime.context
 
@@ -83,9 +81,7 @@ class SkillsMiddleware(AgentMiddleware):
                 if preloaded_skills:
                     prompt_sections.append(self._build_preloaded_skills_section(preloaded_skills, runtime_context))
                 if prompt_sections:
-                    system_message = append_to_system_message(
-                        getattr(request, "system_message", None), "\n\n".join(prompt_sections)
-                    )
+                    system_message = append_to_system_message(getattr(request, "system_message", None), "\n\n".join(prompt_sections))
                     request = request.override(system_message=system_message)
 
         state = request.state if isinstance(request.state, dict) else {}
@@ -292,9 +288,7 @@ class SkillsMiddleware(AgentMiddleware):
     def _get_preloaded_skills(self, runtime_context) -> list[str]:
         selected = getattr(runtime_context, "_skill_runtime_snapshot", {}).get("preloaded_skills", [])
         effective = self._get_effective_skills(runtime_context)
-        return [
-            slug for slug in normalize_string_list(selected if isinstance(selected, list) else []) if slug in effective
-        ]
+        return [slug for slug in normalize_string_list(selected if isinstance(selected, list) else []) if slug in effective]
 
     def _build_preloaded_skills_section(self, slugs: list[str], runtime_context) -> str:
         """构建已预加载 Skill 的完整系统提示段。"""

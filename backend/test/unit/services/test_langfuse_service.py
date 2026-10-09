@@ -31,6 +31,7 @@ class _FakeLangfuseClient:
             return None
         return f"https://langfuse.local/trace/{trace_id}"
 
+
 class _FakeCallbackHandler:
     def __init__(self, *, public_key=None, trace_context=None):
         self.public_key = public_key
@@ -126,8 +127,12 @@ def test_trace_id_failure_keeps_execution_context_without_callback(run_context_w
 
     client.create_trace_id = fail_trace_id
     context = svc.build_run_context(
-        user_id="user-1", thread_id="thread-1", agent_id="agent-a",
-        turn_id="turn-2", run_id="run-2", operation="agent_chat_stream",
+        user_id="user-1",
+        thread_id="thread-1",
+        agent_id="agent-a",
+        turn_id="turn-2",
+        run_id="run-2",
+        operation="agent_chat_stream",
     )
     assert context.trace_id is None and context.callbacks == []
     assert context.metadata["run_id"] == "run-2"
@@ -201,41 +206,43 @@ def test_turn_root_and_run_observation_share_trace_and_replay_identity(run_conte
     assert len(root_id) == 16 and root_id == svc.start_turn_observation(context)
     assert run_observation_id == "0000000000000001"
     assert context.trace_id == "trace-turn-1"
-    assert client.observations[0].kwargs["trace_context"] == {
-        "trace_id": "trace-turn-1", "parent_span_id": root_id
-    }
-    assert context.callbacks[0].trace_context == {
-        "trace_id": "trace-turn-1", "parent_span_id": run_observation_id
-    }
+    assert client.observations[0].kwargs["trace_context"] == {"trace_id": "trace-turn-1", "parent_span_id": root_id}
+    assert context.callbacks[0].trace_context == {"trace_id": "trace-turn-1", "parent_span_id": run_observation_id}
     context.terminal_status = "completed"
     svc.finish_run_observation(context)
     assert client.observations[0].ended is True
     assert client.observations[0].updated["metadata"]["status"] == "completed"
 
     retry = svc.build_run_context(
-        user_id="user-1", thread_id="thread-1", agent_id="agent-a",
-        turn_id="turn-1", run_id="run-1", operation="agent_chat_stream",
+        user_id="user-1",
+        thread_id="thread-1",
+        agent_id="agent-a",
+        turn_id="turn-1",
+        run_id="run-1",
+        operation="agent_chat_stream",
     )
     retry.trace_id = context.trace_id
-    assert svc.attach_run_observation(
-        retry, root_observation_id=root_id, existing_observation_id=run_observation_id
-    ) == run_observation_id
+    assert svc.attach_run_observation(retry, root_observation_id=root_id, existing_observation_id=run_observation_id) == run_observation_id
     assert len(client.observations) == 1
 
 
 def test_terminal_root_exports_persisted_trace_identity_and_duration(monkeypatch):
     """终态根观察使用已固定的 trace/span ID 和包含等待期的持久时间。"""
     sent = []
-    client = SimpleNamespace(api=SimpleNamespace(opentelemetry=SimpleNamespace(
-        export_traces=lambda **kwargs: sent.append(kwargs)
-    )))
+    client = SimpleNamespace(api=SimpleNamespace(opentelemetry=SimpleNamespace(export_traces=lambda **kwargs: sent.append(kwargs))))
     monkeypatch.setattr(langfuse, "get_langfuse_client", lambda: client)
     start = datetime(2026, 9, 29, 10, 0, tzinfo=UTC)
     end = datetime(2026, 9, 29, 10, 2, tzinfo=UTC)
 
     langfuse.export_turn_root(
-        trace_id="a" * 32, root_id="b" * 16, turn_id="turn-1", thread_id="thread-1",
-        uid="user-1", status="completed", created_at=start, finished_at=end,
+        trace_id="a" * 32,
+        root_id="b" * 16,
+        turn_id="turn-1",
+        thread_id="thread-1",
+        uid="user-1",
+        status="completed",
+        created_at=start,
+        finished_at=end,
     )
 
     span = sent[0]["resource_spans"][0].scope_spans[0].spans[0]

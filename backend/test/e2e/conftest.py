@@ -33,9 +33,7 @@ E2E_TIMEOUT = httpx.Timeout(300.0, connect=10.0)
 
 def _require_e2e_credentials() -> tuple[str, str]:
     if not E2E_USERNAME or not E2E_PASSWORD:
-        pytest.skip(
-            "E2E credentials are not configured via E2E_USERNAME / E2E_PASSWORD or TEST_USERNAME / TEST_PASSWORD."
-        )
+        pytest.skip("E2E credentials are not configured via E2E_USERNAME / E2E_PASSWORD or TEST_USERNAME / TEST_PASSWORD.")
     return E2E_USERNAME, E2E_PASSWORD
 
 
@@ -111,9 +109,7 @@ async def e2e_headers(e2e_client: httpx.AsyncClient) -> dict[str, str]:
 async def e2e_agent_context(e2e_client: httpx.AsyncClient, e2e_headers: dict[str, str]) -> dict[str, str]:
     me_response = await e2e_client.get("/api/auth/me", headers=e2e_headers)
     if me_response.status_code != 200:
-        pytest.fail(
-            f"Failed to fetch current user for E2E tests (status={me_response.status_code}): {me_response.text}"
-        )
+        pytest.fail(f"Failed to fetch current user for E2E tests (status={me_response.status_code}): {me_response.text}")
     uid = me_response.json().get("uid")
     if not uid:
         pytest.fail("Current user payload missing uid field for E2E tests.")

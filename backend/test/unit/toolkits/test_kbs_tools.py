@@ -151,9 +151,7 @@ async def test_tool_permission_failure_is_observable(monkeypatch):
 
     from yuxi.modules.knowledge.runtime import knowledge_base
 
-    monkeypatch.setattr(
-        knowledge_base, "get_databases_by_uid", AsyncMock(side_effect=RuntimeError("storage unavailable"))
-    )
+    monkeypatch.setattr(knowledge_base, "get_databases_by_uid", AsyncMock(side_effect=RuntimeError("storage unavailable")))
     runtime = SimpleNamespace(context=SimpleNamespace(uid="u1", knowledges="all"))
     with pytest.raises(RuntimeError, match="storage unavailable"):
         await tools._resolve_visible_knowledge_bases_for_query(runtime)
@@ -750,10 +748,7 @@ async def test_download_kb_file_writes_original_to_outputs_and_returns_virtual_p
     )
     result = await _run_download_kb_file(kb_id="db-1", file_id="file-1", runtime=runtime)
 
-    assert (
-        sandbox.files["/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/outputs/report.pdf"]
-        == b"%PDF-1.4 bytes"
-    )
+    assert sandbox.files["/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/outputs/report.pdf"] == b"%PDF-1.4 bytes"
     assert sandbox.scopes == [
         {
             "thread_id": "thread-1",
@@ -793,10 +788,7 @@ async def test_download_kb_file_passes_save_as_argument(monkeypatch, tmp_path) -
     )
     result = await _run_download_kb_file(kb_id="db-1", file_id="file-1", save_as="renamed.xlsx", runtime=runtime)
 
-    assert (
-        sandbox.files["/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/outputs/renamed.xlsx"]
-        == b"xlsx bytes"
-    )
+    assert sandbox.files["/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/outputs/renamed.xlsx"] == b"xlsx bytes"
     assert result["saved_as"] == "renamed.xlsx"
 
 

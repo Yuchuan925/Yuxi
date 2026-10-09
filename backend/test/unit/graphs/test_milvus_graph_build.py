@@ -34,9 +34,7 @@ def projection_lock(monkeypatch):
         yield
 
     monkeypatch.setattr(milvus_graph_service, "knowledge_projection_lock", lock)
-    monkeypatch.setattr(
-        MilvusGraphService, "_filter_visible_subgraph", AsyncMock(side_effect=lambda kb_id, result: result)
-    )
+    monkeypatch.setattr(MilvusGraphService, "_filter_visible_subgraph", AsyncMock(side_effect=lambda kb_id, result: result))
 
 
 @pytest.mark.asyncio
@@ -162,9 +160,7 @@ def test_normalize_extraction_result_drops_over_long_entity_and_its_relations():
     )
 
     assert [entity["text"] for entity in result["entities"]] == ["WATE", "NASA"]
-    assert [(relation["source"]["text"], relation["target"]["text"]) for relation in result["relations"]] == [
-        ("WATE", "NASA")
-    ]
+    assert [(relation["source"]["text"], relation["target"]["text"]) for relation in result["relations"]] == [("WATE", "NASA")]
     assert result["metadata"]["dropped_entities"] == 1
     assert result["metadata"]["dropped_relations"] == 1
 
@@ -415,9 +411,7 @@ def test_llm_graph_extractor_rejects_top_level_enable_thinking():
 
 
 def test_llm_graph_extractor_accepts_enable_thinking_in_extra_body():
-    extractor = LLMGraphExtractor(
-        {"model_spec": "test/model", "model_params": {"extra_body": {"enable_thinking": False}}}
-    )
+    extractor = LLMGraphExtractor({"model_spec": "test/model", "model_params": {"extra_body": {"enable_thinking": False}}})
 
     extractor.validate_options()
 
@@ -1061,9 +1055,7 @@ async def test_milvus_graph_service_configure_persists_updated_concurrency():
     )
     graph_repo = SimpleNamespace(
         count_by_kb_id=AsyncMock(return_value=(3, 2)),
-        count_vector_statuses_by_kb_id=AsyncMock(
-            return_value={"pending": 0, "processing": 0, "indexed": 5, "failed": 0}
-        ),
+        count_vector_statuses_by_kb_id=AsyncMock(return_value={"pending": 0, "processing": 0, "indexed": 5, "failed": 0}),
     )
     service = MilvusGraphService(kb_repo=Repo(), chunk_repo=chunk_repo, graph_repo=graph_repo)
 
@@ -1111,9 +1103,7 @@ async def test_graph_status_reports_latest_successful_run_as_completed():
     )
     graph_repo = SimpleNamespace(
         count_by_kb_id=AsyncMock(return_value=(3, 2)),
-        count_vector_statuses_by_kb_id=AsyncMock(
-            return_value={"pending": 0, "processing": 0, "indexed": 5, "failed": 0}
-        ),
+        count_vector_statuses_by_kb_id=AsyncMock(return_value={"pending": 0, "processing": 0, "indexed": 5, "failed": 0}),
     )
     service = MilvusGraphService(kb_repo=Repo(), chunk_repo=chunk_repo, graph_repo=graph_repo)
 

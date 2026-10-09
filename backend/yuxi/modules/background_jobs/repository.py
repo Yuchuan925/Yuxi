@@ -32,13 +32,9 @@ class BackgroundJobRepository:
         """从完整 Job 表计算列表摘要，不受返回 limit 影响。"""
         async with pg_manager.get_async_session_context() as session:
             status_rows = (
-                await session.execute(
-                    select(BackgroundJobRecord.status, func.count()).group_by(BackgroundJobRecord.status)
-                )
+                await session.execute(select(BackgroundJobRecord.status, func.count()).group_by(BackgroundJobRecord.status))
             ).all()
-            type_rows = (
-                await session.execute(select(BackgroundJobRecord.type, func.count()).group_by(BackgroundJobRecord.type))
-            ).all()
+            type_rows = (await session.execute(select(BackgroundJobRecord.type, func.count()).group_by(BackgroundJobRecord.type))).all()
             total = sum(int(count) for _value, count in status_rows)
             filtered_total = total
             if status is not None:
@@ -68,9 +64,7 @@ class BackgroundJobRepository:
         filters = [BackgroundJobRecord.type == job_type]
         if statuses is not None:
             filters.append(BackgroundJobRecord.status.in_(statuses))
-        filters.extend(
-            BackgroundJobRecord.payload[key].as_string() == str(value) for key, value in payload_match.items()
-        )
+        filters.extend(BackgroundJobRecord.payload[key].as_string() == str(value) for key, value in payload_match.items())
         async with pg_manager.get_async_session_context() as session:
             return await session.scalar(
                 select(BackgroundJobRecord)
@@ -222,10 +216,7 @@ class BackgroundJobRepository:
                     raise ValueError("max_running 必须大于 0")
                 await session.execute(select(func.pg_advisory_xact_lock(func.hashtext("durable-job-capacity"))))
                 running_count = int(
-                    await session.scalar(
-                        select(func.count(BackgroundJobRecord.id)).where(BackgroundJobRecord.status == "running")
-                    )
-                    or 0
+                    await session.scalar(select(func.count(BackgroundJobRecord.id)).where(BackgroundJobRecord.status == "running")) or 0
                 )
                 if running_count >= max_running:
                     return await session.get(BackgroundJobRecord, job_id), False
@@ -406,13 +397,9 @@ class BackgroundJobRepository:
             current_time = await self._current_time(session, now)
             filters = [
                 BackgroundJobRecord.status == "running",
-                or_(
-                    BackgroundJobRecord.lease_expires_at.is_(None), BackgroundJobRecord.lease_expires_at <= current_time
-                ),
+                or_(BackgroundJobRecord.lease_expires_at.is_(None), BackgroundJobRecord.lease_expires_at <= current_time),
             ]
-            result = await session.execute(
-                select(BackgroundJobRecord).where(*filters).with_for_update(skip_locked=True)
-            )
+            result = await session.execute(select(BackgroundJobRecord).where(*filters).with_for_update(skip_locked=True))
             reconciled: list[tuple[str, str, int]] = []
             for record in result.scalars().all():
                 error = "worker_lease_expired: 执行 worker 的 lease 已过期，任务副作用结果未知"
@@ -477,9 +464,7 @@ class BackgroundJobRepository:
 
     @staticmethod
     async def _lock_job(session, job_id: str) -> BackgroundJobRecord | None:
-        return await session.scalar(
-            select(BackgroundJobRecord).where(BackgroundJobRecord.id == job_id).with_for_update()
-        )
+        return await session.scalar(select(BackgroundJobRecord).where(BackgroundJobRecord.id == job_id).with_for_update())
 
     @staticmethod
     def _is_live_owner(record: BackgroundJobRecord | None, *, worker_id: str, now: datetime) -> bool:

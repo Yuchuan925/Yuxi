@@ -286,9 +286,7 @@ def _require_user_uid_secret() -> str:
     """读取固定 UID 签名密钥；缺失即显式失败，不发出未签名请求。"""
     secret = (os.getenv(USER_UID_SIGNATURE_SECRET_ENV) or "").strip()
     if not secret:
-        raise ValueError(
-            f"UID 签名密钥环境变量 {USER_UID_SIGNATURE_SECRET_ENV} 未设置或为空，已拒绝发送未签名的 {USER_UID_HEADER}"
-        )
+        raise ValueError(f"UID 签名密钥环境变量 {USER_UID_SIGNATURE_SECRET_ENV} 未设置或为空，已拒绝发送未签名的 {USER_UID_HEADER}")
     return secret
 
 
@@ -360,8 +358,7 @@ def _sanitize_wire_invalid_tool_calls(messages: list[dict], originals: list) -> 
             else:
                 wire.pop("tool_calls", None)
         feedback = "；".join(
-            f"[工具调用失败] {call.get('name') or 'unknown'}: {call.get('error') or 'arguments malformed or truncated'}"
-            for call in invalid
+            f"[工具调用失败] {call.get('name') or 'unknown'}: {call.get('error') or 'arguments malformed or truncated'}" for call in invalid
         )
         content = wire.get("content")
         if isinstance(content, list):

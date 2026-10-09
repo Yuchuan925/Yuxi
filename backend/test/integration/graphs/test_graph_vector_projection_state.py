@@ -99,9 +99,7 @@ async def test_vector_projection_claim_and_finalize_chunk(pg_pool):
 
         async with pg_manager.get_async_session_context() as session:
             chunk = await session.scalar(select(KnowledgeChunk).where(KnowledgeChunk.chunk_id == chunk_id))
-            entity = await session.scalar(
-                select(KnowledgeGraphEntity).where(KnowledgeGraphEntity.entity_id == entity_id)
-            )
+            entity = await session.scalar(select(KnowledgeGraphEntity).where(KnowledgeGraphEntity.entity_id == entity_id))
             assert chunk.graph_indexed is True
             assert entity.vector_status == "indexed"
             assert entity.vector_lock_token is None

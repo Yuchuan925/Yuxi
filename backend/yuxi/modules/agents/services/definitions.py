@@ -27,7 +27,10 @@ async def create_agent_definition(db, *, operator, skill_upload=None, **fields):
 
     try:
         config_json, resource_access = await prepare_agent_config_write(
-            fields.pop("config_json", None) or {}, context_schema=backend.context_schema, db=db, user=operator
+            fields.pop("config_json", None) or {},
+            context_schema=backend.context_schema,
+            db=db,
+            user=operator,
         )
         agent = await AgentRepository(db).create(
             **fields,

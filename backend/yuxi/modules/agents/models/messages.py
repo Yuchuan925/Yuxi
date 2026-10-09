@@ -38,8 +38,7 @@ class Message(Base):
     __tablename__ = "messages"
     __table_args__ = (
         CheckConstraint(
-            "execution_status IS NULL OR execution_status IN "
-            "('running', 'completed', 'failed', 'interrupted', 'abandoned')",
+            "execution_status IS NULL OR execution_status IN ('running', 'completed', 'failed', 'interrupted', 'abandoned')",
             name="ck_messages_execution_status",
         ),
         Index(

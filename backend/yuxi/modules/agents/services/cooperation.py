@@ -61,9 +61,7 @@ class SessionCooperationService:
         user = await self.db.scalar(select(User).where(User.uid == run.uid, User.is_deleted == 0))
         if user is None:
             raise ValueError("执行账号已失效")
-        agent = await AgentRepository(self.db).get_visible_by_slug(
-            slug=selected_agent_id, user=user, for_key_share=True
-        )
+        agent = await AgentRepository(self.db).get_visible_by_slug(slug=selected_agent_id, user=user, for_key_share=True)
         if agent is None:
             raise ValueError("Agent 不存在或无权限运行")
         project = await ProjectRepository(self.db).lock_active_for_user(caller.project_id, self.uid)
@@ -80,7 +78,11 @@ class SessionCooperationService:
                 snapshot = self.config_snapshot if self.config_snapshot is not None else run_snapshot
             else:
                 snapshot = await resolve_agent_context_snapshot(
-                    None, run_snapshot["tool_approval_mode"], agent, get_agent_backend(agent.backend_id), self.db
+                    None,
+                    run_snapshot["tool_approval_mode"],
+                    agent,
+                    get_agent_backend(agent.backend_id),
+                    self.db,
                 )
             child = Session(
                 thread_id=child_id,
@@ -144,9 +146,7 @@ class SessionCooperationService:
         if user is None:
             raise ValueError("执行账号已失效")
         agents = await list_public_agents(user=user, db=self.db)
-        return {
-            "agents": [{"id": agent.slug, "name": agent.name, "description": agent.description} for agent in agents]
-        }
+        return {"agents": [{"id": agent.slug, "name": agent.name, "description": agent.description} for agent in agents]}
 
     async def get_result(self, *, input_id: str | None = None, turn_id: str | None = None) -> dict:
         """读取精确提交或轮次的结果，不随下一轮工作改变。"""
@@ -349,18 +349,14 @@ async def get_cooperation_summary(*, db, scope: ActorScope, thread_id: str) -> d
     return await tree_snapshot(db, caller)
 
 
-async def read_task_results(
-    db, caller: Session, *, input_ids: list[str] | None = None, turn_id: str | None = None
-) -> list[dict]:
+async def read_task_results(db, caller: Session, *, input_ids: list[str] | None = None, turn_id: str | None = None) -> list[dict]:
     """从 Input 到精确 Turn/Run 回读任务结果及可观察终态。"""
     rows = await CooperationRepository(db).task_rows(caller, input_ids=input_ids, turn_id=turn_id)
     if not rows or (input_ids is not None and {row[1].id for row in rows} != set(input_ids)):
         raise ValueError("任务不存在或不属于当前授权树")
     results = []
     for member, input_item, turn, run, message in rows:
-        if message and (
-            message.turn_id != turn.id or message.run_id != run.id or message.session_record_id != member.id
-        ):
+        if message and (message.turn_id != turn.id or message.run_id != run.id or message.session_record_id != member.id):
             raise ValueError("协作结果消息的 Turn/Run 归属不一致")
         status = turn.status if turn else input_item.status
         results.append(
@@ -490,7 +486,11 @@ async def _recover_cooperation_wait(turn_id: str) -> None:
         if member is None:
             return
         turn = await AgentTurnRepository(db).get_for_scope(
-            turn_id=turn_id, thread_id=member.thread_id, uid=member.uid, app_id=member.app_id, for_update=True
+            turn_id=turn_id,
+            thread_id=member.thread_id,
+            uid=member.uid,
+            app_id=member.app_id,
+            for_update=True,
         )
         if turn is None:
             return
@@ -555,7 +555,11 @@ async def notify_user_intervention(db, member: Session, *, key: str, action: str
         return
     parent = await db.scalar(select(Session).where(Session.thread_id == member.parent_thread_id))
     await CooperationRepository(db).append(
-        sender=member, recipient=parent, key=f"user:{key}", kind="user_intervention", payload={"action": action}
+        sender=member,
+        recipient=parent,
+        key=f"user:{key}",
+        kind="user_intervention",
+        payload={"action": action},
     )
 
 
@@ -602,9 +606,7 @@ async def control_tree(*, db, scope: ActorScope, thread_id: str, idempotency_key
         {"key": f"cooperation:{member.tree_root_thread_id}"},
     )
     repo = AgentInputReceiptRepository(db)
-    receipt = await repo.get_for_scope(
-        uid=scope.uid, app_id=scope.app_id, thread_id=thread_id, idempotency_key=idempotency_key
-    )
+    receipt = await repo.get_for_scope(uid=scope.uid, app_id=scope.app_id, thread_id=thread_id, idempotency_key=idempotency_key)
     if receipt is not None:
         require_control_replay(receipt, event_type, intent)
         return control_accepted(receipt)
@@ -673,15 +675,15 @@ async def reconcile_stopped_trees() -> None:
                     continue
                 # continue 同样先锁所有成员；持有 Session 锁后重读，丢弃旧停止快照。
                 stopped = await db.scalar(
-                    select(CooperationRuntime.stopped).where(
-                        CooperationRuntime.tree_root_thread_id == target.tree_root_thread_id
-                    )
+                    select(CooperationRuntime.stopped).where(CooperationRuntime.tree_root_thread_id == target.tree_root_thread_id)
                 )
                 if not stopped:
                     continue
                 target.queue_paused = True
                 turn = await AgentTurnRepository(db).lock_active_for_thread(
-                    thread_id=target.thread_id, uid=target.uid, app_id=target.app_id
+                    thread_id=target.thread_id,
+                    uid=target.uid,
+                    app_id=target.app_id,
                 )
                 if turn:
                     await cancel_turn(

@@ -34,13 +34,9 @@ router = APIRouter(dependencies=[Depends(require_public_context)], responses=PUB
 )
 async def list_public_session_items(
     session_id: str,
-    after: str | None = Query(
-        default=None, description="上一页 last_id；必须属于当前 Session，在所选排序下读取其后内容。"
-    ),
+    after: str | None = Query(default=None, description="上一页 last_id；必须属于当前 Session，在所选排序下读取其后内容。"),
     limit: int = Query(default=20, ge=1, le=100, description="每页最多 item 数量。"),
-    order: Literal["asc", "desc"] = Query(
-        default="desc", description="持久消息及消息内公开投影顺序；desc 为最新优先。"
-    ),
+    order: Literal["asc", "desc"] = Query(default="desc", description="持久消息及消息内公开投影顺序；desc 为最新优先。"),
     context: PublicAgentContext = Depends(require_public_context),
     db: AsyncSession = Depends(get_db),
 ):
@@ -50,9 +46,7 @@ async def list_public_session_items(
     用 last_id 作为下一页 after；has_more=false 表示当前快照已读完。
     Items 用于持久历史和断线恢复，最终输出仍按 Turn 的 result_run_id 确认。
     """
-    return await list_session_items(
-        db=db, scope=context.scope, thread_id=session_id, after=after, limit=limit, order=order
-    )
+    return await list_session_items(db=db, scope=context.scope, thread_id=session_id, after=after, limit=limit, order=order)
 
 
 @router.get("/sessions/{session_id}/receipt", summary="按幂等键恢复接收回执", response_model=EventAccepted)
@@ -63,9 +57,7 @@ async def retrieve_public_receipt(
     db: AsyncSession = Depends(get_db),
 ):
     """回执仅证明持久接收；排队时通过 Input 找到固定 Turn 归属。"""
-    return event_receipt(
-        await get_receipt_snapshot(db=db, scope=context.scope, thread_id=session_id, idempotency_key=idempotency_key)
-    )
+    return event_receipt(await get_receipt_snapshot(db=db, scope=context.scope, thread_id=session_id, idempotency_key=idempotency_key))
 
 
 @router.get("/sessions/{session_id}/turns", summary="分页读取轮次", response_model=TurnList)
@@ -129,9 +121,7 @@ async def retrieve_public_turn(
     result = await get_turn_snapshot(db=db, scope=context.scope, thread_id=session_id, turn_id=turn_id)
     return {
         **result["core"],
-        "yuxi": {
-            key: result[key] for key in ("current_run_id", "result_run_id", "waitpoint", "runs", "output", "usage")
-        },
+        "yuxi": {key: result[key] for key in ("current_run_id", "result_run_id", "waitpoint", "runs", "output", "usage")},
     }
 
 

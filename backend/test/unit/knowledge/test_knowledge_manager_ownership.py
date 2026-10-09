@@ -65,9 +65,7 @@ async def test_delete_database_commits_tombstone_before_any_external_cleanup(tmp
 
 
 @pytest.mark.parametrize("refresh_stats_fails", [False, True])
-async def test_parse_file_refreshes_stats_and_keeps_original_error_after_executor_failure(
-    tmp_path, monkeypatch, refresh_stats_fails
-):
+async def test_parse_file_refreshes_stats_and_keeps_original_error_after_executor_failure(tmp_path, monkeypatch, refresh_stats_fails):
     manager = KnowledgeBaseManager(str(tmp_path))
     refreshed = []
 

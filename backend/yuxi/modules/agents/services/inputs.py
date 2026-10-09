@@ -83,9 +83,7 @@ async def create_thread(
         [_message_intent(item) for item in input_messages],
     )
     receipt_repo = AgentInputReceiptRepository(db)
-    existing = await receipt_repo.get_for_scope(
-        uid=scope.uid, app_id=scope.app_id, thread_id=thread_id, idempotency_key=idempotency_key
-    )
+    existing = await receipt_repo.get_for_scope(uid=scope.uid, app_id=scope.app_id, thread_id=thread_id, idempotency_key=idempotency_key)
     if existing is not None:
         require_input_replay(existing, "yuxi.session.create", intent_hash)
         return _accepted(existing)
@@ -100,7 +98,10 @@ async def create_thread(
     existing_thread = await SessionRepository(db).get_session_by_thread_id(thread_id)
     if existing_thread is not None:
         existing = await receipt_repo.get_for_scope(
-            uid=scope.uid, app_id=scope.app_id, thread_id=thread_id, idempotency_key=idempotency_key
+            uid=scope.uid,
+            app_id=scope.app_id,
+            thread_id=thread_id,
+            idempotency_key=idempotency_key,
         )
         if existing is not None:
             require_input_replay(existing, "yuxi.session.create", intent_hash)
@@ -136,7 +137,10 @@ async def create_thread(
         if getattr(exc.orig, "sqlstate", None) != "23505":
             raise
         existing = await receipt_repo.get_for_scope(
-            uid=scope.uid, app_id=scope.app_id, thread_id=thread_id, idempotency_key=idempotency_key
+            uid=scope.uid,
+            app_id=scope.app_id,
+            thread_id=thread_id,
+            idempotency_key=idempotency_key,
         )
         if existing is not None:
             require_input_replay(existing, "yuxi.session.create", intent_hash)
@@ -212,17 +216,13 @@ async def accept_message(
         [_message_intent(item) for item in messages],
     )
     receipt_repo = AgentInputReceiptRepository(db)
-    existing = await receipt_repo.get_for_scope(
-        uid=scope.uid, app_id=scope.app_id, thread_id=thread_id, idempotency_key=idempotency_key
-    )
+    existing = await receipt_repo.get_for_scope(uid=scope.uid, app_id=scope.app_id, thread_id=thread_id, idempotency_key=idempotency_key)
     if existing is not None:
         require_input_replay(existing, "agent.session.input.message", intent_hash)
         return _accepted(existing)
 
     agent_session = await require_thread(db=db, scope=scope, thread_id=thread_id, lock=True)
-    existing = await receipt_repo.get_for_scope(
-        uid=scope.uid, app_id=scope.app_id, thread_id=thread_id, idempotency_key=idempotency_key
-    )
+    existing = await receipt_repo.get_for_scope(uid=scope.uid, app_id=scope.app_id, thread_id=thread_id, idempotency_key=idempotency_key)
     if existing is not None:
         require_input_replay(existing, "agent.session.input.message", intent_hash)
         return _accepted(existing)
@@ -254,7 +254,10 @@ async def get_receipt_snapshot(*, db: AsyncSession, scope: ActorScope, thread_id
     """响应丢失时按原幂等键读取接收事实，消费归属继续从 Input 查询。"""
     await require_thread(db=db, scope=scope, thread_id=thread_id)
     receipt = await AgentInputReceiptRepository(db).get_for_scope(
-        uid=scope.uid, app_id=scope.app_id, thread_id=thread_id, idempotency_key=idempotency_key
+        uid=scope.uid,
+        app_id=scope.app_id,
+        thread_id=thread_id,
+        idempotency_key=idempotency_key,
     )
     if receipt is None:
         raise HTTPException(status_code=404, detail="回执不存在")
@@ -266,9 +269,7 @@ async def get_input_snapshot(*, db: AsyncSession, scope: ActorScope, thread_id: 
     agent_session = await SessionRepository(db).get_session_by_thread_id(thread_id)
     if agent_session is None or agent_session.uid != scope.uid or agent_session.app_id != scope.app_id:
         raise HTTPException(status_code=404, detail="Thread 不存在")
-    input_item = await AgentInputRepository(db).get_for_scope(
-        input_id=input_id, thread_id=thread_id, uid=scope.uid, app_id=scope.app_id
-    )
+    input_item = await AgentInputRepository(db).get_for_scope(input_id=input_id, thread_id=thread_id, uid=scope.uid, app_id=scope.app_id)
     if input_item is None:
         raise HTTPException(status_code=404, detail="Input 不存在")
     messages = await AgentInputRepository(db).list_messages(input_id)
@@ -322,17 +323,11 @@ async def accept_locked(
     if agent_session.status != "active":
         raise HTTPException(status_code=409, detail="Thread 已归档")
     turn_repo = AgentTurnRepository(db)
-    active_turn = await turn_repo.lock_active_for_thread(
-        thread_id=agent_session.thread_id, uid=scope.uid, app_id=scope.app_id
-    )
+    active_turn = await turn_repo.lock_active_for_thread(thread_id=agent_session.thread_id, uid=scope.uid, app_id=scope.app_id)
     cooperation_wait = (
-        active_turn is not None
-        and active_turn.status == "waiting"
-        and (active_turn.waitpoint or {}).get("kind") == "cooperation"
+        active_turn is not None and active_turn.status == "waiting" and (active_turn.waitpoint or {}).get("kind") == "cooperation"
     )
-    if active_turn is not None and (
-        active_turn.status == "cancelling" or (active_turn.status == "waiting" and not cooperation_wait)
-    ):
+    if active_turn is not None and (active_turn.status == "cancelling" or (active_turn.status == "waiting" and not cooperation_wait)):
         raise HTTPException(status_code=409, detail="当前 Turn 正在等待控制输入或取消清理")
 
     mode = mode or ("follow_up" if cooperation_wait or active_turn is None else "steer")
@@ -407,9 +402,7 @@ async def accept_locked(
         db.add(persisted)
         persisted_messages.append(persisted)
     await db.flush()
-    await input_repo.add_messages(
-        input_id=input_item.id, receipt_id=receipt.id, message_ids=[message.id for message in persisted_messages]
-    )
+    await input_repo.add_messages(input_id=input_item.id, receipt_id=receipt.id, message_ids=[message.id for message in persisted_messages])
     if attachment_ids:
         await stage_input_attachments(
             db=db,

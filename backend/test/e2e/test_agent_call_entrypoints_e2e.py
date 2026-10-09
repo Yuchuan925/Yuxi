@@ -61,9 +61,7 @@ async def _create_agent(client: httpx.AsyncClient, headers: dict[str, str], uid:
     return slug
 
 
-async def _wait_turn(
-    client: httpx.AsyncClient, headers: dict[str, str], thread_id: str, turn_id: str
-) -> dict[str, Any]:
+async def _wait_turn(client: httpx.AsyncClient, headers: dict[str, str], thread_id: str, turn_id: str) -> dict[str, Any]:
     """等待持久 Turn 结果，不依赖旧 Invocation 的同步包装。"""
     deadline = asyncio.get_running_loop().time() + RUN_TIMEOUT_SECONDS
     while asyncio.get_running_loop().time() < deadline:
@@ -132,9 +130,7 @@ async def test_public_thread_evaluation_sample_uses_one_input_turn_run_flow(
                 "input": [
                     {
                         "role": "user",
-                        "content": [
-                            {"type": "input_text", "text": f"请只输出 {EVAL_EXPECTED_OUTPUT}，不要添加任何解释。"}
-                        ],
+                        "content": [{"type": "input_text", "text": f"请只输出 {EVAL_EXPECTED_OUTPUT}，不要添加任何解释。"}],
                     }
                 ],
             },
@@ -155,9 +151,7 @@ async def test_public_thread_evaluation_sample_uses_one_input_turn_run_flow(
         assert all(item["turn_id"] == accepted["turn_id"] for item in turn["yuxi"]["output"])
         completed = True
 
-        run_response = await e2e_client.get(
-            f"/api/v1/agents/sessions/{thread_id}/runs/{accepted['run_id']}", headers=e2e_headers
-        )
+        run_response = await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/runs/{accepted['run_id']}", headers=e2e_headers)
         assert run_response.status_code == 200, run_response.text
         run = run_response.json()
         assert run["status"] == "completed" and run["turn_id"] == accepted["turn_id"]

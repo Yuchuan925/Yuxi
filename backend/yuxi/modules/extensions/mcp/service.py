@@ -182,9 +182,7 @@ async def get_mcp_tools(
         if additional_servers and server_slug in additional_servers
         else await get_enabled_mcp_server_config(server_slug)
     )
-    return await load_mcp_tools(
-        server_slug, config, disabled_tools=disabled_tools, cache=cache, force_refresh=force_refresh
-    )
+    return await load_mcp_tools(server_slug, config, disabled_tools=disabled_tools, cache=cache, force_refresh=force_refresh)
 
 
 async def get_tools_from_all_servers() -> list[Callable[..., Any]]:
@@ -324,9 +322,7 @@ async def delete_mcp_server(db: AsyncSession, slug: str) -> bool:
 # =============================================================================
 
 
-async def set_server_enabled(
-    db: AsyncSession, slug: str, enabled: bool, updated_by: str = None
-) -> tuple[bool, MCPServer]:
+async def set_server_enabled(db: AsyncSession, slug: str, enabled: bool, updated_by: str = None) -> tuple[bool, MCPServer]:
     """Set server enabled status."""
     server = await get_mcp_server(db, slug)
     if not server:
@@ -471,11 +467,7 @@ def _to_runtime_mcp_config(server: MCPServer) -> dict[str, Any]:
         return server.to_mcp_config()
 
     builtin = normalize_mcp_manifest_entry(server.slug, BUILTIN_MCP_SERVERS[server.slug])
-    config = {
-        key: builtin[key]
-        for key in ("transport", "url", "headers", "timeout", "sse_read_timeout")
-        if builtin.get(key) is not None
-    }
+    config = {key: builtin[key] for key in ("transport", "url", "headers", "timeout", "sse_read_timeout") if builtin.get(key) is not None}
     if server.disabled_tools:
         config["disabled_tools"] = server.disabled_tools
     return config

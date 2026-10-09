@@ -143,17 +143,13 @@ class DashboardRepository:
         ).all()
 
         token_totals = self._session_token_totals([agent_session.id for agent_session, _ in rows])
-        usage_by_session = {
-            row.session_record_id: row for row in (await self.db_session.execute(select(token_totals))).all()
-        }
+        usage_by_session = {row.session_record_id: row for row in (await self.db_session.execute(select(token_totals))).all()}
         message_counts = self._message_count_totals()
         message_count_by_session = {
             row.session_record_id: row.message_count
             for row in (
                 await self.db_session.execute(
-                    select(message_counts).where(
-                        message_counts.c.session_record_id.in_([agent_session.id for agent_session, _ in rows])
-                    )
+                    select(message_counts).where(message_counts.c.session_record_id.in_([agent_session.id for agent_session, _ in rows]))
                 )
             ).all()
         }
@@ -596,10 +592,7 @@ class DashboardRepository:
         if metric_type == "agents":
             agent_slugs = [category for category in categories if category]
             if agent_slugs:
-                agent_names = {
-                    agent.slug: agent.name
-                    for agent in await AgentRepository(self.db_session).list_by_slugs(agent_slugs)
-                }
+                agent_names = {agent.slug: agent.name for agent in await AgentRepository(self.db_session).list_by_slugs(agent_slugs)}
 
         time_data: dict[str, dict[str, int]] = {}
         for row in rows:
@@ -696,9 +689,9 @@ class DashboardRepository:
         message_summary_result = await self.db_session.execute(
             select(
                 func.count(Message.id).label("total_messages"),
-                func.count(
-                    distinct(case((Message.created_at >= query_start_time, Message.session_record_id), else_=None))
-                ).label("active_threads"),
+                func.count(distinct(case((Message.created_at >= query_start_time, Message.session_record_id), else_=None))).label(
+                    "active_threads"
+                ),
             )
             .select_from(Message)
             .join(Session, Message.session_record_id == Session.id)

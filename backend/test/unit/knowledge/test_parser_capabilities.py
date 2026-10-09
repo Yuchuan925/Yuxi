@@ -132,9 +132,7 @@ def test_concurrent_engine_configuration_returns_each_requested_instance(monkeyp
 
     monkeypatch.setattr(engines, "_ENGINE_CACHE", Cache())
     spec = engines.get_engine_spec("mineru_ocr")
-    monkeypatch.setattr(
-        engines, "import_module", lambda _module: SimpleNamespace(**{spec.class_name: ConfiguredEngine})
-    )
+    monkeypatch.setattr(engines, "import_module", lambda _module: SimpleNamespace(**{spec.class_name: ConfiguredEngine}))
     with ThreadPoolExecutor(max_workers=2) as pool:
         first = pool.submit(engines.get_engine, "mineru_ocr", server_url="https://first.example.test")
         try:

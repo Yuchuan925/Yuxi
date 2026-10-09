@@ -45,9 +45,7 @@ class RedisConfig:
                 DEFAULT_REDIS_MAX_CONNECTIONS,
             ),
             decode_responses=True if decode_responses is None else decode_responses,
-            socket_timeout=socket_timeout
-            if socket_timeout is not None
-            else _float_or_none(os.environ.get("REDIS_SOCKET_TIMEOUT")),
+            socket_timeout=socket_timeout if socket_timeout is not None else _float_or_none(os.environ.get("REDIS_SOCKET_TIMEOUT")),
             socket_connect_timeout=socket_connect_timeout
             if socket_connect_timeout is not None
             else _float_or_none(os.environ.get("REDIS_CONNECT_TIMEOUT")),

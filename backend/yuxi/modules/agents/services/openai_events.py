@@ -41,9 +41,7 @@ class OpenAIEventAdapter:
             from yuxi.modules.agents.repositories.runs import AgentRunRepository
 
             run = await AgentRunRepository(db).get_run(self.run_id)
-            rows = await PublicItemRepository(db).list_items(
-                thread_id=self.thread_id, uid=run.uid, app_id=run.app_id, turn_id=self.turn_id
-            )
+            rows = await PublicItemRepository(db).list_items(thread_id=self.thread_id, uid=run.uid, app_id=run.app_id, turn_id=self.turn_id)
         events = []
         related_calls = {
             item["yuxi"]["call_item_id"]
@@ -122,9 +120,7 @@ class OpenAIEventAdapter:
                 model["item"]["content"].append({"type": "output_text", "text": ""})
                 model["item"]["yuxi"]["content_blocks"] = dict(model["blocks"])
                 events.append(
-                    self._content_event(
-                        "content_part.added", event, model, content_index, part={"type": "output_text", "text": ""}
-                    )
+                    self._content_event("content_part.added", event, model, content_index, part={"type": "output_text", "text": ""})
                 )
             return events
         if kind == "content-block-delta":
@@ -154,12 +150,7 @@ class OpenAIEventAdapter:
                 events.append(self._content_event("content_part.done", event, model, content_index, part=part))
             elif block_type in {"reasoning", "thinking"}:
                 events.extend(await self._ensure_message(model, event))
-                text = (
-                    block.get("reasoning")
-                    or block.get("text")
-                    or block.get("thinking")
-                    or model["reasoning"].get(index, "")
-                )
+                text = block.get("reasoning") or block.get("text") or block.get("thinking") or model["reasoning"].get(index, "")
                 model["reasoning"][index] = text
                 model["item"]["yuxi"].setdefault("completed_reasoning_indices", []).append(index)
                 model["item"]["yuxi"]["reasoning"] = dict(model["reasoning"])
@@ -228,14 +219,9 @@ class OpenAIEventAdapter:
         content = output.get("content") if isinstance(output, dict) else output
         if isinstance(content, list):
             # LangChain 的工具 content 不是官方 input content；仅透传合法文本/图片块。
-            if all(
-                isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str)
-                for part in content
-            ):
+            if all(isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str) for part in content):
                 content = [{"type": "input_text", "text": part["text"]} for part in content]
-            elif not all(
-                isinstance(part, dict) and part.get("type") in {"input_text", "input_image"} for part in content
-            ):
+            elif not all(isinstance(part, dict) and part.get("type") in {"input_text", "input_image"} for part in content):
                 import json
 
                 content = json.dumps(content, ensure_ascii=False)
@@ -332,9 +318,7 @@ class OpenAIEventAdapter:
                 content_index=content_index,
             )
 
-    def _content_event(
-        self, name: str, source: dict, model: dict, content_index: int, extension: bool = False, **fields
-    ) -> dict:
+    def _content_event(self, name: str, source: dict, model: dict, content_index: int, extension: bool = False, **fields) -> dict:
         """输出内容块事件，共用 message 身份与递增索引。"""
         item = model["item"]
         prefix = "yuxi.session.turn." if extension else "agent.session.turn."

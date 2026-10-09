@@ -78,10 +78,22 @@ async def test_run_stream_event_roundtrip(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(transport, "get_async_redis_client", fake_get_async_redis_client)
 
     run_id = "run-1"
-    first = {"type": "agent.session.turn.output_text.delta", "event_id": "logical-1", "delta": "text",
-             "session_id": "child-thread", "turn_id": "child-turn", "yuxi": {"run_id": run_id}}
-    second = {"type": "yuxi.session.run.settled", "event_id": "logical-2", "status": "completed",
-              "session_id": "child-thread", "turn_id": "child-turn", "yuxi": {"run_id": run_id}}
+    first = {
+        "type": "agent.session.turn.output_text.delta",
+        "event_id": "logical-1",
+        "delta": "text",
+        "session_id": "child-thread",
+        "turn_id": "child-turn",
+        "yuxi": {"run_id": run_id},
+    }
+    second = {
+        "type": "yuxi.session.run.settled",
+        "event_id": "logical-2",
+        "status": "completed",
+        "session_id": "child-thread",
+        "turn_id": "child-turn",
+        "yuxi": {"run_id": run_id},
+    }
     seq1, seq2 = await transport.append_run_stream_events(run_id, [first, second])
     assert seq1 < seq2
     assert fake_redis.pipeline_executions == 1

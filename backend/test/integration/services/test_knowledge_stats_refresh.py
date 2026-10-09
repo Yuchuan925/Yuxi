@@ -68,9 +68,7 @@ async def stats_store(monkeypatch):
             await connection.run_sync(KnowledgeFile.__table__.create)
             await connection.run_sync(KnowledgeChunk.__table__.create)
         async with sessions.begin() as session:
-            session.add(
-                KnowledgeBase(kb_id=schema, name="stats regression", kb_type="milvus", additional_params={"keep": True})
-            )
+            session.add(KnowledgeBase(kb_id=schema, name="stats regression", kb_type="milvus", additional_params={"keep": True}))
             session.add(
                 KnowledgeFile(
                     file_id=schema,

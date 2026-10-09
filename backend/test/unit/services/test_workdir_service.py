@@ -21,14 +21,8 @@ def test_workdir_access_resolves_only_scope_relative_paths():
 
     assert access.workdir.workspace is workspace
     assert access.workdir.resolve_path("/") == "/projects/11111111-1111-4111-8111-111111111111"
-    assert (
-        access.workdir.resolve_path("/outputs/report.md")
-        == "/projects/11111111-1111-4111-8111-111111111111/outputs/report.md"
-    )
-    assert (
-        access.workdir.scope_path("/projects/11111111-1111-4111-8111-111111111111/outputs/report.md")
-        == "/outputs/report.md"
-    )
+    assert access.workdir.resolve_path("/outputs/report.md") == "/projects/11111111-1111-4111-8111-111111111111/outputs/report.md"
+    assert access.workdir.scope_path("/projects/11111111-1111-4111-8111-111111111111/outputs/report.md") == "/outputs/report.md"
     for invalid in ("relative.txt", "/../escape", "\\escape"):
         with pytest.raises(ValueError):
             access.workdir.resolve_path(invalid)
@@ -118,9 +112,7 @@ async def test_binding_rejects_same_user_from_other_app():
     """Workdir executor 不接受同 UID 的另一个 APP 身份。"""
     agent_session = SimpleNamespace(uid="user-1", app_id="app-a", status="active")
     with pytest.raises(HTTPException) as exc:
-        await svc.resolve_authorized_session_workdir(
-            agent_session=agent_session, uid="user-1", app_id="app-b", db=object()
-        )
+        await svc.resolve_authorized_session_workdir(agent_session=agent_session, uid="user-1", app_id="app-b", db=object())
     assert exc.value.status_code == 404
 
 

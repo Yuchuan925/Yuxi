@@ -280,9 +280,7 @@ async def test_guard_keeps_normal_tool_result_untouched():
             if self.turn == 1:
                 message = AIMessage(
                     content="",
-                    tool_calls=[
-                        {"name": "parse_sandbox_file", "args": {"path": "/home/gem/user-data/a.pdf"}, "id": "call-ok"}
-                    ],
+                    tool_calls=[{"name": "parse_sandbox_file", "args": {"path": "/home/gem/user-data/a.pdf"}, "id": "call-ok"}],
                 )
             elif type(messages[-1]) is ToolMessage:
                 message = AIMessage(content="已根据工具结果继续回答")

@@ -44,9 +44,7 @@ class UserConfig:
     async def save(self, db: AsyncSession) -> UserConfig:
         now = utc_now()
         result = await db.execute(
-            update(UserConfigRecord)
-            .where(UserConfigRecord.uid == self.uid)
-            .values(enable_memory=self.schema.enable_memory, updated_at=now)
+            update(UserConfigRecord).where(UserConfigRecord.uid == self.uid).values(enable_memory=self.schema.enable_memory, updated_at=now)
         )
         if result.rowcount == 0:
             db.add(

@@ -34,9 +34,7 @@ def test_minio_upload_uses_shared_fallback_and_preserves_explicit_type(monkeypat
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("metadata_type", "expected"), [(None, "text/markdown"), ("text/custom", "text/custom")])
-async def test_knowledge_download_uses_shared_fallback_and_preserves_metadata_type(
-    monkeypatch, metadata_type, expected
-):
+async def test_knowledge_download_uses_shared_fallback_and_preserves_metadata_type(monkeypatch, metadata_type, expected):
     """下载保留元数据类型优先，缺失时使用共享后缀规则。"""
     monkeypatch.setattr(files.mimetypes, "guess_type", lambda _path: (None, None))
     source = "minio://knowledgebases/report.MD"
@@ -51,8 +49,6 @@ async def test_knowledge_download_uses_shared_fallback_and_preserves_metadata_ty
         assert path == source
         return b"# hello"
 
-    owner = SimpleNamespace(
-        _get_file_meta=get_metadata, _original_file_path=lambda _meta: source, _read_minio_bytes=read_bytes
-    )
+    owner = SimpleNamespace(_get_file_meta=get_metadata, _original_file_path=lambda _meta: source, _read_minio_bytes=read_bytes)
     result = await KnowledgeBase.get_file_download(owner, "kb-1", "file-1")
     assert result == {"filename": "report.MD", "content": b"# hello", "media_type": expected}

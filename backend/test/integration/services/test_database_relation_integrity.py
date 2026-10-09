@@ -84,8 +84,7 @@ async def test_knowledge_relationships_reject_cross_scope_and_keep_delete_semant
             assert (
                 await conn.scalar(
                     text(
-                        "SELECT count(*) FROM information_schema.columns WHERE table_schema=current_schema() "
-                        "AND table_name='knowledge_files' AND column_name='active_version_id'"
+                        "SELECT count(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='knowledge_files' AND column_name='active_version_id'"
                     )
                 )
                 == 0
@@ -93,8 +92,7 @@ async def test_knowledge_relationships_reject_cross_scope_and_keep_delete_semant
             assert (
                 await conn.scalar(
                     text(
-                        "SELECT count(*) FROM information_schema.tables WHERE table_schema=current_schema() "
-                        "AND table_name='knowledge_file_versions'"
+                        "SELECT count(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='knowledge_file_versions'"
                     )
                 )
                 == 0
@@ -102,9 +100,7 @@ async def test_knowledge_relationships_reject_cross_scope_and_keep_delete_semant
             assert await conn.scalar(text("SELECT parent_id FROM knowledge_files WHERE file_id='fa'")) is None
             assert await conn.scalar(text("SELECT dataset_id FROM evaluation_runs WHERE run_id='ra'")) is None
             row = (
-                await conn.execute(
-                    text("SELECT dataset_id,dataset_item_id,query_text FROM evaluation_run_items WHERE run_id='ra'")
-                )
+                await conn.execute(text("SELECT dataset_id,dataset_item_id,query_text FROM evaluation_run_items WHERE run_id='ra'"))
             ).one()
             assert tuple(row) == (None, None, "snapshot")
     finally:
@@ -130,15 +126,14 @@ async def test_unselected_message_and_run_thread_must_match_execution_scope():
             async with engine.begin() as conn:
                 await conn.execute(
                     text(
-                        "INSERT INTO messages (session_record_id,role,content,run_id,turn_id,delivery_status,message_type) SELECT id,'assistant','audit','run','turn','complete','model_audit' FROM sessions WHERE thread_id='tb'"
+                        "INSERT INTO messages (session_record_id,role,content,run_id,turn_id,delivery_status,message_type) SELECT id,"
+                        "'assistant','audit','run','turn','complete','model_audit' FROM sessions WHERE thread_id='tb'"
                     )
                 )
         with pytest.raises(IntegrityError, match="fk_agent_runs_session_thread|fk_agent_runs_session_runtime_scope"):
             async with engine.begin() as conn:
                 await conn.execute(
-                    text(
-                        "UPDATE agent_runs SET session_record_id=(SELECT id FROM sessions WHERE thread_id='tb') WHERE id='run'"
-                    )
+                    text("UPDATE agent_runs SET session_record_id=(SELECT id FROM sessions WHERE thread_id='tb') WHERE id='run'")
                 )
         async with engine.connect() as conn:
             assert await conn.scalar(text("SELECT count(*) FROM messages")) == 0
@@ -199,14 +194,16 @@ async def test_input_consumption_and_receipt_references_stay_in_owning_thread():
             )
             await conn.execute(
                 text(
-                    "INSERT INTO agent_input_receipts (id,idempotency_key,uid,thread_id,event_type,intent_hash,input_id,turn_id,run_id,created_at) VALUES ('ok','ok','u','ta','input','fixture','input-a','turn-a','run-a',now())"
+                    "INSERT INTO agent_input_receipts (id,idempotency_key,uid,thread_id,event_type,intent_hash,input_id,turn_id,run_id,"
+                    "created_at) VALUES ('ok','ok','u','ta','input','fixture','input-a','turn-a','run-a',now())"
                 )
             )
         async with engine.connect() as conn:
             row = (
                 await conn.execute(
                     text(
-                        "SELECT i.thread_id,t.thread_id,r.thread_id FROM agent_inputs i JOIN agent_turns t ON t.id=i.turn_id JOIN agent_runs r ON r.id=i.consumed_run_id WHERE i.id='input-a'"
+                        "SELECT i.thread_id,t.thread_id,r.thread_id FROM agent_inputs i JOIN agent_turns t ON t.id=i.turn_id JOIN "
+                        "agent_runs r ON r.id=i.consumed_run_id WHERE i.id='input-a'"
                     )
                 )
             ).one()
@@ -224,15 +221,9 @@ async def test_graph_mentions_reject_wrong_file_inside_same_knowledge_base():
         await create_knowledge_tables(manager)
         async with engine.begin() as conn:
             await conn.execute(text("INSERT INTO knowledge_bases (kb_id,name,kb_type) VALUES ('k','K','milvus')"))
-            await conn.execute(
-                text("INSERT INTO knowledge_files (file_id,kb_id,filename) VALUES ('fa','k','A'),('fb','k','B')")
-            )
-            await conn.execute(
-                insert(KnowledgeChunk).values(chunk_id="c", file_id="fa", kb_id="k", chunk_index=0, content="fixture")
-            )
-            await conn.execute(
-                insert(KnowledgeGraphEntity).values(entity_id="e", kb_id="k", name="E", normalized_name="e", label="E")
-            )
+            await conn.execute(text("INSERT INTO knowledge_files (file_id,kb_id,filename) VALUES ('fa','k','A'),('fb','k','B')"))
+            await conn.execute(insert(KnowledgeChunk).values(chunk_id="c", file_id="fa", kb_id="k", chunk_index=0, content="fixture"))
+            await conn.execute(insert(KnowledgeGraphEntity).values(entity_id="e", kb_id="k", name="E", normalized_name="e", label="E"))
             await conn.execute(
                 insert(KnowledgeGraphTriple).values(
                     triple_id="t",
@@ -250,9 +241,7 @@ async def test_graph_mentions_reject_wrong_file_inside_same_knowledge_base():
             with pytest.raises(IntegrityError, match=constraint):
                 async with engine.begin() as conn:
                     await conn.execute(
-                        text(
-                            f"INSERT INTO {table} ({identity},kb_id,file_id,chunk_id) VALUES (:identity,'k','fb','c')"
-                        ),
+                        text(f"INSERT INTO {table} ({identity},kb_id,file_id,chunk_id) VALUES (:identity,'k','fb','c')"),
                         {"identity": value},
                     )
             async with engine.begin() as conn:
@@ -355,18 +344,13 @@ async def test_persisted_timestamps_keep_the_same_instant_across_session_timezon
                 == []
             )
             await conn.execute(text("SET LOCAL TIME ZONE 'America/Los_Angeles'"))
-            await conn.execute(
-                insert(User).values(uid="utc-user", username="utc-user", password_hash="fixture", last_login=instant)
-            )
+            await conn.execute(insert(User).values(uid="utc-user", username="utc-user", password_hash="fixture", last_login=instant))
         async with engine.begin() as conn:
             await conn.execute(text("SET LOCAL TIME ZONE 'Asia/Shanghai'"))
             stored = await conn.scalar(select(User.last_login).where(User.uid == "utc-user"))
             assert stored.tzinfo is not None
             assert stored == instant.astimezone(UTC)
-            assert (
-                await conn.scalar(text("SELECT EXTRACT(EPOCH FROM last_login) FROM users WHERE uid='utc-user'"))
-                == instant.timestamp()
-            )
+            assert await conn.scalar(text("SELECT EXTRACT(EPOCH FROM last_login) FROM users WHERE uid='utc-user'")) == instant.timestamp()
             created = await conn.scalar(select(User.created_at).where(User.uid == "utc-user"))
             assert created.tzinfo is not None
     finally:

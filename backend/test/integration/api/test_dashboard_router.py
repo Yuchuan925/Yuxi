@@ -243,9 +243,7 @@ async def test_dashboard_http_reads_run_token_totals(test_client, admin_headers)
                 )
             await db.commit()
             for expected, complete in [(200, True), (120, False), (None, False)]:
-                listing = await test_client.get(
-                    "/api/dashboard/sessions", headers=admin_headers, params={"search": marker}
-                )
+                listing = await test_client.get("/api/dashboard/sessions", headers=admin_headers, params={"search": marker})
                 detail = await test_client.get(f"/api/dashboard/sessions/{thread_id}", headers=admin_headers)
                 assert listing.status_code == detail.status_code == 200
                 item = listing.json()["items"][0]

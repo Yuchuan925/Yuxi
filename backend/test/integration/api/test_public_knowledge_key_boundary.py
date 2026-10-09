@@ -85,7 +85,5 @@ async def test_public_knowledge_does_not_expose_management_routes(test_client, a
 )
 async def test_external_operations_are_removed(test_client, admin_headers, prefix, method, suffix):
     """两种 external 前缀均不再提供查询操作或兼容转发。"""
-    response = await test_client.request(
-        method, f"{prefix}/databases/external{suffix}", headers=admin_headers
-    )
+    response = await test_client.request(method, f"{prefix}/databases/external{suffix}", headers=admin_headers)
     assert response.status_code == 404, response.text

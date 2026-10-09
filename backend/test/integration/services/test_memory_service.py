@@ -114,9 +114,7 @@ async def memory_database(tmp_path, monkeypatch: pytest.MonkeyPatch):
 
             owned_message_ids = select(Message.id).join(Session).where(Session.uid == uid)
             await db.execute(delete(ToolCall).where(ToolCall.message_id.in_(owned_message_ids)))
-            await db.execute(
-                delete(Message).where(Message.session_record_id.in_(select(Session.id).where(Session.uid == uid)))
-            )
+            await db.execute(delete(Message).where(Message.session_record_id.in_(select(Session.id).where(Session.uid == uid))))
             await db.execute(delete(Session).where(Session.uid == uid))
             await db.execute(delete(Project).where(Project.uid == uid))
             await db.execute(delete(UserConfig).where(UserConfig.uid == uid))

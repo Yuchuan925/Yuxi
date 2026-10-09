@@ -195,13 +195,9 @@ async def test_duplicate_start_preserves_collected_content_and_monotonic_clock(m
     }
     start = {"event": "message-start", "role": "ai", "id": "message-1"}
     await collector.consume(native_event(start, metadata))
-    await collector.consume(
-        native_event({"event": "content-block-delta", "delta": {"type": "text-delta", "text": "before"}}, metadata)
-    )
+    await collector.consume(native_event({"event": "content-block-delta", "delta": {"type": "text-delta", "text": "before"}}, metadata))
     await collector.consume(native_event(start, metadata))
-    await collector.consume(
-        native_event({"event": "content-block-delta", "delta": {"type": "text-delta", "text": " after"}}, metadata)
-    )
+    await collector.consume(native_event({"event": "content-block-delta", "delta": {"type": "text-delta", "text": " after"}}, metadata))
     await collector.consume(
         native_event(
             {"event": "message-finish", "usage": {}},

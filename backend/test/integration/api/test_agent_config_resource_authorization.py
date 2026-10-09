@@ -69,9 +69,7 @@ async def test_mcp_selection_requires_explicit_agent_config(test_client, admin_h
             assert owner is not None
             persisted = (await _read_agent_config(conn, agent_slug))["context"]
             assert "mcps" not in persisted
-            normalized = await normalize_agent_context_config(
-                persisted, db=db, user=owner, context_schema=ChatBotContext
-            )
+            normalized = await normalize_agent_context_config(persisted, db=db, user=owner, context_schema=ChatBotContext)
             assert normalized["mcps"] == []
             for saved_value, expected in (([], []), ([mcp_slug], [mcp_slug])):
                 response = await test_client.put(
@@ -82,17 +80,13 @@ async def test_mcp_selection_requires_explicit_agent_config(test_client, admin_h
                 assert response.status_code == 200, response.text
                 persisted = (await _read_agent_config(conn, agent_slug))["context"]
                 assert persisted.get("mcps") == saved_value
-                normalized = await normalize_agent_context_config(
-                    persisted, db=db, user=owner, context_schema=ChatBotContext
-                )
+                normalized = await normalize_agent_context_config(persisted, db=db, user=owner, context_schema=ChatBotContext)
                 assert normalized["mcps"] == expected
 
             response = await test_client.put(mcp_path + "/status", headers=admin_headers, json={"enabled": False})
             assert response.status_code == 200, response.text
             persisted = (await _read_agent_config(conn, agent_slug))["context"]
-            normalized = await normalize_agent_context_config(
-                persisted, db=db, user=owner, context_schema=ChatBotContext
-            )
+            normalized = await normalize_agent_context_config(persisted, db=db, user=owner, context_schema=ChatBotContext)
             assert normalized["mcps"] == []
     finally:
         if created_agent:
@@ -133,9 +127,7 @@ async def test_admin_settings_are_readable_but_not_writable_by_private_owner(tes
             },
         )
         assert created.status_code == 200, created.text
-        updated = await test_client.put(
-            f"/api/agent/{slug}", headers=admin_headers, json={"config_json": {"context": settings}}
-        )
+        updated = await test_client.put(f"/api/agent/{slug}", headers=admin_headers, json={"config_json": {"context": settings}})
         assert updated.status_code == 200, updated.text
         read = await test_client.get(f"/api/agent/{slug}", headers=headers)
         assert read.status_code == 200, read.text
@@ -201,9 +193,7 @@ async def test_delegated_manager_resource_patch_preserves_hidden_config_and_reje
     conn = await asyncpg.connect(postgres_dsn)
     created_agent = False
     try:
-        promoted = await test_client.put(
-            f"/api/auth/users/{standard_user['user']['id']}", headers=admin_headers, json={"role": "admin"}
-        )
+        promoted = await test_client.put(f"/api/auth/users/{standard_user['user']['id']}", headers=admin_headers, json={"role": "admin"})
         assert promoted.status_code == 200, promoted.text
         rows = []
         for slug in [*visible_configured, *visible_extra]:
@@ -518,9 +508,7 @@ async def test_resource_selection_protocol_persists_intent_and_rejects_invalid_v
         expected["model"] = ""
         for field in ("tools", "knowledges", "skills", "mcps", "preload_skills"):
             for invalid in (None, "full", ["ok", 1], [""]):
-                response = await test_client.put(
-                    path, headers=admin_headers, json={"config_json": {"context": {field: invalid}}}
-                )
+                response = await test_client.put(path, headers=admin_headers, json={"config_json": {"context": {field: invalid}}})
                 assert response.status_code == 422, response.text
                 assert field in response.json()["detail"]
                 assert (await _read_agent_config(conn, slug))["context"] == expected

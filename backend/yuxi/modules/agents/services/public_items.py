@@ -32,9 +32,7 @@ async def list_session_items(
     if turn_id is not None:
         from yuxi.modules.agents.repositories.turn import AgentTurnRepository
 
-        turn = await AgentTurnRepository(db).get_for_scope(
-            turn_id=turn_id, thread_id=thread_id, uid=scope.uid, app_id=scope.app_id
-        )
+        turn = await AgentTurnRepository(db).get_for_scope(turn_id=turn_id, thread_id=thread_id, uid=scope.uid, app_id=scope.app_id)
         if turn is None:
             raise HTTPException(status_code=404, detail="Turn 不存在")
     try:
@@ -56,9 +54,7 @@ async def list_session_items(
             row.AgentRun,
             row.result_run_id,
             item=row.public_item,
-            attachments=[
-                serialize_attachment(attachment, thread_id=thread_id) for attachment in attachments.get(row.id, [])
-            ],
+            attachments=[serialize_attachment(attachment, thread_id=thread_id) for attachment in attachments.get(row.id, [])],
         )[0]
         for row in rows[:limit]
     ]
@@ -92,9 +88,7 @@ def serialize_public_items(
             if part.get("type") in {"text", "input_text"}
             else {
                 "type": "input_image",
-                "image_url": (
-                    part["image_url"]["url"] if isinstance(part.get("image_url"), dict) else part["image_url"]
-                ),
+                "image_url": (part["image_url"]["url"] if isinstance(part.get("image_url"), dict) else part["image_url"]),
             }
             for part in content
             if part.get("type") in {"text", "input_text", "image_url", "input_image"}
@@ -119,15 +113,11 @@ def serialize_public_items(
                 },
             }
         ]
-    items = deepcopy(
-        [item] if item is not None else list((message.extra_metadata or {}).get("public_items", {}).values())
-    )
+    items = deepcopy([item] if item is not None else list((message.extra_metadata or {}).get("public_items", {}).values()))
     for item in items:
         if item["type"] == "message":
             item["phase"] = (
-                "final_answer"
-                if run is not None and run.id == result_run_id and run.output_message_id == message.id
-                else "commentary"
+                "final_answer" if run is not None and run.id == result_run_id and run.output_message_id == message.id else "commentary"
             )
         if run is not None and run.status in {"failed", "cancelled", "interrupted", "yielded"}:
             if item["status"] == "in_progress":

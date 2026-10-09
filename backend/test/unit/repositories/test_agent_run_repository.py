@@ -776,17 +776,13 @@ async def test_retry_release_then_reclaim_uses_new_attempt_no_and_keeps_old_fact
     now = utc_now()
 
     await repository.mark_running(run.id, worker_id="worker-a:token-1", lease_seconds=60, now=now)
-    released = await repository.release_lease_for_retry(
-        run.id, worker_id="worker-a:token-1", now=now + timedelta(seconds=1)
-    )
+    released = await repository.release_lease_for_retry(run.id, worker_id="worker-a:token-1", now=now + timedelta(seconds=1))
     _, blocked_before_cleanup = await repository.mark_running(
         run.id, worker_id="worker-b:token-2", lease_seconds=60, now=now + timedelta(seconds=2)
     )
     run.runtime_cleanup_pending = False
     await session.flush()
-    await repository.mark_running(
-        run.id, worker_id="worker-b:token-2", lease_seconds=60, now=now + timedelta(seconds=3)
-    )
+    await repository.mark_running(run.id, worker_id="worker-b:token-2", lease_seconds=60, now=now + timedelta(seconds=3))
     attempts = await _read_attempts(session, run.id)
 
     assert released is True

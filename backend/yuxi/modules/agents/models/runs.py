@@ -102,9 +102,7 @@ class AgentRun(Base):
     external_id = Column(String(128), nullable=True, index=True, comment="Source-specific external ID snapshot")
     origin_metadata = Column(JSON, nullable=False, default=dict, comment="Immutable origin metadata snapshot")
     session_record_id = Column(Integer, ForeignKey("sessions.id"), nullable=True, index=True, comment="Session ID")
-    created_by_run_id = Column(
-        String(64), ForeignKey("agent_runs.id"), nullable=True, index=True, comment="Run that created this run"
-    )
+    created_by_run_id = Column(String(64), ForeignKey("agent_runs.id"), nullable=True, index=True, comment="Run that created this run")
     resume_from_run_id = Column(String(64), ForeignKey("agent_runs.id"), nullable=True)
     run_type = Column(
         String(32),
@@ -132,9 +130,7 @@ class AgentRun(Base):
     manifest_recorded_at = Column(DateTime(timezone=True), nullable=True, comment="运行清单固化时间")
     started_at = Column(DateTime(timezone=True), nullable=True, comment="Start time")
     prepared_at = Column(DateTime(timezone=True), nullable=True, comment="当前 Run 首次完成模型调用前准备的时间")
-    first_model_request_at = Column(
-        DateTime(timezone=True), nullable=True, comment="当前 Run 首次进入模型供应商请求前的时间"
-    )
+    first_model_request_at = Column(DateTime(timezone=True), nullable=True, comment="当前 Run 首次进入模型供应商请求前的时间")
     first_output_at = Column(DateTime(timezone=True), nullable=True, comment="当前 Run 首次产生非空模型语义输出的时间")
     finished_at = Column(DateTime(timezone=True), nullable=True, comment="Finish time")
     created_at = Column(DateTime(timezone=True), default=utc_now, comment="Creation time")
@@ -155,8 +151,7 @@ class AgentRun(Base):
         ),
         Index("ix_agent_runs_turn_execution", "turn_id", "execution_seq", "id"),
         CheckConstraint(
-            "status IN ('pending','running','cancel_requested','completed',"
-            "'failed','cancelled','interrupted','yielded')",
+            "status IN ('pending','running','cancel_requested','completed','failed','cancelled','interrupted','yielded')",
             name="ck_agent_runs_status",
         ),
         UniqueConstraint("id", "turn_id", "session_record_id", name="uq_agent_runs_id_turn_session"),
