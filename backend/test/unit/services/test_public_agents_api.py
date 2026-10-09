@@ -6,7 +6,7 @@ import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
 
-from yuxi.api.routers.public_v1.agents.schemas import InputMessage, ThreadEventCreate, input_messages_to_domain
+from yuxi.api.routers.public_v1.agents.schemas import InputMessage, SessionEventCreate, input_messages_to_domain
 from yuxi.api.routers.public_v1.agents.auth import require_public_context
 from yuxi.modules.agents.services.inputs import _accepted, thread_id_for_creation
 from yuxi.modules.agents.services.scope import ActorScope
@@ -74,11 +74,11 @@ def test_message_priority_has_no_target_turn(mode):
         "input": [{"role": "user", "content": [{"type": "input_text", "text": "message"}]}],
         "yuxi": {"mode": mode},
     }
-    accepted = ThreadEventCreate.model_validate({"events": [event]})
+    accepted = SessionEventCreate.model_validate({"events": [event]})
     assert accepted.events[0].yuxi.mode == mode
     event["yuxi"]["turn_id"] = "ended-turn"
     with pytest.raises(ValidationError, match="turn_id"):
-        ThreadEventCreate.model_validate({"events": [event]})
+        SessionEventCreate.model_validate({"events": [event]})
 
 
 def test_receipt_returns_identity_and_consumption_without_effective_mode():
@@ -97,7 +97,7 @@ def test_receipt_returns_identity_and_consumption_without_effective_mode():
 def test_wire_rejects_unknown_fields_and_remote_images():
     """未定义命令字段与远程图片在持久化前被拒绝。"""
     with pytest.raises(ValidationError):
-        ThreadEventCreate.model_validate(
+        SessionEventCreate.model_validate(
             {
                 "events": [
                     {

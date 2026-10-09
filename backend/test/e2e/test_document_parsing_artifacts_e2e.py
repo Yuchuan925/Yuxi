@@ -81,7 +81,7 @@ async def test_chat_parse_confirm_and_delete_preserve_complete_local_directory(
         )
         assert configured.status_code == 200, configured.text
         created = await e2e_client.post(
-            "/api/v1/agents/threads",
+            "/api/v1/agents/sessions",
             json={"agent_id": e2e_agent_context["agent_slug"], "title": make_test_session_title("parser-folder")},
             headers={**e2e_headers, "Idempotency-Key": uuid4().hex},
         )
@@ -111,7 +111,7 @@ async def test_chat_parse_confirm_and_delete_preserve_complete_local_directory(
         assert await client.alist_object_metadata(client.KB_BUCKETS["documents"], parsed_name) == []
         assert await client.alist_object_metadata(client.KB_BUCKETS["images"], "unknown/") == image_objects_before
         confirmed = await e2e_client.post(
-            f"/api/v1/agents/threads/{thread_id}/attachments/confirm",
+            f"/api/v1/agents/sessions/{thread_id}/attachments/confirm",
             json={"attachments": [{"object_name": uploaded["object_name"], "parsed_object_name": parsed_name}]},
             headers=e2e_headers,
         )
@@ -135,7 +135,7 @@ async def test_chat_parse_confirm_and_delete_preserve_complete_local_directory(
             [stored] = await repository.get_attachments(agent_session.id)
             assert stored["parsed_directory"] == str(PurePosixPath(attachment["path"]).parent)
         deleted = await e2e_client.delete(
-            f"/api/v1/agents/threads/{thread_id}/attachments/{attachment['file_id']}",
+            f"/api/v1/agents/sessions/{thread_id}/attachments/{attachment['file_id']}",
             headers=e2e_headers,
         )
         assert deleted.status_code == 200, deleted.text
@@ -155,7 +155,7 @@ async def test_chat_parse_confirm_and_delete_preserve_complete_local_directory(
         assert restored.status_code == 200, restored.text
         if thread_id and attachment:
             await e2e_client.delete(
-                f"/api/v1/agents/threads/{thread_id}/attachments/{attachment['file_id']}", headers=e2e_headers
+                f"/api/v1/agents/sessions/{thread_id}/attachments/{attachment['file_id']}", headers=e2e_headers
             )
         if uploaded:
             prefix = str(PurePosixPath(uploaded["object_name"]).parents[1])
@@ -165,7 +165,7 @@ async def test_chat_parse_confirm_and_delete_preserve_complete_local_directory(
             except FileNotFoundError:
                 pass
         if thread_id:
-            await e2e_client.post(f"/api/v1/agents/threads/{thread_id}/archive", headers=e2e_headers)
+            await e2e_client.post(f"/api/v1/agents/sessions/{thread_id}/archive", headers=e2e_headers)
             remove_e2e_thread_storage(thread_id)
         await asyncio.to_thread(replay.shutdown)
         replay.server_close()

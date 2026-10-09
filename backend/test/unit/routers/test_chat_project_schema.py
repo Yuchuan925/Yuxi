@@ -1,13 +1,13 @@
 import pytest
 from pydantic import ValidationError
 
-from yuxi.api.routers.public_v1.agents.schemas import ThreadCreate, ThreadUpdate
+from yuxi.api.routers.public_v1.agents.schemas import SessionCreate, ThreadUpdate
 
 
 def test_thread_create_rejects_legacy_direct_workdir_path():
     """新线程只能通过 project_id 选择 Workdir。"""
     with pytest.raises(ValidationError):
-        ThreadCreate(agent_id="main", workdir_path="client/demo")
+        SessionCreate(agent_id="main", workdir_path="client/demo")
 
 
 def test_thread_update_rejects_project_rebinding():

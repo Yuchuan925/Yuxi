@@ -16,7 +16,7 @@ CLI 使用 npm 包 `@xerrors/yuxi`，要求 Node.js 22+，使用 TypeScript、ES
 
 ### 实现方案
 
-入口为 `yuxi` bin。Public Agent 使用 `/api/v1/agents`，Thread 使用 `/api/v1/agents/threads` 及其事件、快照和 SSE 路由，知识库使用 `/api/v1/knowledge/tools` 的列库、文件搜索、检索、打开和查找接口（见[接口收敛决定](2026-10-09-remove-knowledge-external-api.md)）；系统 discovery、health 和 CLI auth 使用现有公开系统/认证路由。`ChatSession` 拥有 Thread cursor、Turn 过滤、逻辑事件去重和有限断线恢复，正常输出只消费 `output_text.delta`，事件流在终态前结束时失败。网络失败、非 JSON 响应、SSE 解析失败和服务端错误转换为非零退出与可读错误。
+入口为 `yuxi` bin。Public Agent 使用 `/api/v1/agents`，Thread 使用 `/api/v1/agents/sessions`（见[公开路径决定](2026-10-09-agents-session-protocol.md)）及其事件、快照和 SSE 路由，知识库使用 `/api/v1/knowledge/tools` 的列库、文件搜索、检索、打开和查找接口（见[接口收敛决定](2026-10-09-remove-knowledge-external-api.md)）；系统 discovery、health 和 CLI auth 使用现有公开系统/认证路由。`ChatSession` 拥有 Thread cursor、Turn 过滤、逻辑事件去重和有限断线恢复，正常输出只消费 `output_text.delta`，事件流在终态前结束时失败。网络失败、非 JSON 响应、SSE 解析失败和服务端错误转换为非零退出与可读错误。
 
 ## 替代方案
 

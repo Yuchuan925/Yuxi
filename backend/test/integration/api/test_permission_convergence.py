@@ -198,7 +198,7 @@ async def test_private_agent_crud_isolation_governance_and_app_default(actors):
             response = await method(f"/api/agent/{slug}", headers=actor["headers"], **kwargs)
             assert response.status_code == 404, response.text
         response = await client.post(
-            "/api/v1/agents/threads",
+            "/api/v1/agents/sessions",
             headers={**actor["headers"], "Idempotency-Key": str(uuid.uuid4())},
             json={"agent_id": slug},
         )
@@ -210,7 +210,7 @@ async def test_private_agent_crud_isolation_governance_and_app_default(actors):
     assert governed.status_code == 200 and governed.json()["agent"]["can_manage"]
     assert not governed.json()["agent"]["can_run"]
     run = await client.post(
-        "/api/v1/agents/threads",
+        "/api/v1/agents/sessions",
         headers={**actors["root"], "Idempotency-Key": str(uuid.uuid4())},
         json={"agent_id": slug},
     )
@@ -235,7 +235,7 @@ async def test_private_agent_crud_isolation_governance_and_app_default(actors):
         assert listing.status_code == 200 and slug not in {item["id"] for item in listing.json()["data"]}
         assert (await client.get(f"/api/v1/agents/{slug}", headers=headers)).status_code == 404
         run = await client.post(
-            "/api/v1/agents/threads", headers={**headers, "Idempotency-Key": str(uuid.uuid4())}, json={"agent_id": slug}
+            "/api/v1/agents/sessions", headers={**headers, "Idempotency-Key": str(uuid.uuid4())}, json={"agent_id": slug}
         )
         assert run.status_code in {403, 404}, run.text
     deleted = await client.delete(f"/api/agent/{slug}", headers=owner["headers"])

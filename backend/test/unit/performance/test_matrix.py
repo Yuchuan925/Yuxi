@@ -165,7 +165,7 @@ class ApiBoundaryTest(unittest.IsolatedAsyncioTestCase):
                 {
                     "type": "http",
                     "method": "POST",
-                    "path": "/api/v1/agents/threads/t/events",
+                    "path": "/api/v1/agents/sessions/t/events",
                     "headers": [(b"x-load-test-id", b"matrix-test")],
                 },
                 None,
@@ -327,13 +327,13 @@ class ContinuousChannelsTest(unittest.IsolatedAsyncioTestCase):
         def transport(request):
             """第一次结果仍在运行，不能据取消接口的 200 提前结束。"""
             calls.append((request.method, request.url.path))
-            if request.url.path == "/api/v1/agents/threads/thread/inputs/i":
+            if request.url.path == "/api/v1/agents/sessions/thread/inputs/i":
                 return httpx.Response(200, json={"status": "consumed", "turn_id": "turn", "run_id": run_id})
             if request.method == "POST":
-                self.assertEqual(request.url.path, "/api/v1/agents/threads/thread/events")
+                self.assertEqual(request.url.path, "/api/v1/agents/sessions/thread/events")
                 self.assertEqual(request.headers["Idempotency-Key"], "cancel:req")
                 return httpx.Response(202, json={"turn_id": "turn", "status": "accepted"})
-            self.assertEqual(request.url.path, "/api/v1/agents/threads/thread/turns/turn")
+            self.assertEqual(request.url.path, "/api/v1/agents/sessions/thread/turns/turn")
             return httpx.Response(
                 200,
                 json={
@@ -381,14 +381,14 @@ class ObservationPersistenceTest(unittest.IsolatedAsyncioTestCase):
                     if request.method == "DELETE":
                         deletions.append(request.url.path)
                         return httpx.Response(200, json={})
-                    if request.method == "POST" and request.url.path == "/api/v1/agents/threads/t/archive":
+                    if request.method == "POST" and request.url.path == "/api/v1/agents/sessions/t/archive":
                         archives.append(request.url.path)
                         return httpx.Response(200, json={"status": "archived"})
                     if request.url.path == "/api/auth/users":
                         return httpx.Response(200, json={"id": 1, "uid": "u"})
                     if request.url.path == "/api/auth/token":
                         return httpx.Response(200, json={"access_token": "test-token"})
-                    if request.url.path == "/api/v1/agents/threads":
+                    if request.url.path == "/api/v1/agents/sessions":
                         return httpx.Response(200, json={"id": "t"})
                     raise AssertionError(request.url.path)
 
@@ -469,7 +469,7 @@ class ObservationPersistenceTest(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("client_total_ms", group["requests"][1])
                 if confirmed:
                     self.assertEqual(len(deletions), 1)
-                    self.assertEqual(archives, ["/api/v1/agents/threads/t/archive"])
+                    self.assertEqual(archives, ["/api/v1/agents/sessions/t/archive"])
                 else:
                     self.assertEqual(deletions, [])
                     self.assertEqual(archives, [])

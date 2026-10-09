@@ -381,7 +381,7 @@ def _safe_file_name(file_name: str | None, default: str = "attachment.bin") -> s
 
 
 def _artifact_url(thread_id: str, virtual_path: str) -> str:
-    return f"/api/v1/agents/threads/{thread_id}/artifacts/{quote(virtual_path.lstrip('/'), safe='/')}"
+    return f"/api/v1/agents/sessions/{thread_id}/artifacts/{quote(virtual_path.lstrip('/'), safe='/')}"
 
 
 def _tmp_attachment_prefix(uid: str, tmp_file_id: str) -> str:

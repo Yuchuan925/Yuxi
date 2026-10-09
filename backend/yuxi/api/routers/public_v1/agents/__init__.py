@@ -1,4 +1,4 @@
-"""Agent 对话的 Public Thread 协议。"""
+"""Agent 对话的 Public Session 协议。"""
 
 from fastapi import APIRouter
 

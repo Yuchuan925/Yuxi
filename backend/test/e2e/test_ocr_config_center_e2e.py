@@ -47,7 +47,7 @@ async def test_admin_ocr_config_drives_real_tmp_attachment_parse(
         assert options_response.json()["default_engine"] == "rapid_ocr"
 
         thread_response = await e2e_client.post(
-            "/api/v1/agents/threads",
+            "/api/v1/agents/sessions",
             json={
                 "agent_id": e2e_agent_context["agent_slug"],
                 "title": make_test_session_title("ocr-config-e2e"),
@@ -80,7 +80,7 @@ async def test_admin_ocr_config_drives_real_tmp_attachment_parse(
         assert parsed["parse_method"] == "rapid_ocr"
 
         confirm_response = await e2e_client.post(
-            f"/api/v1/agents/threads/{thread_id}/attachments/confirm",
+            f"/api/v1/agents/sessions/{thread_id}/attachments/confirm",
             json={
                 "attachments": [
                     {
@@ -149,7 +149,7 @@ async def _cleanup_created_resources(
 
     if thread_id and attachment:
         response = await e2e_client.delete(
-            f"/api/v1/agents/threads/{thread_id}/attachments/{attachment['file_id']}",
+            f"/api/v1/agents/sessions/{thread_id}/attachments/{attachment['file_id']}",
             headers=e2e_headers,
         )
         assert response.status_code == 200, response.text
@@ -163,6 +163,6 @@ async def _cleanup_created_resources(
             assert await minio_client.adelete_file(minio_client.KB_BUCKETS["documents"], object_name)
 
     if thread_id:
-        response = await e2e_client.post(f"/api/v1/agents/threads/{thread_id}/archive", headers=e2e_headers)
+        response = await e2e_client.post(f"/api/v1/agents/sessions/{thread_id}/archive", headers=e2e_headers)
         assert response.status_code == 200, response.text
         remove_e2e_thread_storage(thread_id)

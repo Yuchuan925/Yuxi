@@ -16,14 +16,14 @@ async def test_public_thread_endpoints_require_authentication(test_client):
     thread_id = str(uuid.uuid4())
     headers = {"Idempotency-Key": str(uuid.uuid4())}
     created = await test_client.post(
-        "/api/v1/agents/threads",
+        "/api/v1/agents/sessions",
         json={"agent_id": "default-chatbot"},
         headers=headers,
     )
     assert created.status_code == 401
-    assert (await test_client.get(f"/api/v1/agents/threads/{thread_id}")).status_code == 401
+    assert (await test_client.get(f"/api/v1/agents/sessions/{thread_id}")).status_code == 401
     cancelled = await test_client.post(
-        f"/api/v1/agents/threads/{thread_id}/events",
+        f"/api/v1/agents/sessions/{thread_id}/events",
         json={"events": [{"type": "agent.session.input.cancel", "yuxi": {"turn_id": str(uuid.uuid4())}}]},
         headers=headers,
     )
@@ -33,7 +33,7 @@ async def test_public_thread_endpoints_require_authentication(test_client):
 async def test_public_create_rejects_empty_input(test_client, admin_headers):
     """空输入不能伪装成第一轮工作。"""
     response = await test_client.post(
-        "/api/v1/agents/threads",
+        "/api/v1/agents/sessions",
         json={"agent_id": "default-chatbot", "input": []},
         headers={**admin_headers, "Idempotency-Key": str(uuid.uuid4())},
     )
@@ -44,8 +44,8 @@ async def test_public_missing_thread_and_turn_return_not_found(test_client, admi
     """未知 Thread 与 Turn 不会退回相邻执行结果。"""
     thread_id = str(uuid.uuid4())
     turn_id = str(uuid.uuid4())
-    assert (await test_client.get(f"/api/v1/agents/threads/{thread_id}", headers=admin_headers)).status_code == 404
-    turn = await test_client.get(f"/api/v1/agents/threads/{thread_id}/turns/{turn_id}", headers=admin_headers)
+    assert (await test_client.get(f"/api/v1/agents/sessions/{thread_id}", headers=admin_headers)).status_code == 404
+    turn = await test_client.get(f"/api/v1/agents/sessions/{thread_id}/turns/{turn_id}", headers=admin_headers)
     assert turn.status_code == 404
 
 
@@ -73,7 +73,7 @@ async def test_public_input_rejects_unbound_attachment_without_persisting_receip
     agent = directory.json()["data"][0]
     slug = agent.get("id") or agent.get("slug") or agent["agent_id"]
     created = await test_client.post(
-        "/api/v1/agents/threads",
+        "/api/v1/agents/sessions",
         json={"agent_id": slug, "title": make_test_session_title("attachment-input")},
         headers={**admin_headers, "Idempotency-Key": str(uuid.uuid4())},
     )
@@ -97,7 +97,7 @@ async def test_public_input_rejects_unbound_attachment_without_persisting_receip
             await conn.execute("UPDATE sessions SET queue_paused = TRUE WHERE thread_id = $1", thread_id)
 
         response = await test_client.post(
-            f"/api/v1/agents/threads/{thread_id}/events",
+            f"/api/v1/agents/sessions/{thread_id}/events",
             json={
                 "events": [
                     {
@@ -127,11 +127,11 @@ async def test_public_input_rejects_unbound_attachment_without_persisting_receip
             input_id = response.json().get("input_id")
             if input_id:
                 cancelled = await test_client.post(
-                    f"/api/v1/agents/threads/{thread_id}/events",
+                    f"/api/v1/agents/sessions/{thread_id}/events",
                     json={"events": [{"type": "yuxi.session.input.cancel_input", "input_id": input_id}]},
                     headers={**admin_headers, "Idempotency-Key": str(uuid.uuid4())},
                 )
                 assert cancelled.status_code == 202, cancelled.text
-        archived = await test_client.post(f"/api/v1/agents/threads/{thread_id}/archive", headers=admin_headers)
+        archived = await test_client.post(f"/api/v1/agents/sessions/{thread_id}/archive", headers=admin_headers)
         assert archived.status_code == 200, archived.text
         await conn.close()

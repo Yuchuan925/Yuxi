@@ -144,21 +144,21 @@ async def test_state_recovers_children_without_checkpoint_and_rejects_other_user
             await db.commit()
 
         response = await test_client.get(
-            f"/api/v1/agents/threads/{parent_thread}/state", headers=cooperation_user["headers"]
+            f"/api/v1/agents/sessions/{parent_thread}/state", headers=cooperation_user["headers"]
         )
         assert response.status_code == 200, response.text
         runs = response.json()["agent_state"]["cooperation"]["sessions"]
         assert len(runs) == 2, response.json()
         member = next(item for item in runs if item["session_id"] == child_thread)
         assert member["current_run_id"] == child_id and member["turn_status"] == "completed"
-        summary_url = f"/api/v1/agents/threads/{parent_thread}/cooperation"
+        summary_url = f"/api/v1/agents/sessions/{parent_thread}/cooperation"
         summary = await test_client.get(summary_url, headers=cooperation_user["headers"])
         assert summary.status_code == 200, summary.text
         snapshot = summary.json()
         assert "agent_state" not in snapshot and "next_cursor" not in snapshot
         assert {row["session_id"] for row in snapshot["sessions"]} == {parent_thread, child_thread}
         assert all("output" not in row for row in snapshot["sessions"])
-        child_run_url = f"/api/v1/agents/threads/{child_thread}/runs/{child_id}"
+        child_run_url = f"/api/v1/agents/sessions/{child_thread}/runs/{child_id}"
         run_response = await test_client.get(child_run_url, headers=cooperation_user["headers"])
         assert run_response.status_code == 200, run_response.text
         assert run_response.json()["status"] == "completed"
@@ -166,7 +166,7 @@ async def test_state_recovers_children_without_checkpoint_and_rejects_other_user
             persisted = await db.get(AgentRun, child_id)
             assert persisted is not None and persisted.turn_id == child_turn_id
             assert persisted.created_by_run_id == parent_id
-        for url in (f"/api/v1/agents/threads/{parent_thread}/state", child_run_url, summary_url):
+        for url in (f"/api/v1/agents/sessions/{parent_thread}/state", child_run_url, summary_url):
             denied = await test_client.get(url, headers=admin_headers)
             assert denied.status_code == 404, denied.text
             assert child_id not in denied.text

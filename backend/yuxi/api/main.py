@@ -85,7 +85,23 @@ def _build_cors_options(origins: list[str] | None = None) -> dict[str, object]:
     }
 
 
-app = FastAPI(lifespan=lifespan)
+app = FastAPI(
+    lifespan=lifespan,
+    openapi_tags=[
+        {
+            "name": "agents-public-v1",
+            "description": (
+                "对外智能体 Session API。JWT 或 Bearer API Key 鉴权；APP Key 用 X-End-User-Id 区分终端用户。"
+                "创建和事件提交必须携带 Idempotency-Key。公开路径使用 sessions；扩展动作和生命周期规则见接入说明。"
+                "SSE 为长期订阅，调用方按 Turn 终态回读结果并主动关闭。"
+            ),
+            "externalDocs": {
+                "description": "接入与差异说明",
+                "url": "https://github.com/xerrors/Yuxi/blob/main/docs/advanced/agents-public-api.md",
+            },
+        }
+    ],
+)
 # 所有业务接口统一挂载到 /api，具体分组在 yuxi.api.routers 中集中注册。
 app.include_router(router, prefix="/api")
 

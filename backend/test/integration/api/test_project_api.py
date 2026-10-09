@@ -134,7 +134,7 @@ async def _create_lifecycle_session(
 
 async def test_default_thread_creates_implicit_project_with_exclusive_binding(test_client, admin_headers):
     response = await test_client.post(
-        "/api/v1/agents/threads",
+        "/api/v1/agents/sessions",
         headers=_public_headers(admin_headers),
         json={
             "agent_id": await _default_agent_slug(test_client, admin_headers),
@@ -142,7 +142,7 @@ async def test_default_thread_creates_implicit_project_with_exclusive_binding(te
         },
     )
     assert response.status_code == 200, response.text
-    snapshot = await test_client.get(f"/api/v1/agents/threads/{response.json()['thread_id']}", headers=admin_headers)
+    snapshot = await test_client.get(f"/api/v1/agents/sessions/{response.json()['thread_id']}", headers=admin_headers)
     assert snapshot.status_code == 200, snapshot.text
     payload = snapshot.json()
     assert payload["project_id"]
@@ -183,7 +183,7 @@ async def test_linked_project_and_thread_selection_keep_directory_bytes(
 
     title = make_test_session_title("linked-project")
     thread_response = await test_client.post(
-        "/api/v1/agents/threads",
+        "/api/v1/agents/sessions",
         headers=_public_headers(admin_headers),
         json={
             "agent_id": await _default_agent_slug(test_client, admin_headers),
@@ -195,7 +195,7 @@ async def test_linked_project_and_thread_selection_keep_directory_bytes(
     assert thread_response.json()["title"] == title
     assert thread_response.json()["project_id"] == project["id"]
     snapshot = await test_client.get(
-        f"/api/v1/agents/threads/{thread_response.json()['thread_id']}", headers=admin_headers
+        f"/api/v1/agents/sessions/{thread_response.json()['thread_id']}", headers=admin_headers
     )
     assert snapshot.status_code == 200, snapshot.text
     thread = snapshot.json()
@@ -203,14 +203,14 @@ async def test_linked_project_and_thread_selection_keep_directory_bytes(
     assert project["workdir_path"] == directory_name
 
     rebind = await test_client.patch(
-        f"/api/v1/agents/threads/{thread['id']}",
+        f"/api/v1/agents/sessions/{thread['id']}",
         headers=admin_headers,
         json={"project_id": str(uuid.uuid4())},
     )
     assert rebind.status_code == 422, rebind.text
 
     legacy_direct_path = await test_client.post(
-        "/api/v1/agents/threads",
+        "/api/v1/agents/sessions",
         headers=_public_headers(admin_headers),
         json={
             "agent_id": await _default_agent_slug(test_client, admin_headers),
@@ -275,7 +275,7 @@ async def test_project_rename_and_delete_soft_delete_sessions_but_keep_workdir(
     thread_ids = []
     for suffix in ("one", "two"):
         thread_response = await test_client.post(
-            "/api/v1/agents/threads",
+            "/api/v1/agents/sessions",
             headers=_public_headers(admin_headers),
             json={
                 "agent_id": agent_slug,
@@ -318,7 +318,7 @@ async def test_project_rename_and_delete_soft_delete_sessions_but_keep_workdir(
     assert projects_response.status_code == 200, projects_response.text
     assert project["id"] not in {item["id"] for item in projects_response.json()}
 
-    threads_response = await test_client.get("/api/v1/agents/threads", headers=admin_headers)
+    threads_response = await test_client.get("/api/v1/agents/sessions", headers=admin_headers)
     assert threads_response.status_code == 200, threads_response.text
     assert set(thread_ids).isdisjoint({item["id"] for item in threads_response.json()})
 
@@ -345,7 +345,7 @@ async def test_project_rename_and_delete_soft_delete_sessions_but_keep_workdir(
     assert {row["thread_id"] for row in session_rows} == set(thread_ids)
     assert {row["status"] for row in session_rows} == {"archived"}
     for thread_id in thread_ids:
-        history = await test_client.get(f"/api/v1/agents/threads/{thread_id}", headers=admin_headers)
+        history = await test_client.get(f"/api/v1/agents/sessions/{thread_id}", headers=admin_headers)
         assert history.status_code == 200, history.text
         assert history.json()["status"] == "archived"
 

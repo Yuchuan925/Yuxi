@@ -197,7 +197,7 @@ async def cancel_failed_request(load_client, row):
         async with asyncio.timeout(10):
             if row.get("input_id") and not row.get("turn_id"):
                 snapshot = await load_client.client.get(
-                    f"/api/v1/agents/threads/{row['thread_id']}/inputs/{row['input_id']}",
+                    f"/api/v1/agents/sessions/{row['thread_id']}/inputs/{row['input_id']}",
                     headers=load_client.headers,
                 )
                 snapshot.raise_for_status()

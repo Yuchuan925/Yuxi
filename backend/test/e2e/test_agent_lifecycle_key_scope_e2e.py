@@ -99,12 +99,12 @@ async def test_private_agent_key_run_uses_end_user_workspace_and_app_scope(e2e_c
             "model_spec": MODEL,
             "input": [_message(OUTPUT)],
         }
-        accepted = await e2e_client.post("/api/v1/agents/threads", headers=public_headers, json=body)
+        accepted = await e2e_client.post("/api/v1/agents/sessions", headers=public_headers, json=body)
         assert accepted.status_code == 200, accepted.text
         assert accepted.headers["X-App-Id"] == app_id
         receipt = accepted.json()
         thread_id = receipt["thread_id"]
-        replay = await e2e_client.post("/api/v1/agents/threads", headers=public_headers, json=body)
+        replay = await e2e_client.post("/api/v1/agents/sessions", headers=public_headers, json=body)
         assert replay.status_code == 200, replay.text
         assert replay.json()["thread_id"] == thread_id
 
@@ -112,10 +112,10 @@ async def test_private_agent_key_run_uses_end_user_workspace_and_app_scope(e2e_c
             {"Authorization": public_headers["Authorization"]},
             {**public_headers, "X-End-User-Id": other_end_user_id},
         ):
-            hidden = await e2e_client.get(f"/api/v1/agents/threads/{thread_id}", headers=headers)
+            hidden = await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}", headers=headers)
             assert hidden.status_code == 404, hidden.text
             hidden_turn = await e2e_client.get(
-                f"/api/v1/agents/threads/{thread_id}/turns/{receipt['turn_id']}", headers=headers
+                f"/api/v1/agents/sessions/{thread_id}/turns/{receipt['turn_id']}", headers=headers
             )
             assert hidden_turn.status_code == 404, hidden_turn.text
 
@@ -161,7 +161,7 @@ async def test_private_agent_key_run_uses_end_user_workspace_and_app_scope(e2e_c
         assert not (user_workspace_dir(owner_uid) / persisted["workdir_path"]).exists()
     finally:
         if thread_id and public_headers:
-            archived = await e2e_client.post(f"/api/v1/agents/threads/{thread_id}/archive", headers=public_headers)
+            archived = await e2e_client.post(f"/api/v1/agents/sessions/{thread_id}/archive", headers=public_headers)
             assert archived.status_code == 200, archived.text
             await _delete_key_thread(
                 thread_id,

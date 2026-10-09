@@ -120,7 +120,7 @@ async function fixture() {
         ],
       });
     } else if (
-      url.pathname === "/api/v1/agents/threads" &&
+      url.pathname === "/api/v1/agents/sessions" &&
       req.method === "GET"
     ) {
       json(app === "alpha" && !user ? [state.snapshot] : []);
@@ -154,7 +154,7 @@ async function fixture() {
         });
       }
     } else if (
-      url.pathname === "/api/v1/agents/threads" &&
+      url.pathname === "/api/v1/agents/sessions" &&
       req.method === "POST"
     ) {
       const key = req.headers["idempotency-key"];
@@ -469,7 +469,7 @@ test("已接收但回执失败的输入手动重试复用同一幂等键", async
   await expect(page.getByLabel("对话消息")).toContainText("只能保存一次");
   const creates = backend.requests.filter(
     (request) =>
-      request.method === "POST" && request.path === "/api/v1/agents/threads",
+      request.method === "POST" && request.path === "/api/v1/agents/sessions",
   );
   expect(creates).toHaveLength(2);
   expect(creates[0].headers["idempotency-key"]).toBe(

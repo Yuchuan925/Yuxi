@@ -152,7 +152,7 @@ async def test_dashboard_http_counts_all_sessions_and_excludes_deleted(test_clie
     thread_ids = []
     for status in ("active", "member", "deleted"):
         response = await test_client.post(
-            "/api/v1/agents/threads",
+            "/api/v1/agents/sessions",
             headers={**admin_headers, "Idempotency-Key": f"{marker}-{status}"},
             json={
                 "agent_id": agent_id,
@@ -195,7 +195,7 @@ async def test_dashboard_http_reads_run_token_totals(test_client, admin_headers)
     agent_id = str(agent.get("slug") or agent["agent_id"])
     marker = f"dashboard-usage-{uuid.uuid4().hex[:10]}"
     response = await test_client.post(
-        "/api/v1/agents/threads",
+        "/api/v1/agents/sessions",
         headers={**admin_headers, "Idempotency-Key": marker},
         json={
             "agent_id": agent_id,

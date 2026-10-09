@@ -253,7 +253,7 @@ async def save_thread_artifact_to_workspace_view(
         "name": PurePosixPath(target).name,
         "source_path": normalized,
         "saved_path": target,
-        "saved_artifact_url": f"/api/v1/agents/threads/{thread_id}/artifacts/{target.lstrip('/')}",
+        "saved_artifact_url": f"/api/v1/agents/sessions/{thread_id}/artifacts/{target.lstrip('/')}",
     }
 
 

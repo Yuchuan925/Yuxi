@@ -23,10 +23,10 @@ async function get(path) {
 async function awaitResults() {
   const deadline = Date.now() + 120000;
   while (Date.now() < deadline) {
-    const history = await get(`/threads/${threadId}/history`);
+    const history = await get(`/sessions/${threadId}/history`);
     if (history.thread.current_turn?.status === "failed") {
       const turn = await get(
-        `/threads/${threadId}/turns/${history.thread.current_turn.turn_id}`,
+        `/sessions/${threadId}/turns/${history.thread.current_turn.turn_id}`,
       );
       const failed = turn.runs.find((run) => run.status === "failed");
       const detail = String(failed?.error_message || "")
@@ -92,7 +92,7 @@ try {
   const created = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&
-      new URL(response.url()).pathname === "/api/v1/agents/threads",
+      new URL(response.url()).pathname === "/api/v1/agents/sessions",
   );
   await page.getByLabel("消息输入").fill(prompt);
   await page.getByRole("button", { name: "发送消息" }).click();
@@ -120,7 +120,7 @@ try {
     ),
   );
   for (const item of finalItems) {
-    const turn = await get(`/threads/${threadId}/turns/${item.turn_id}`);
+    const turn = await get(`/sessions/${threadId}/turns/${item.turn_id}`);
     assert.equal(turn.status, "completed");
     assert.equal(turn.result_run_id, item.yuxi.run_id);
   }
@@ -169,13 +169,13 @@ try {
 } finally {
   await browser.close();
   if (threadId) {
-    const snapshot = await get(`/threads/${threadId}`);
+    const snapshot = await get(`/sessions/${threadId}`);
     if (
       ["completed", "failed", "cancelled"].includes(
         snapshot.current_turn?.status,
       )
     ) {
-      await fetch(`${baseUrl}/api/v1/agents/threads/${threadId}/archive`, {
+      await fetch(`${baseUrl}/api/v1/agents/sessions/${threadId}/archive`, {
         method: "POST",
         headers,
       });

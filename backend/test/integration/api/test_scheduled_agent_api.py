@@ -155,14 +155,14 @@ async def test_scheduled_task_crud_persists_and_enforces_owner_scope(
     cancel_sent = False
     for _ in range(150):
         turn = await test_client.get(
-            f"/api/v1/agents/threads/{thread_id}/turns/{turn_id}", headers=owner_headers
+            f"/api/v1/agents/sessions/{thread_id}/turns/{turn_id}", headers=owner_headers
         )
         assert turn.status_code == 200, turn.text
         if turn.json()["status"] in {"completed", "failed", "cancelled"}:
             break
         if not cancel_sent:
             cancel = await test_client.post(
-                f"/api/v1/agents/threads/{thread_id}/events",
+                f"/api/v1/agents/sessions/{thread_id}/events",
                 headers={**owner_headers, "Idempotency-Key": f"pytest-scheduled-cancel-{uuid.uuid4()}"},
                 json={"events": [{"type": "agent.session.input.cancel", "yuxi": {"turn_id": turn_id}}]},
             )

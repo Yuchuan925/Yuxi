@@ -102,15 +102,15 @@ export function createApi(
     listAgents: () => request("/"),
     listThreads: (agentId, offset = 0) =>
       request(
-        `/threads?agent_id=${encodeURIComponent(agentId)}&limit=50&offset=${offset}`,
+        `/sessions?agent_id=${encodeURIComponent(agentId)}&limit=50&offset=${offset}`,
       ),
-    history: (id) => request(`/threads/${encodeURIComponent(id)}/history`),
+    history: (id) => request(`/sessions/${encodeURIComponent(id)}/history`),
     state: (id) =>
       request(
-        `/threads/${encodeURIComponent(id)}/state?include_messages=false&include_relations=false`,
+        `/sessions/${encodeURIComponent(id)}/state?include_messages=false&include_relations=false`,
       ),
     events: (id, cursor) =>
-      request(`/threads/${encodeURIComponent(id)}/events`, {
+      request(`/sessions/${encodeURIComponent(id)}/events`, {
         cursor,
         raw: true,
       }),
@@ -133,7 +133,7 @@ export function artifactPath(threadId, path) {
     .split("/")
     .map(encodeURIComponent)
     .join("/");
-  return `/threads/${encodeURIComponent(threadId)}/artifacts/${encoded}?download=true`;
+  return `/sessions/${encodeURIComponent(threadId)}/artifacts/${encoded}?download=true`;
 }
 
 /** 优先采用服务器提供的下载文件名。 */

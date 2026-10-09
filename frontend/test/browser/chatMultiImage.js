@@ -86,7 +86,7 @@ async (page) => {
   // ---- 4. 发送：请求体是数组，且模型确实读到了两张 ----
   const posted = []
   page.on('request', (request) => {
-    if (/\/api\/v1\/agents\/threads\/[^/]+\/events$/.test(request.url()) && request.method() === 'POST') {
+    if (/\/api\/v1\/agents\/sessions\/[^/]+\/events$/.test(request.url()) && request.method() === 'POST') {
       try {
         const body = JSON.parse(request.postData() || '{}')
         const message = body.events?.find((event) => event.type === 'agent.session.input.message')
@@ -144,7 +144,7 @@ async (page) => {
 
   const dto = await page.evaluate(async (id) => {
     const token = localStorage.getItem('user_token')
-    const response = await fetch(`/api/v1/agents/threads/${id}/history`, {
+    const response = await fetch(`/api/v1/agents/sessions/${id}/history`, {
       headers: { Authorization: `Bearer ${token}` }
     })
     const data = await response.json()

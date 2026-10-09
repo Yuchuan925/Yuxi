@@ -24,7 +24,7 @@ async def test_default_message_keeps_batch_across_concurrent_steer_and_retry(e2e
     async with httpx.AsyncClient(base_url="http://api:8765", timeout=5) as replay:
         try:
             created = await e2e_client.post(
-                "/api/v1/agents/threads",
+                "/api/v1/agents/sessions",
                 headers={**e2e_headers, "Idempotency-Key": f"create-{gate}"},
                 json={
                     "agent_id": slug,
@@ -34,7 +34,7 @@ async def test_default_message_keeps_batch_across_concurrent_steer_and_retry(e2e
             )
             assert created.status_code == 200, created.text
             thread_id = created.json()["thread_id"]
-            url = f"/api/v1/agents/threads/{thread_id}/events"
+            url = f"/api/v1/agents/sessions/{thread_id}/events"
             started = await e2e_client.post(
                 url,
                 headers={**e2e_headers, "Idempotency-Key": f"idle-{gate}"},
@@ -95,7 +95,7 @@ async def test_default_message_keeps_batch_across_concurrent_steer_and_retry(e2e
                 while True:
                     input_result = (
                         await e2e_client.get(
-                            f"/api/v1/agents/threads/{thread_id}/inputs/{queued.json()['input_id']}",
+                            f"/api/v1/agents/sessions/{thread_id}/inputs/{queued.json()['input_id']}",
                             headers=e2e_headers,
                         )
                     ).json()
@@ -129,9 +129,9 @@ async def test_default_message_keeps_batch_across_concurrent_steer_and_retry(e2e
             finally:
                 await conn.close()
             # 每个公开 item 独立分页，不能按 Message ID 截断同消息的工具 item。
-            history = (await e2e_client.get(f"/api/v1/agents/threads/{thread_id}/history", headers=e2e_headers)).json()
+            history = (await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/history", headers=e2e_headers)).json()
             expected = [item for item in history["items"] if item["turn_id"] == turn_id]
-            page_url = f"/api/v1/agents/threads/{thread_id}/turns/{turn_id}/items"
+            page_url = f"/api/v1/agents/sessions/{thread_id}/turns/{turn_id}/items"
             seen, after = [], None
             for _ in range(len(expected) + 1):
                 response = await e2e_client.get(
@@ -164,7 +164,7 @@ async def test_default_cancel_target_is_fixed_for_idempotent_retry(e2e_client, e
     async with httpx.AsyncClient(base_url="http://api:8765", timeout=5) as replay:
         try:
             created = await e2e_client.post(
-                "/api/v1/agents/threads",
+                "/api/v1/agents/sessions",
                 headers={**e2e_headers, "Idempotency-Key": f"cancel-create-{gate}"},
                 json={
                     "agent_id": slug,
@@ -178,7 +178,7 @@ async def test_default_cancel_target_is_fixed_for_idempotent_retry(e2e_client, e
             async with asyncio.timeout(30):
                 while not (await replay.get("/blocking-started", params={"token": gate})).json()["started"]:
                     await asyncio.sleep(0.1)
-            url = f"/api/v1/agents/threads/{thread_id}/events"
+            url = f"/api/v1/agents/sessions/{thread_id}/events"
             headers = {**e2e_headers, "Idempotency-Key": f"cancel-{gate}"}
             body = {"events": [{"type": "agent.session.input.cancel"}]}
             cancelled = await e2e_client.post(url, headers=headers, json=body)
@@ -219,7 +219,7 @@ async def test_cancel_preserves_displayed_partial_text_in_public_history(e2e_cli
     async with httpx.AsyncClient(base_url="http://api:8765", timeout=5) as replay:
         try:
             created = await e2e_client.post(
-                "/api/v1/agents/threads",
+                "/api/v1/agents/sessions",
                 headers={**e2e_headers, "Idempotency-Key": str(uuid.uuid4())},
                 json={
                     "agent_id": slug,
@@ -234,7 +234,7 @@ async def test_cancel_preserves_displayed_partial_text_in_public_history(e2e_cli
             thread_id, turn_id = created.json()["thread_id"], created.json()["turn_id"]
             async with asyncio.timeout(30):
                 async with e2e_client.stream(
-                    "GET", f"/api/v1/agents/threads/{thread_id}/events", headers=e2e_headers
+                    "GET", f"/api/v1/agents/sessions/{thread_id}/events", headers=e2e_headers
                 ) as stream:
                     async for _, event in read_events(stream):
                         if event["type"] == "agent.session.turn.output_text.delta":
@@ -242,14 +242,14 @@ async def test_cancel_preserves_displayed_partial_text_in_public_history(e2e_cli
                             break
             assert shown == OUTPUT
             cancelled = await e2e_client.post(
-                f"/api/v1/agents/threads/{thread_id}/events",
+                f"/api/v1/agents/sessions/{thread_id}/events",
                 headers={**e2e_headers, "Idempotency-Key": str(uuid.uuid4())},
                 json={"events": [{"type": "agent.session.input.cancel"}]},
             )
             assert cancelled.status_code == 202, cancelled.text
             await replay.get("/release-blocking", params={"token": gate})
             assert (await _turn(e2e_client, e2e_headers, thread_id, turn_id))["status"] == "cancelled"
-            history = (await e2e_client.get(f"/api/v1/agents/threads/{thread_id}/history", headers=e2e_headers)).json()
+            history = (await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/history", headers=e2e_headers)).json()
             item = next(item for item in history["items"] if item["id"] == item_id)
             assert item["status"] == "incomplete"
             assert item["content"] == [{"type": "output_text", "text": shown}]

@@ -37,7 +37,7 @@ async def test_viewer_and_artifact_download_preserve_mime_and_multichunk_bytes(t
     agent_id = agent.get("slug") or agent.get("id")
     assert agent_id
     created = await test_client.post(
-        "/api/v1/agents/threads",
+        "/api/v1/agents/sessions",
         json={"agent_id": agent_id, "title": make_test_session_title("mime-fd-copy")},
         headers={**headers, "Idempotency-Key": str(uuid4())},
     )

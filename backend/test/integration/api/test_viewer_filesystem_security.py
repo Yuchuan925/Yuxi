@@ -21,7 +21,7 @@ async def _create_thread_for_user(test_client, headers: dict[str, str]) -> tuple
         pytest.skip("Default agent payload missing id field.")
 
     create_resp = await test_client.post(
-        "/api/v1/agents/threads",
+        "/api/v1/agents/sessions",
         json={
             "agent_id": agent_id,
             "title": make_test_session_title("viewer-filesystem-security"),

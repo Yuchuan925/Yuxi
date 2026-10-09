@@ -39,7 +39,7 @@ async def test_state_view_reads_postgres_snapshot_and_rejects_other_users(test_c
     async with AsyncPostgresSaver.from_conn_string(dsn) as saver:
         try:
             created_thread = await test_client.post(
-                "/api/v1/agents/threads",
+                "/api/v1/agents/sessions",
                 json={
                     "agent_id": slug,
                     "title": make_test_session_title("checkpoint"),
@@ -48,7 +48,7 @@ async def test_state_view_reads_postgres_snapshot_and_rejects_other_users(test_c
             )
             assert created_thread.status_code == 200, created_thread.text
             thread_id = created_thread.json()["id"]
-            url = f"/api/v1/agents/threads/{thread_id}/state"
+            url = f"/api/v1/agents/sessions/{thread_id}/state"
             empty = await test_client.get(url, headers=admin_headers)
             assert empty.status_code == 200, empty.text
             state = empty.json()["agent_state"]
@@ -83,9 +83,9 @@ async def test_state_view_reads_postgres_snapshot_and_rejects_other_users(test_c
             assert (await test_client.get(url)).status_code == 401
             assert (await test_client.get(url, headers=standard_user["headers"])).status_code == 404
             assert (
-                await test_client.get(f"/api/v1/agents/threads/{uuid.uuid4()}/state", headers=admin_headers)
+                await test_client.get(f"/api/v1/agents/sessions/{uuid.uuid4()}/state", headers=admin_headers)
             ).status_code == 404
-            archived = await test_client.post(f"/api/v1/agents/threads/{thread_id}/archive", headers=admin_headers)
+            archived = await test_client.post(f"/api/v1/agents/sessions/{thread_id}/archive", headers=admin_headers)
             assert archived.status_code == 200, archived.text
             preserved = await test_client.get(url, headers=admin_headers)
             assert preserved.status_code == 200, preserved.text
@@ -93,7 +93,7 @@ async def test_state_view_reads_postgres_snapshot_and_rejects_other_users(test_c
         finally:
             if thread_id:
                 await saver.adelete_thread(thread_id)
-                archived = await test_client.post(f"/api/v1/agents/threads/{thread_id}/archive", headers=admin_headers)
+                archived = await test_client.post(f"/api/v1/agents/sessions/{thread_id}/archive", headers=admin_headers)
                 assert archived.status_code in (200, 404), archived.text
             deleted_agent = await test_client.delete(f"/api/agent/{slug}", headers=admin_headers)
             assert deleted_agent.status_code in (200, 404), deleted_agent.text

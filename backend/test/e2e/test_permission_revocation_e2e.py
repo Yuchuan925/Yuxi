@@ -263,7 +263,7 @@ async def test_tool_boundary_rechecks_current_caller_and_retains_history(actors,
     )
     try:
         created = await client.post(
-            "/api/v1/agents/threads",
+            "/api/v1/agents/sessions",
             headers={**user["headers"], "Idempotency-Key": suffix},
             json={
                 "agent_id": agent["slug"],
@@ -396,7 +396,7 @@ async def test_queued_input_after_revocation_fails_without_another_model_call(ac
     agent, provider, model = await prepared_agent(actors, replay)
     try:
         initial = await client.post(
-            "/api/v1/agents/threads",
+            "/api/v1/agents/sessions",
             headers={**user["headers"], "Idempotency-Key": uuid.uuid4().hex},
             json={"agent_id": agent["slug"], "model_spec": model, "input": [_message("First")]},
         )
@@ -408,7 +408,7 @@ async def test_queued_input_after_revocation_fails_without_another_model_call(ac
             await asyncio.sleep(0.1)
         assert replay["entered"].is_set()
         queued = await client.post(
-            f"/api/v1/agents/threads/{accepted['thread_id']}/events",
+            f"/api/v1/agents/sessions/{accepted['thread_id']}/events",
             headers={**user["headers"], "Idempotency-Key": uuid.uuid4().hex},
             json={
                 "events": [
@@ -438,7 +438,7 @@ async def test_queued_input_after_revocation_fails_without_another_model_call(ac
             == 1
         )
         continued = await client.post(
-            f"/api/v1/agents/threads/{accepted['thread_id']}/events",
+            f"/api/v1/agents/sessions/{accepted['thread_id']}/events",
             headers={**user["headers"], "Idempotency-Key": uuid.uuid4().hex},
             json={"events": [{"type": "yuxi.session.input.continue"}]},
         )
@@ -453,7 +453,7 @@ async def test_queued_input_after_revocation_fails_without_another_model_call(ac
         else:
             pytest.fail(f"失权的排队输入未形成明确失败结果：{[dict(row) for row in rows]}")
         assert len(replay["requests"]) == 1, "排队输入失权后仍调用了模型"
-        history = await client.get(f"/api/v1/agents/threads/{accepted['thread_id']}/history", headers=user["headers"])
+        history = await client.get(f"/api/v1/agents/sessions/{accepted['thread_id']}/history", headers=user["headers"])
         assert history.status_code == 200 and "Queued" in history.text, history.text
     finally:
         replay["release"].set()
@@ -468,7 +468,7 @@ async def test_due_schedule_rechecks_permission_before_creating_thread(actors, r
     job = None
     try:
         initial = await client.post(
-            "/api/v1/agents/threads",
+            "/api/v1/agents/sessions",
             headers={**user["headers"], "Idempotency-Key": uuid.uuid4().hex},
             json={"agent_id": agent["slug"], "model_spec": model},
         )
@@ -524,7 +524,7 @@ async def test_waitpoint_resume_after_revocation_cannot_create_new_run(actors, r
     accepted = None
     try:
         response = await client.post(
-            "/api/v1/agents/threads",
+            "/api/v1/agents/sessions",
             headers={**user["headers"], "Idempotency-Key": uuid.uuid4().hex},
             json={"agent_id": agent["slug"], "model_spec": model, "input": [_message("Wait")]},
         )
@@ -532,7 +532,7 @@ async def test_waitpoint_resume_after_revocation_cannot_create_new_run(actors, r
         accepted = response.json()
         for _ in range(200):
             response = await client.get(
-                f"/api/v1/agents/threads/{accepted['thread_id']}/turns/{accepted['turn_id']}", headers=user["headers"]
+                f"/api/v1/agents/sessions/{accepted['thread_id']}/turns/{accepted['turn_id']}", headers=user["headers"]
             )
             assert response.status_code == 200, response.text
             snapshot = response.json()
@@ -548,7 +548,7 @@ async def test_waitpoint_resume_after_revocation_cannot_create_new_run(actors, r
                     await db.fetchval("SELECT id FROM agents WHERE slug=$1 FOR UPDATE", agent["slug"])
                     waiting_request = asyncio.create_task(
                         client.post(
-                            f"/api/v1/agents/threads/{accepted['thread_id']}/events",
+                            f"/api/v1/agents/sessions/{accepted['thread_id']}/events",
                             headers={**user["headers"], "Idempotency-Key": uuid.uuid4().hex},
                             json={
                                 "events": [
@@ -590,7 +590,7 @@ async def test_waitpoint_resume_after_revocation_cannot_create_new_run(actors, r
             deleted = await client.delete(f"/api/auth/users/{user['id']}", headers=actors["root"])
             assert deleted.status_code == 200, deleted.text
         response = await client.post(
-            f"/api/v1/agents/threads/{accepted['thread_id']}/events",
+            f"/api/v1/agents/sessions/{accepted['thread_id']}/events",
             headers={**user["headers"], "Idempotency-Key": uuid.uuid4().hex},
             json={
                 "events": [
@@ -608,7 +608,7 @@ async def test_waitpoint_resume_after_revocation_cannot_create_new_run(actors, r
         assert await db.fetchval("SELECT status FROM agent_runs WHERE id=$1", accepted["run_id"]) == "interrupted"
         if revocation == "agent":
             assert (
-                await client.get(f"/api/v1/agents/threads/{accepted['thread_id']}/history", headers=user["headers"])
+                await client.get(f"/api/v1/agents/sessions/{accepted['thread_id']}/history", headers=user["headers"])
             ).status_code == 200
         await client.delete(f"/api/system/model-providers/{provider}", headers=actors["root"])
         if revocation == "account":
@@ -659,7 +659,7 @@ async def test_failed_model_response_cannot_start_retry_or_summary_after_revocat
         if failure == "network":
             replay["action"]["failure"] = failure
         response = await client.post(
-            "/api/v1/agents/threads",
+            "/api/v1/agents/sessions",
             headers={**user["headers"], "Idempotency-Key": suffix},
             json={
                 "agent_id": agent["slug"],
@@ -682,7 +682,7 @@ async def test_failed_model_response_cannot_start_retry_or_summary_after_revocat
             replay["requests"].clear()
             replay["action"]["failure"] = failure
             response = await client.post(
-                f"/api/v1/agents/threads/{accepted['thread_id']}/events",
+                f"/api/v1/agents/sessions/{accepted['thread_id']}/events",
                 headers={**user["headers"], "Idempotency-Key": suffix + "-overflow"},
                 json={
                     "events": [
@@ -746,7 +746,7 @@ async def test_runless_forced_summary_uses_current_thread_agent_permission(actor
     agent, provider, model = await prepared_agent(actors, replay)
     try:
         response = await actors["client"].post(
-            "/api/v1/agents/threads",
+            "/api/v1/agents/sessions",
             headers={**user["headers"], "Idempotency-Key": uuid.uuid4().hex},
             json={"agent_id": agent["slug"], "model_spec": model},
         )

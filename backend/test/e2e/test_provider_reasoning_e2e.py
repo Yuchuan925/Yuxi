@@ -60,7 +60,7 @@ async def test_reasoning_stream_matches_persisted_history(e2e_client, e2e_header
     thread_id = run_id = turn_id = None
     try:
         response = await client.post(
-            "/api/v1/agents/threads",
+            "/api/v1/agents/sessions",
             headers={**headers, "Idempotency-Key": f"reasoning-create-{uuid4().hex}"},
             json={
                 "agent_id": slug,
@@ -70,7 +70,7 @@ async def test_reasoning_stream_matches_persisted_history(e2e_client, e2e_header
         assert response.status_code == 200, response.text
         thread_id = response.json()["thread_id"]
         response = await client.post(
-            f"/api/v1/agents/threads/{thread_id}/events",
+            f"/api/v1/agents/sessions/{thread_id}/events",
             headers={**headers, "Idempotency-Key": f"reasoning-input-{uuid4().hex}"},
             json={
                 "events": [
@@ -118,13 +118,13 @@ async def test_reasoning_stream_matches_persisted_history(e2e_client, e2e_header
             pytest.fail("推理 Thread SSE 在终态前断开")
 
         reasoning_parts = await asyncio.wait_for(collect_reasoning(), timeout=RUN_TIMEOUT_SECONDS)
-        turn_response = await client.get(f"/api/v1/agents/threads/{thread_id}/turns/{turn_id}", headers=headers)
+        turn_response = await client.get(f"/api/v1/agents/sessions/{thread_id}/turns/{turn_id}", headers=headers)
         assert turn_response.status_code == 200, turn_response.text
         turn = turn_response.json()
         assert turn["status"] == "completed", turn
         assert turn["result_run_id"] == run_id, turn
         reasoning = "".join(reasoning_parts)
-        history = await client.get(f"/api/v1/agents/threads/{thread_id}/history", headers=headers)
+        history = await client.get(f"/api/v1/agents/sessions/{thread_id}/history", headers=headers)
         assert history.status_code == 200
         messages = [
             m

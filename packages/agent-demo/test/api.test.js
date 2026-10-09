@@ -19,7 +19,7 @@ test("API、订阅和下载都使用固定 APP Key / end_user，幂等键与 cur
   });
   config.key = "another-key";
   config.userId = "another-user";
-  await api.request("/threads", {
+  await api.request("/sessions", {
     method: "POST",
     body: { input: [] },
     idempotencyKey: "request-1",

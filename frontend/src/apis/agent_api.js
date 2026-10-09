@@ -48,14 +48,14 @@ export const agentApi = {
    */
   // 线程阅读快照：消息绑定 Turn/Run，结果由 Turn 的 result_run_id 指定。
   getAgentHistory: (threadId, options = {}) =>
-    apiGet(`/api/v1/agents/threads/${threadId}/history`, options),
+    apiGet(`/api/v1/agents/sessions/${threadId}/history`, options),
 
   /**
    * 获取会话内持久化的 Model/Tool 生命周期审计
    * @param {string} threadId - 会话ID
    * @returns {Promise<{audits: Array, truncated: boolean}>}
    */
-  getThreadMessageAudits: (threadId) => apiGet(`/api/v1/agents/threads/${threadId}/audits`),
+  getThreadMessageAudits: (threadId) => apiGet(`/api/v1/agents/sessions/${threadId}/audits`),
 
   /**
    * 获取指定会话的 AgentState
@@ -65,22 +65,22 @@ export const agentApi = {
    */
   controlSessionTree: (threadId, stopped, idempotencyKey) =>
     apiPost(
-      `/api/v1/agents/threads/${threadId}/events`,
+      `/api/v1/agents/sessions/${threadId}/events`,
       { events: [{ type: stopped ? 'yuxi.session.tree.stop' : 'yuxi.session.tree.continue' }] },
       { headers: { 'Idempotency-Key': idempotencyKey } }
     ),
 
   getAgentState: (threadId, { includeMessages = false, includeRelations = true } = {}) =>
     apiGet(
-      `/api/v1/agents/threads/${threadId}/state?include_messages=${includeMessages}&include_relations=${includeRelations}`
+      `/api/v1/agents/sessions/${threadId}/state?include_messages=${includeMessages}&include_relations=${includeRelations}`
     ),
 
-  getCooperationSummary: (threadId) => apiGet(`/api/v1/agents/threads/${threadId}/cooperation`),
+  getCooperationSummary: (threadId) => apiGet(`/api/v1/agents/sessions/${threadId}/cooperation`),
 
   /**
    * 提交线程级主动上下文压缩
    */
-  compressThreadContext: (threadId) => apiPost(`/api/v1/agents/threads/${threadId}/compress`, {}),
+  compressThreadContext: (threadId) => apiPost(`/api/v1/agents/sessions/${threadId}/compress`, {}),
 
   createAgent: (payload, skillFile = null) => {
     if (!skillFile) return apiPost('/api/agent', payload)
@@ -104,7 +104,7 @@ export const agentApi = {
       }))
     ]
     return apiPost(
-      `/api/v1/agents/threads/${threadId}/events`,
+      `/api/v1/agents/sessions/${threadId}/events`,
       {
         events: [
           {
@@ -129,7 +129,7 @@ export const agentApi = {
 
   resumeThreadTurn: (threadId, data) =>
     apiPost(
-      `/api/v1/agents/threads/${threadId}/events`,
+      `/api/v1/agents/sessions/${threadId}/events`,
       {
         events: [
           {
@@ -145,7 +145,7 @@ export const agentApi = {
 
   cancelThreadTurn: (threadId, turnId, idempotencyKey, expectedRunId = null) =>
     apiPost(
-      `/api/v1/agents/threads/${threadId}/events`,
+      `/api/v1/agents/sessions/${threadId}/events`,
       {
         events: [
           {
@@ -157,34 +157,34 @@ export const agentApi = {
       { headers: { 'Idempotency-Key': idempotencyKey } }
     ),
 
-  getPublicThread: (threadId) => apiGet(`/api/v1/agents/threads/${threadId}`),
+  getPublicThread: (threadId) => apiGet(`/api/v1/agents/sessions/${threadId}`),
 
   getThreadTurn: (threadId, turnId, options = {}) =>
-    apiGet(`/api/v1/agents/threads/${threadId}/turns/${turnId}`, options),
+    apiGet(`/api/v1/agents/sessions/${threadId}/turns/${turnId}`, options),
 
   getThreadInput: (threadId, inputId) =>
-    apiGet(`/api/v1/agents/threads/${threadId}/inputs/${inputId}`),
+    apiGet(`/api/v1/agents/sessions/${threadId}/inputs/${inputId}`),
 
   streamThreadEvents: (threadId, afterCursor = null, { signal } = {}) => {
     const headers = {
       ...getApiAuthHeaders()
     }
     if (afterCursor) headers['Last-Event-ID'] = afterCursor
-    return fetch(`/api/v1/agents/threads/${threadId}/events`, {
+    return fetch(`/api/v1/agents/sessions/${threadId}/events`, {
       method: 'GET',
       headers,
       signal
     })
   },
 
-  getThreadQueue: (threadId) => apiGet(`/api/v1/agents/threads/${threadId}/queue`),
+  getThreadQueue: (threadId) => apiGet(`/api/v1/agents/sessions/${threadId}/queue`),
 
   /**
    * 手动继续 failed/cancelled 后暂停的线程队列
    */
   continueThreadQueue: (threadId, idempotencyKey) =>
     apiPost(
-      `/api/v1/agents/threads/${threadId}/events`,
+      `/api/v1/agents/sessions/${threadId}/events`,
       { events: [{ type: 'yuxi.session.input.continue' }] },
       { headers: { 'Idempotency-Key': idempotencyKey } }
     ),
@@ -194,7 +194,7 @@ export const agentApi = {
    */
   cancelThreadInput: (threadId, inputId, idempotencyKey) =>
     apiPost(
-      `/api/v1/agents/threads/${threadId}/events`,
+      `/api/v1/agents/sessions/${threadId}/events`,
       { events: [{ type: 'yuxi.session.input.cancel_input', input_id: inputId }] },
       { headers: { 'Idempotency-Key': idempotencyKey } }
     ),
@@ -205,7 +205,7 @@ export const agentApi = {
    * @returns {Promise<Object>}
    */
   getAgentRun: (threadId, runId, options = {}) =>
-    apiGet(`/api/v1/agents/threads/${threadId}/runs/${runId}`, options)
+    apiGet(`/api/v1/agents/sessions/${threadId}/runs/${runId}`, options)
 }
 
 // =============================================================================
@@ -253,7 +253,7 @@ export const threadApi = {
     if (agentId) {
       params.set('agent_id', agentId)
     }
-    const url = `/api/v1/agents/threads?${params.toString()}`
+    const url = `/api/v1/agents/sessions?${params.toString()}`
     return apiGet(url)
   },
 
@@ -275,7 +275,7 @@ export const threadApi = {
     if (agentId) {
       params.set('agent_id', agentId)
     }
-    return apiGet(`/api/v1/agents/threads/search?${params.toString()}`)
+    return apiGet(`/api/v1/agents/sessions/search?${params.toString()}`)
   },
 
   /**
@@ -287,7 +287,7 @@ export const threadApi = {
    */
   createThread: async (agentId, title, metadata, { requestId, projectId } = {}) => {
     const thread = await apiPost(
-      '/api/v1/agents/threads',
+      '/api/v1/agents/sessions',
       {
         agent_id: agentId,
         title: Array.from(title || '新的对话').slice(0, 255).join(''),
@@ -315,7 +315,7 @@ export const threadApi = {
    * @returns {Promise} - 更新结果
    */
   updateThread: (threadId, title, is_pinned, toolApprovalMode, modelSpec) =>
-    apiRequest(`/api/v1/agents/threads/${threadId}`, {
+    apiRequest(`/api/v1/agents/sessions/${threadId}`, {
       method: 'PATCH',
       body: JSON.stringify({
         title,
@@ -330,21 +330,21 @@ export const threadApi = {
    * @param {string} threadId - 对话线程ID
    * @returns {Promise} - 更新后的线程
    */
-  markThreadViewed: (threadId) => apiPost(`/api/v1/agents/threads/${threadId}/viewed`),
+  markThreadViewed: (threadId) => apiPost(`/api/v1/agents/sessions/${threadId}/viewed`),
 
   /**
    * 删除对话线程
    * @param {string} threadId - 对话线程ID
    * @returns {Promise} - 删除结果
    */
-  archiveThread: (threadId) => apiPost(`/api/v1/agents/threads/${threadId}/archive`),
+  archiveThread: (threadId) => apiPost(`/api/v1/agents/sessions/${threadId}/archive`),
 
   /**
    * 获取线程附件列表
    * @param {string} threadId - 对话线程ID
    * @returns {Promise}
    */
-  getThreadAttachments: (threadId) => apiGet(`/api/v1/agents/threads/${threadId}/attachments`),
+  getThreadAttachments: (threadId) => apiGet(`/api/v1/agents/sessions/${threadId}/attachments`),
 
   /**
    * 获取线程文件下载/预览 URL
@@ -360,7 +360,7 @@ export const threadApi = {
       .map((segment) => encodeURIComponent(segment))
       .join('/')
     const query = download ? '?download=true' : ''
-    return `/api/v1/agents/threads/${threadId}/artifacts/${encodedPath}${query}`
+    return `/api/v1/agents/sessions/${threadId}/artifacts/${encodedPath}${query}`
   },
 
   /**
@@ -389,7 +389,7 @@ export const threadApi = {
    * @returns {Promise}
    */
   saveThreadArtifactToWorkspace: (threadId, path, destinationPath) =>
-    apiPost(`/api/v1/agents/threads/${threadId}/artifacts/save`, {
+    apiPost(`/api/v1/agents/sessions/${threadId}/artifacts/save`, {
       path,
       destination_path: destinationPath
     }),
@@ -422,7 +422,7 @@ export const threadApi = {
    * @returns {Promise}
    */
   confirmTmpThreadAttachments: (threadId, attachments) =>
-    apiPost(`/api/v1/agents/threads/${threadId}/attachments/confirm`, { attachments }),
+    apiPost(`/api/v1/agents/sessions/${threadId}/attachments/confirm`, { attachments }),
 
   /**
    * 删除附件
@@ -431,5 +431,5 @@ export const threadApi = {
    * @returns {Promise}
    */
   deleteThreadAttachment: (threadId, fileId) =>
-    apiDelete(`/api/v1/agents/threads/${threadId}/attachments/${fileId}`)
+    apiDelete(`/api/v1/agents/sessions/${threadId}/attachments/${fileId}`)
 }

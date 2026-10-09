@@ -13,9 +13,9 @@ test('产品创建、消息、等待恢复和队列控制仅使用 Public Thread
   const calls = []
   globalThis.fetch = async (url, options) => {
     calls.push({ url: String(url), options })
-    const body = String(url).endsWith('/threads')
+    const body = String(url).endsWith('/sessions')
       ? {
-          object: 'agent.thread', id: 'thread-1', thread_id: 'thread-1',
+          object: 'agent.session', id: 'thread-1', thread_id: 'thread-1',
           event_id: 'create-event', input_id: null, turn_id: null, run_id: null,
           status: 'accepted', title: '新对话', project_id: 'project-1'
         }
@@ -41,7 +41,7 @@ test('产品创建、消息、等待恢复和队列控制仅使用 Public Thread
     assert.equal(thread.id, 'thread-1')
     assert.equal(thread.title, '新对话')
     assert.equal(thread.project_id, 'project-1')
-    assert.equal(calls[0].url, '/api/v1/agents/threads')
+    assert.equal(calls[0].url, '/api/v1/agents/sessions')
     assert.equal(calls[0].options.headers['Idempotency-Key'], 'create-key')
     assert.equal(JSON.parse(calls[0].options.body).agent_id, 'agent-1')
 
@@ -52,7 +52,7 @@ test('产品创建、消息、等待恢复和队列控制仅使用 Public Thread
       mode: 'follow_up',
       attachment_file_ids: ['file-1']
     })
-    assert.equal(calls[1].url, '/api/v1/agents/threads/thread-1/events')
+    assert.equal(calls[1].url, '/api/v1/agents/sessions/thread-1/events')
     assert.equal(calls[1].options.headers['Idempotency-Key'], 'message-key')
     const message = JSON.parse(calls[1].options.body).events[0]
     assert.equal(message.type, 'agent.session.input.message')
@@ -94,16 +94,16 @@ test('产品创建、消息、等待恢复和队列控制仅使用 Public Thread
     assert.equal(JSON.parse(calls[6].options.body).events[0].input_id, 'input-2')
 
     await agentApi.streamThreadEvents('thread-1', 'cursor-7')
-    assert.equal(calls[7].url, '/api/v1/agents/threads/thread-1/events')
+    assert.equal(calls[7].url, '/api/v1/agents/sessions/thread-1/events')
     assert.equal(calls[7].options.headers['Last-Event-ID'], 'cursor-7')
 
     await threadApi.updateThread('thread-1', null, undefined, 'default', 'model-a')
-    assert.equal(calls[8].url, '/api/v1/agents/threads/thread-1')
+    assert.equal(calls[8].url, '/api/v1/agents/sessions/thread-1')
     assert.deepEqual(JSON.parse(calls[8].options.body), {
       title: null, tool_approval_mode: 'default', model_spec: 'model-a'
     })
     await threadApi.archiveThread('thread-1')
-    assert.equal(calls[9].url, '/api/v1/agents/threads/thread-1/archive')
+    assert.equal(calls[9].url, '/api/v1/agents/sessions/thread-1/archive')
     assert.equal(calls[9].options.method, 'POST')
     assert.ok(calls.every((call) => !call.url.includes('/api/chat/')))
 
@@ -114,7 +114,7 @@ test('产品创建、消息、等待恢复和队列控制仅使用 Public Thread
     assert.equal(sentTitle, '协作😀'.repeat(85))
 
     await agentApi.getCooperationSummary('thread-1')
-    assert.equal(calls.at(-1).url, '/api/v1/agents/threads/thread-1/cooperation')
+    assert.equal(calls.at(-1).url, '/api/v1/agents/sessions/thread-1/cooperation')
 
   } finally {
     await server.close()

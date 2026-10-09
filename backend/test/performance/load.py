@@ -552,7 +552,7 @@ class AgentLoadClient:
         """创建一个独立压测 Thread。"""
 
         response = await self.client.post(
-            "/api/v1/agents/threads",
+            "/api/v1/agents/sessions",
             json={
                 "agent_id": agent_slug,
                 "title": f"Load test {event_key[-12:]}",
@@ -576,7 +576,7 @@ class AgentLoadClient:
 
         started = time.perf_counter()
         response = await self.client.post(
-            f"/api/v1/agents/threads/{thread_id}/events",
+            f"/api/v1/agents/sessions/{thread_id}/events",
             json={
                 "events": [
                     {
@@ -599,7 +599,7 @@ class AgentLoadClient:
         """消费 Thread SSE，直到目标 Input 固定 Turn 和 Run。"""
 
         async with self.client.stream(
-            "GET", f"/api/v1/agents/threads/{thread_id}/events", headers=self.headers
+            "GET", f"/api/v1/agents/sessions/{thread_id}/events", headers=self.headers
         ) as response:
             await _raise_for_stream_status(response, "读取 Thread SSE")
             async for event in iter_sse(response.aiter_lines()):
@@ -630,7 +630,7 @@ class AgentLoadClient:
         stream_started = time.perf_counter()
         async with self.client.stream(
             "GET",
-            f"/api/v1/agents/threads/{thread_id}/events",
+            f"/api/v1/agents/sessions/{thread_id}/events",
             headers=self.headers,
         ) as response:
             await _raise_for_stream_status(response, "读取 Run SSE")
@@ -662,7 +662,7 @@ class AgentLoadClient:
     async def get_run_result(self, thread_id: str, run_id: str) -> dict[str, Any]:
         """从同一 Run 的结果接口回读最终业务事实。"""
 
-        response = await self.client.get(f"/api/v1/agents/threads/{thread_id}/runs/{run_id}", headers=self.headers)
+        response = await self.client.get(f"/api/v1/agents/sessions/{thread_id}/runs/{run_id}", headers=self.headers)
         _raise_for_status(response, "读取 Run 结果")
         payload = response.json()
         if not isinstance(payload, dict):
@@ -671,7 +671,7 @@ class AgentLoadClient:
 
     async def get_turn_result(self, thread_id: str, turn_id: str) -> dict[str, Any]:
         """回读目标 Turn 的最终归属。"""
-        response = await self.client.get(f"/api/v1/agents/threads/{thread_id}/turns/{turn_id}", headers=self.headers)
+        response = await self.client.get(f"/api/v1/agents/sessions/{thread_id}/turns/{turn_id}", headers=self.headers)
         _raise_for_status(response, "读取 Turn 结果")
         return response.json()
 
@@ -679,7 +679,7 @@ class AgentLoadClient:
         """尽力取消尚未领取的目标 Input。"""
 
         response = await self.client.post(
-            f"/api/v1/agents/threads/{thread_id}/events",
+            f"/api/v1/agents/sessions/{thread_id}/events",
             headers={**self.headers, "Idempotency-Key": f"cancel:{event_key}"},
             json={"events": [{"type": "yuxi.session.input.cancel_input", "input_id": input_id}]},
         )
@@ -689,7 +689,7 @@ class AgentLoadClient:
         """尽力取消目标 Turn 和其当前执行段。"""
 
         response = await self.client.post(
-            f"/api/v1/agents/threads/{thread_id}/events",
+            f"/api/v1/agents/sessions/{thread_id}/events",
             headers={**self.headers, "Idempotency-Key": f"cancel:{event_key}"},
             json={
                 "events": [
@@ -702,7 +702,7 @@ class AgentLoadClient:
     async def archive_thread(self, thread_id: str) -> None:
         """通过 Public API 归档本任务创建的精确 Thread。"""
 
-        response = await self.client.post(f"/api/v1/agents/threads/{thread_id}/archive", headers=self.headers)
+        response = await self.client.post(f"/api/v1/agents/sessions/{thread_id}/archive", headers=self.headers)
         _raise_for_status(response, "归档 Thread")
 
 

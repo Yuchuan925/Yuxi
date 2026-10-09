@@ -69,7 +69,7 @@ class AgentLoadTestScriptTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_thread_sse_returns_only_target_input_run(self) -> None:
         async def handler(request: httpx.Request) -> httpx.Response:
-            self.assertEqual(request.url.path, "/api/v1/agents/threads/thread-1/events")
+            self.assertEqual(request.url.path, "/api/v1/agents/sessions/thread-1/events")
             return httpx.Response(
                 200,
                 text=(
@@ -107,7 +107,7 @@ class AgentLoadTestScriptTest(unittest.IsolatedAsyncioTestCase):
         """压测输入走 Public Thread 事件协议。"""
 
         async def handler(request: httpx.Request) -> httpx.Response:
-            self.assertEqual(request.url.path, "/api/v1/agents/threads/thread-1/events")
+            self.assertEqual(request.url.path, "/api/v1/agents/sessions/thread-1/events")
             self.assertEqual(request.headers["Idempotency-Key"], "load-event")
             event = json.loads(request.content)["events"][0]
             self.assertEqual((event["type"], event["yuxi"]["mode"]), ("agent.session.input.message", "follow_up"))
@@ -126,7 +126,7 @@ class AgentLoadTestScriptTest(unittest.IsolatedAsyncioTestCase):
 
         async def handler(request: httpx.Request) -> httpx.Response:
             self.assertEqual(request.method, "POST")
-            self.assertEqual(request.url.path, "/api/v1/agents/threads/thread-1/archive")
+            self.assertEqual(request.url.path, "/api/v1/agents/sessions/thread-1/archive")
             return httpx.Response(200, json={"status": "archived"})
 
         async with httpx.AsyncClient(base_url="http://test", transport=httpx.MockTransport(handler)) as client:

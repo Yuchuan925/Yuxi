@@ -49,14 +49,14 @@ async def test_public_run_persists_preloaded_tool_and_model_audit(e2e_client, e2
         assert output_text(turn["output"]) == OUTPUT
         assert projection_root.is_dir(), "worker 应在工具运行前物化用户 Skill 投影"
 
-        run_response = await e2e_client.get(f"/api/v1/agents/threads/{thread_id}/runs/{run_id}", headers=e2e_headers)
+        run_response = await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/runs/{run_id}", headers=e2e_headers)
         assert run_response.status_code == 200, run_response.text
         run = run_response.json()
         assert run["status"] == "completed"
         assert run["turn_id"] == turn_id and run["input_id"] == created["input_id"]
         assert run["output"] == turn["output"]
 
-        history_response = await e2e_client.get(f"/api/v1/agents/threads/{thread_id}/history", headers=e2e_headers)
+        history_response = await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/history", headers=e2e_headers)
         assert history_response.status_code == 200, history_response.text
         history = history_response.json()["items"]
         tool_call = next(item for item in history if item["type"] == "function_call")
@@ -68,7 +68,7 @@ async def test_public_run_persists_preloaded_tool_and_model_audit(e2e_client, e2
             turn["output"][0]["id"]
         ]
 
-        audits_response = await e2e_client.get(f"/api/v1/agents/threads/{thread_id}/audits", headers=e2e_headers)
+        audits_response = await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/audits", headers=e2e_headers)
         assert audits_response.status_code == 200, audits_response.text
         audits = [item for item in audits_response.json()["audits"] if item["run_id"] == run_id]
         assert [item["type"] for item in audits] == ["ai", "tool", "ai"]
@@ -300,10 +300,10 @@ async def test_scheduled_task_run_now_reaches_exact_thread_and_turn(e2e_client, 
         assert turn["status"] == "completed", turn
         assert turn["result_run_id"] == run_id and output_text(turn["output"]) == OUTPUT
 
-        thread = await e2e_client.get(f"/api/v1/agents/threads/{thread_id}", headers=e2e_headers)
+        thread = await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}", headers=e2e_headers)
         assert thread.status_code == 200, thread.text
         assert thread.json()["project_id"] == project_id
-        history_response = await e2e_client.get(f"/api/v1/agents/threads/{thread_id}/history", headers=e2e_headers)
+        history_response = await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/history", headers=e2e_headers)
         assert history_response.status_code == 200, history_response.text
         history = history_response.json()["items"]
         assert any(item["id"] == turn["output"][0]["id"] and item["yuxi"]["run_id"] == run_id for item in history)
@@ -376,7 +376,7 @@ async def test_tool_error_is_persisted_by_tool_message(e2e_client, e2e_headers):
         assert turn["status"] == "completed", turn
         assert turn["result_run_id"] == run_id and output_text(turn["output"]) == OUTPUT
 
-        audits_response = await e2e_client.get(f"/api/v1/agents/threads/{thread_id}/audits", headers=e2e_headers)
+        audits_response = await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/audits", headers=e2e_headers)
         assert audits_response.status_code == 200, audits_response.text
         tool_audits = [
             item
@@ -487,7 +487,7 @@ async def _agent(client: httpx.AsyncClient, headers: dict[str, str], uid: str, *
 async def _create_thread(client: httpx.AsyncClient, headers: dict[str, str], slug: str, tag: str) -> dict:
     """用 Public 创建 Thread，并原子接收首批文本输入。"""
     response = await client.post(
-        "/api/v1/agents/threads",
+        "/api/v1/agents/sessions",
         headers={**headers, "Idempotency-Key": f"{tag}-{uuid.uuid4().hex}"},
         json={
             "agent_id": slug,
@@ -505,7 +505,7 @@ async def _create_thread(client: httpx.AsyncClient, headers: dict[str, str], slu
 async def _terminal_turn(client: httpx.AsyncClient, headers: dict[str, str], thread_id: str, turn_id: str) -> dict:
     """从 Public 持久快照等待 Turn 终态。"""
     for _ in range(150):
-        response = await client.get(f"/api/v1/agents/threads/{thread_id}/turns/{turn_id}", headers=headers)
+        response = await client.get(f"/api/v1/agents/sessions/{thread_id}/turns/{turn_id}", headers=headers)
         assert response.status_code == 200, response.text
         turn = response.json()
         if turn["status"] in {"completed", "failed", "cancelled"}:

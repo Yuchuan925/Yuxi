@@ -1,11 +1,12 @@
-"""Public Thread 创建、读取与归档入口。"""
+"""Public Session 创建、读取与归档入口。"""
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.api.dependencies.auth import get_db
+from yuxi.api.routers.public_v1.agents.responses import PUBLIC_ERRORS, SSE_RESPONSE
 from yuxi.api.routers.public_v1.agents.auth import PublicAgentContext, require_public_context
-from yuxi.api.routers.public_v1.agents.schemas import ThreadCreate, ThreadUpdate, input_messages_to_domain
+from yuxi.api.routers.public_v1.agents.schemas import SessionCreate, ThreadUpdate, input_messages_to_domain
 from yuxi.modules.agents.services.inputs import create_thread, thread_id_for_creation
 from yuxi.modules.agents.services.threads import (
     archive_thread,
@@ -18,10 +19,10 @@ from yuxi.modules.agents.services.threads import (
     update_thread,
 )
 
-router = APIRouter(dependencies=[Depends(require_public_context)])
+router = APIRouter(dependencies=[Depends(require_public_context)], responses=PUBLIC_ERRORS)
 
 
-@router.get("/threads")
+@router.get("/sessions")
 async def list_public_threads(
     agent_id: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=100),
@@ -33,14 +34,20 @@ async def list_public_threads(
     return await list_threads(db=db, scope=context.scope, agent_slug=agent_id, limit=limit, offset=offset)
 
 
-@router.post("/threads")
+@router.post("/sessions", summary="创建智能体会话", responses={200: SSE_RESPONSE})
 async def create_public_thread(
-    payload: ThreadCreate,
+    payload: SessionCreate,
     idempotency_key: str = Header(..., alias="Idempotency-Key"),
     context: PublicAgentContext = Depends(require_public_context),
     db: AsyncSession = Depends(get_db),
 ):
-    """原子创建 Thread 与可选的第一批输入。"""
+    """创建会话并原子接收可选的首批消息。
+
+    Idempotency-Key 标识本次意图；相同请求重试不会重复创建或执行。
+    200 证明持久创建或幂等重放，input_id 用于查询本次输入的消费归属。
+    排队时 turn_id/run_id 为空；执行结果通过明确的 Turn 查询取得。
+    stream=true 返回长期 SSE，客户端确认目标 Turn 终态后主动关闭订阅。
+    """
     if payload.stream and payload.input is None:
         raise HTTPException(status_code=422, detail="空 Thread 不能以流式创建")
     result = await create_thread(
@@ -59,7 +66,7 @@ async def create_public_thread(
     )
     thread = await require_thread(db=db, scope=context.scope, thread_id=result["thread_id"])
     response = {
-        "object": "agent.thread",
+        "object": "agent.session",
         **result,
         "id": result["thread_id"],
         "title": thread.title,
@@ -78,7 +85,7 @@ async def create_public_thread(
     )
 
 
-@router.get("/threads/search")
+@router.get("/sessions/search")
 async def search_public_threads(
     q: str = Query(..., min_length=1, max_length=200),
     agent_id: str | None = Query(default=None),
@@ -98,30 +105,34 @@ async def search_public_threads(
     )
 
 
-@router.get("/threads/{thread_id}")
+@router.get("/sessions/{session_id}", summary="读取会话状态")
 async def retrieve_public_thread(
-    thread_id: str,
+    session_id: str,
     context: PublicAgentContext = Depends(require_public_context),
     db: AsyncSession = Depends(get_db),
 ):
-    """读取 Thread 的权威生命周期快照。"""
-    result = await get_thread_snapshot(db=db, scope=context.scope, thread_id=thread_id)
-    return {"object": "agent.thread", **result, "id": thread_id}
+    """读取会话及最近一轮工作的持久快照。
+
+    Session ID 与内部 Thread UUID 相同。current_turn 用于查看当前或最近工作；
+    本次提交的结果需根据 Input 归属定位 Turn，不能从相邻轮次推断。
+    """
+    result = await get_thread_snapshot(db=db, scope=context.scope, thread_id=session_id)
+    return {"object": "agent.session", **result, "id": session_id}
 
 
-@router.post("/threads/{thread_id}/viewed")
+@router.post("/sessions/{session_id}/viewed")
 async def mark_public_thread_viewed(
-    thread_id: str,
+    session_id: str,
     context: PublicAgentContext = Depends(require_public_context),
     db: AsyncSession = Depends(get_db),
 ):
     """在作用域校验后记录用户已查看的当前执行段。"""
-    return await mark_thread_viewed(thread_id=thread_id, scope=context.scope, db=db)
+    return await mark_thread_viewed(thread_id=session_id, scope=context.scope, db=db)
 
 
-@router.patch("/threads/{thread_id}")
+@router.patch("/sessions/{session_id}")
 async def update_public_thread(
-    thread_id: str,
+    session_id: str,
     payload: ThreadUpdate,
     context: PublicAgentContext = Depends(require_public_context),
     db: AsyncSession = Depends(get_db),
@@ -130,7 +141,7 @@ async def update_public_thread(
     return await update_thread(
         db=db,
         scope=context.scope,
-        thread_id=thread_id,
+        thread_id=session_id,
         title=payload.title,
         is_pinned=payload.is_pinned,
         tool_approval_mode=payload.tool_approval_mode,
@@ -138,21 +149,21 @@ async def update_public_thread(
     )
 
 
-@router.post("/threads/{thread_id}/archive")
+@router.post("/sessions/{session_id}/archive")
 async def archive_public_thread(
-    thread_id: str,
+    session_id: str,
     context: PublicAgentContext = Depends(require_public_context),
     db: AsyncSession = Depends(get_db),
 ):
     """检查在途工作后归档 Thread，保留历史事实。"""
-    return await archive_thread(db=db, scope=context.scope, thread_id=thread_id)
+    return await archive_thread(db=db, scope=context.scope, thread_id=session_id)
 
 
-@router.get("/threads/{thread_id}/queue")
+@router.get("/sessions/{session_id}/queue")
 async def retrieve_public_queue(
-    thread_id: str,
+    session_id: str,
     context: PublicAgentContext = Depends(require_public_context),
     db: AsyncSession = Depends(get_db),
 ):
     """读取当前 Thread 的持久 follow-up 队列。"""
-    return await get_queue_snapshot(db=db, scope=context.scope, thread_id=thread_id)
+    return await get_queue_snapshot(db=db, scope=context.scope, thread_id=session_id)

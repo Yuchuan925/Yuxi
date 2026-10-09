@@ -111,28 +111,28 @@ async def upload_image(file: UploadFile = File(...)):
     return result
 
 
-@router.get("/threads/{thread_id}/cooperation")
+@router.get("/sessions/{session_id}/cooperation")
 async def retrieve_cooperation_summary(
-    thread_id: str,
+    session_id: str,
     context: PublicAgentContext = Depends(require_public_context),
     db: AsyncSession = Depends(get_db),
 ):
     """读取不包含 checkpoint 和结果正文的完整协作摘要。"""
-    return await get_cooperation_summary(db=db, scope=context.scope, thread_id=thread_id)
+    return await get_cooperation_summary(db=db, scope=context.scope, thread_id=session_id)
 
 
-@router.get("/threads/{thread_id}/state")
+@router.get("/sessions/{session_id}/state")
 async def retrieve_thread_state(
-    thread_id: str,
+    session_id: str,
     include_messages: bool = Query(default=False),
     include_relations: bool = Query(default=True),
     context: PublicAgentContext = Depends(require_public_context),
     db: AsyncSession = Depends(get_db),
 ):
     """按 Thread 作用域读取 LangGraph 当前状态。"""
-    await get_thread_snapshot(db=db, scope=context.scope, thread_id=thread_id)
+    await get_thread_snapshot(db=db, scope=context.scope, thread_id=session_id)
     return await get_agent_state_view(
-        thread_id=thread_id,
+        thread_id=session_id,
         current_user=context.user,
         db=db,
         include_messages=include_messages,
@@ -141,28 +141,28 @@ async def retrieve_thread_state(
     )
 
 
-@router.post("/threads/{thread_id}/compress")
+@router.post("/sessions/{session_id}/compress")
 async def compress_thread_context(
-    thread_id: str,
+    session_id: str,
     context: PublicAgentContext = Depends(require_public_context),
     db: AsyncSession = Depends(get_db),
 ):
     """在作用域与空闲条件成立时压缩线程上下文。"""
-    await get_thread_snapshot(db=db, scope=context.scope, thread_id=thread_id)
-    return await compress_context(thread_id=thread_id, current_user=context.user, db=db, app_id=context.scope.app_id)
+    await get_thread_snapshot(db=db, scope=context.scope, thread_id=session_id)
+    return await compress_context(thread_id=session_id, current_user=context.user, db=db, app_id=context.scope.app_id)
 
 
-@router.post("/threads/{thread_id}/attachments/confirm")
+@router.post("/sessions/{session_id}/attachments/confirm")
 async def confirm_thread_attachments(
-    thread_id: str,
+    session_id: str,
     payload: TmpAttachmentConfirm,
     context: PublicAgentContext = Depends(require_public_context),
     db: AsyncSession = Depends(get_db),
 ):
     """在完整作用域检查后将临时附件绑定到 Thread。"""
-    await get_thread_snapshot(db=db, scope=context.scope, thread_id=thread_id)
+    await get_thread_snapshot(db=db, scope=context.scope, thread_id=session_id)
     return await confirm_tmp_thread_attachments_view(
-        thread_id=thread_id,
+        thread_id=session_id,
         attachments=[item.model_dump() for item in payload.attachments],
         db=db,
         current_uid=context.scope.uid,
@@ -170,30 +170,30 @@ async def confirm_thread_attachments(
     )
 
 
-@router.get("/threads/{thread_id}/attachments")
+@router.get("/sessions/{session_id}/attachments")
 async def list_thread_attachments(
-    thread_id: str,
+    session_id: str,
     context: PublicAgentContext = Depends(require_public_context),
     db: AsyncSession = Depends(get_db),
 ):
     """读取当前资源用户的 Thread 附件。"""
-    await get_thread_snapshot(db=db, scope=context.scope, thread_id=thread_id)
+    await get_thread_snapshot(db=db, scope=context.scope, thread_id=session_id)
     return await list_thread_attachments_view(
-        thread_id=thread_id, db=db, current_uid=context.scope.uid, app_id=context.scope.app_id
+        thread_id=session_id, db=db, current_uid=context.scope.uid, app_id=context.scope.app_id
     )
 
 
-@router.delete("/threads/{thread_id}/attachments/{file_id}")
+@router.delete("/sessions/{session_id}/attachments/{file_id}")
 async def delete_thread_attachment(
-    thread_id: str,
+    session_id: str,
     file_id: str,
     context: PublicAgentContext = Depends(require_public_context),
     db: AsyncSession = Depends(get_db),
 ):
     """拒绝删除仍被待消费 Input 使用的附件。"""
-    await get_thread_snapshot(db=db, scope=context.scope, thread_id=thread_id)
+    await get_thread_snapshot(db=db, scope=context.scope, thread_id=session_id)
     return await delete_thread_attachment_view(
-        thread_id=thread_id,
+        thread_id=session_id,
         file_id=file_id,
         db=db,
         current_uid=context.scope.uid,
@@ -201,17 +201,17 @@ async def delete_thread_attachment(
     )
 
 
-@router.post("/threads/{thread_id}/artifacts/save")
+@router.post("/sessions/{session_id}/artifacts/save")
 async def save_thread_artifact(
-    thread_id: str,
+    session_id: str,
     payload: SaveArtifact,
     context: PublicAgentContext = Depends(require_public_context),
     db: AsyncSession = Depends(get_db),
 ):
     """把已授权 Thread 产物保存到用户工作区。"""
-    await get_thread_snapshot(db=db, scope=context.scope, thread_id=thread_id)
+    await get_thread_snapshot(db=db, scope=context.scope, thread_id=session_id)
     return await save_thread_artifact_to_workspace_view(
-        thread_id=thread_id,
+        thread_id=session_id,
         current_uid=context.scope.uid,
         db=db,
         path=payload.path,
@@ -220,9 +220,9 @@ async def save_thread_artifact(
     )
 
 
-@router.get("/threads/{thread_id}/artifacts/{path:path}")
+@router.get("/sessions/{session_id}/artifacts/{path:path}")
 async def retrieve_thread_artifact(
-    thread_id: str,
+    session_id: str,
     path: str,
     download: bool = Query(default=False),
     preview: bool = Query(default=False),
@@ -230,10 +230,10 @@ async def retrieve_thread_artifact(
     db: AsyncSession = Depends(get_db),
 ):
     """下载或预览已授权 Thread 的沙盒产物。"""
-    await get_thread_snapshot(db=db, scope=context.scope, thread_id=thread_id)
+    await get_thread_snapshot(db=db, scope=context.scope, thread_id=session_id)
     return render_file_result(
         await resolve_thread_artifact_view(
-            thread_id=thread_id,
+            thread_id=session_id,
             current_uid=context.scope.uid,
             db=db,
             path=path,

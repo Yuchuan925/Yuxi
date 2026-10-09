@@ -348,7 +348,7 @@ export function useDemo() {
       if (!current(owner)) return;
       state.pending = null;
       if (command.text && state.draft === command.text) state.draft = "";
-      if (command.path === "/threads") {
+      if (command.path === "/sessions") {
         await selectThread(result.thread_id);
       } else {
         await refreshHistory(owner);
@@ -367,7 +367,7 @@ export function useDemo() {
   function submitEvent(event) {
     if (state.pending || !state.threadId || state.sending) return;
     return runCommand({
-      path: `/threads/${encodeURIComponent(state.threadId)}/events`,
+      path: `/sessions/${encodeURIComponent(state.threadId)}/events`,
       body: { events: [event] },
       key: newId(),
     });
@@ -389,7 +389,7 @@ export function useDemo() {
     const input = [{ role: "user", content: [{ type: "input_text", text }] }];
     const command = { text: state.draft, key: newId() };
     if (state.threadId) {
-      command.path = `/threads/${encodeURIComponent(state.threadId)}/events`;
+      command.path = `/sessions/${encodeURIComponent(state.threadId)}/events`;
       command.body = {
         events: [
           {
@@ -400,7 +400,7 @@ export function useDemo() {
         ],
       };
     } else {
-      command.path = "/threads";
+      command.path = "/sessions";
       command.body = {
         agent_id: state.agentId,
         title: text.slice(0, 40),

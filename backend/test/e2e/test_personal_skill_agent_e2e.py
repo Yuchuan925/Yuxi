@@ -99,7 +99,7 @@ async def test_main_agent_reads_personal_skill_directly_from_user_workspace(
         agent_created = True
 
         thread_response = await e2e_client.post(
-            "/api/v1/agents/threads",
+            "/api/v1/agents/sessions",
             headers={**e2e_headers, "Idempotency-Key": f"personal-skill-create-{uuid.uuid4().hex}"},
             json={
                 "agent_id": agent_slug,
@@ -110,7 +110,7 @@ async def test_main_agent_reads_personal_skill_directly_from_user_workspace(
         thread_id = str(thread_response.json()["thread_id"])
 
         run_response = await e2e_client.post(
-            f"/api/v1/agents/threads/{thread_id}/events",
+            f"/api/v1/agents/sessions/{thread_id}/events",
             headers={**e2e_headers, "Idempotency-Key": f"personal-skill-input-{uuid.uuid4().hex}"},
             json={
                 "events": [
@@ -150,7 +150,7 @@ async def test_main_agent_reads_personal_skill_directly_from_user_workspace(
 
         event_count = await asyncio.wait_for(consume_output(), timeout=RUN_TIMEOUT_SECONDS)
         assert event_count > 0, event_count
-        turn_response = await e2e_client.get(f"/api/v1/agents/threads/{thread_id}/turns/{turn_id}", headers=e2e_headers)
+        turn_response = await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/turns/{turn_id}", headers=e2e_headers)
         assert turn_response.status_code == 200, turn_response.text
         turn = turn_response.json()
         if turn["status"] != "completed":

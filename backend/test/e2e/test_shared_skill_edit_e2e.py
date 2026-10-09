@@ -119,14 +119,14 @@ async def test_edited_shared_skill_is_loaded_by_next_run(e2e_client: httpx.Async
         assert agent.status_code == 200, agent.text
         agent_created = True
         thread = await e2e_client.post(
-            "/api/v1/agents/threads",
+            "/api/v1/agents/sessions",
             headers={**e2e_headers, "Idempotency-Key": f"skill-edit-thread-{uuid.uuid4()}"},
             json={"agent_id": agent_slug, "title": make_test_session_title("shared-skill-edit")},
         )
         assert thread.status_code == 200, thread.text
         thread_id = str(thread.json()["thread_id"])
         run = await e2e_client.post(
-            f"/api/v1/agents/threads/{thread_id}/events",
+            f"/api/v1/agents/sessions/{thread_id}/events",
             headers={**e2e_headers, "Idempotency-Key": f"skill-edit-input-{uuid.uuid4()}"},
             json={
                 "events": [
@@ -162,7 +162,7 @@ async def test_edited_shared_skill_is_loaded_by_next_run(e2e_client: httpx.Async
             else:
                 pytest.fail("共享 Skill 的 Thread SSE 在 Turn 终态前断开")
         turn = await e2e_client.get(
-            f"/api/v1/agents/threads/{thread_id}/turns/{turn_id}",
+            f"/api/v1/agents/sessions/{thread_id}/turns/{turn_id}",
             headers=e2e_headers,
         )
         assert turn.status_code == 200, turn.text

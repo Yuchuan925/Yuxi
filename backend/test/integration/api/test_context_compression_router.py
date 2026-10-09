@@ -165,7 +165,7 @@ async def test_compress_thread_persists_canonical_checkpoint_through_http(
             transport=httpx.ASGITransport(app=app),
             base_url="http://test",
         ) as client:
-            response = await client.post(f"/api/v1/agents/threads/{thread_id}/compress", json={})
+            response = await client.post(f"/api/v1/agents/sessions/{thread_id}/compress", json={})
 
         assert response.status_code == 200, response.text
         assert response.json()["status"] == "completed"

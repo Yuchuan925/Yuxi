@@ -24,7 +24,7 @@ async def test_turn_result_follows_only_its_bound_run(test_client, admin_headers
     agent = next(item for item in agents.json()["agents"] if item.get("is_default"))
     agent_slug = agent.get("slug") or agent["agent_id"]
     created = await test_client.post(
-        "/api/v1/agents/threads",
+        "/api/v1/agents/sessions",
         json={"agent_id": agent_slug, "title": make_test_session_title("turn-result")},
         headers={**admin_headers, "Idempotency-Key": str(uuid.uuid4())},
     )
@@ -97,7 +97,7 @@ async def test_turn_result_follows_only_its_bound_run(test_client, admin_headers
                     run_id,
                 )
 
-        url = f"/api/v1/agents/threads/{thread_id}/turns/{turn_ids[1]}"
+        url = f"/api/v1/agents/sessions/{thread_id}/turns/{turn_ids[1]}"
         result = await test_client.get(url, headers=admin_headers)
         assert result.status_code == 200, result.text
         assert result.json()["result_run_id"] == run_ids[1]

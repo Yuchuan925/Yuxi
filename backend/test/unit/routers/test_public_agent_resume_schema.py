@@ -3,7 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
-from yuxi.api.routers.public_v1.agents.schemas import ThreadEventCreate
+from yuxi.api.routers.public_v1.agents.schemas import SessionEventCreate
 
 
 def _resume_body(answer):
@@ -30,7 +30,7 @@ def _resume_body(answer):
 def test_resume_wire_preserves_web_multiselect_and_other_answers(answer):
     """Web 多选与其他选项按原类型通过严格 Public 协议。"""
     body = _resume_body(answer)
-    assert ThreadEventCreate.model_validate(body).model_dump(mode="json") == body
+    assert SessionEventCreate.model_validate(body).model_dump(mode="json") == body
 
 
 @pytest.mark.parametrize(
@@ -46,4 +46,4 @@ def test_resume_wire_preserves_web_multiselect_and_other_answers(answer):
 def test_resume_wire_rejects_unrelated_answer_shapes(answer):
     """数字、混合数组和无约束对象不能越过 wire 边界。"""
     with pytest.raises(ValidationError):
-        ThreadEventCreate.model_validate(_resume_body(answer))
+        SessionEventCreate.model_validate(_resume_body(answer))

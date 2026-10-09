@@ -34,7 +34,7 @@ class ApiProbe:
         if (
             scope["type"] == "http"
             and scope.get("method") == "POST"
-            and scope.get("path", "").startswith("/api/v1/agents/threads/")
+            and scope.get("path", "").startswith("/api/v1/agents/sessions/")
             and scope.get("path", "").endswith("/events")
         ):
             marker = dict(scope["headers"]).get(b"x-load-test-id", b"").decode("ascii", errors="ignore")

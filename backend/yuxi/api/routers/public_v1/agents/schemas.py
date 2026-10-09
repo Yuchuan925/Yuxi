@@ -1,4 +1,4 @@
-"""Public Thread 输入协议的严格 wire 模型。"""
+"""Public Session 输入协议的严格 wire 模型。"""
 
 from typing import Annotated, Literal
 
@@ -42,17 +42,30 @@ class InputMessage(WireModel):
     )
 
 
-class ThreadCreate(WireModel):
-    """创建空 Thread 或原子接收首批消息。"""
+class SessionCreate(WireModel):
+    """创建空 Session 或原子接收首批消息。"""
 
-    agent_id: str = Field(min_length=1, max_length=64)
-    input: list[InputMessage] | None = Field(default=None, min_length=1, max_length=20)
-    stream: StrictBool = False
-    project_id: str | None = None
-    title: str | None = Field(default=None, max_length=255)
-    model_spec: str | None = None
-    tool_approval_mode: str | None = None
-
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={
+            "examples": [{
+                "agent_id": "default-chatbot",
+                "input": [{"role": "user", "content": [{"type": "input_text", "text": "你好"}]}],
+            }]
+        },
+    )
+    agent_id: str = Field(min_length=1, max_length=64, description="可见的已保存 Agent slug。")
+    input: list[InputMessage] | None = Field(
+        default=None, min_length=1, max_length=20,
+        description="有序用户消息数组；省略时创建空会话。",
+    )
+    stream: StrictBool = Field(
+        default=False, description="true 返回长期 SSE，必须提供 input；客户端自行关闭订阅。"
+    )
+    project_id: str | None = Field(default=None, description="当前用户的 Project；省略时创建隐式 Project。")
+    title: str | None = Field(default=None, max_length=255, description="会话展示标题。")
+    model_spec: str | None = Field(default=None, description="会话显式选择的聊天模型；省略使用默认模型。")
+    tool_approval_mode: str | None = Field(default=None, description="后续输入默认工具审批模式。")
 
 class ThreadUpdate(WireModel):
     """更新 Thread 的展示字段与后续输入默认审批模式。"""
@@ -66,7 +79,10 @@ class ThreadUpdate(WireModel):
 class MessageOptions(WireModel):
     """普通输入的优先级、执行配置与附件。"""
 
-    mode: Literal["follow_up", "steer"] | None = None
+    mode: Literal["follow_up", "steer"] | None = Field(
+        default=None,
+        description="follow_up 按 FIFO 排队；steer 优先接管。省略时运行中选择 steer，空闲选择 follow_up，协作等待时排队。",
+    )
     model_spec: str | None = None
     tool_approval_mode: str | None = None
     attachment_file_ids: list[str] = Field(default_factory=list, max_length=20)
@@ -164,10 +180,42 @@ ThreadEvent = Annotated[
 ]
 
 
-class ThreadEventCreate(WireModel):
+class SessionEventCreate(WireModel):
     """单次接收一个输入或控制事件。"""
 
-    events: list[ThreadEvent] = Field(min_length=1, max_length=1)
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={
+            "examples": [
+                {
+                    "events": [
+                        {
+                            "type": "agent.session.input.message",
+                            "input": [{"role": "user", "content": [{"type": "input_text", "text": "请继续"}]}],
+                        }
+                    ]
+                },
+                {"events": [{"type": "agent.session.input.cancel"}]},
+                {
+                    "events": [
+                        {
+                            "type": "yuxi.session.input.resume",
+                            "turn_id": "<turn-id>",
+                            "waitpoint_id": "<waitpoint-id>",
+                            "response": {
+                                "type": "answer",
+                                "answers": [{"question_id": "<question-id>", "answer": "确认"}],
+                            },
+                        }
+                    ]
+                },
+            ]
+        },
+    )
+
+    events: list[ThreadEvent] = Field(
+        min_length=1, max_length=1, description="每次只允许一个消息或控制事件；消息事件可包含多条有序用户消息。"
+    )
 
 
 def input_messages_to_domain(messages: list[InputMessage]) -> list[AgentRunInputMessage]:

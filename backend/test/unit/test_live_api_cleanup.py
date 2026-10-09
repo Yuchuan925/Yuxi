@@ -218,8 +218,8 @@ async def test_cleanup_deletes_e2e_threads_before_temporary_agents(tmp_path, mon
         )
 
     assert deleted_paths == [
-        "/api/v1/agents/threads/thread-viewer/archive",
-        "/api/v1/agents/threads/thread-marked/archive",
+        "/api/v1/agents/sessions/thread-viewer/archive",
+        "/api/v1/agents/sessions/thread-marked/archive",
         "/api/agent/e2e-main-deadbeef",
     ]
     assert deleted_row_threads == [{"thread-viewer", "thread-marked"}]
@@ -352,7 +352,7 @@ async def test_cleanup_removes_deleted_and_cooperation_thread_storage(tmp_path, 
             owner_uid="test-user",
         )
 
-    assert deleted_paths == ["/api/v1/agents/threads/thread-child/archive"]
+    assert deleted_paths == ["/api/v1/agents/sessions/thread-child/archive"]
     assert deleted_row_threads == [{"thread-child", "thread-deleted"}]
     assert not (tmp_path / "threads" / "thread-deleted").exists()
     assert not (tmp_path / "threads" / "thread-child").exists()
@@ -498,7 +498,7 @@ async def test_cleanup_stops_when_cancelled_input_remains_pending(tmp_path, monk
     monkeypatch.setattr("test.live_api_cleanup.list_test_pending_inputs", still_pending)
 
     def handle_request(request: httpx.Request) -> httpx.Response:
-        if request.method == "POST" and request.url.path == "/api/v1/agents/threads/thread-marked/events":
+        if request.method == "POST" and request.url.path == "/api/v1/agents/sessions/thread-marked/events":
             assert request.headers["Idempotency-Key"] == "cleanup:YUXI_TEST_pending_input"
             assert request.content == (
                 b'{"events":[{"type":"yuxi.session.input.cancel_input","input_id":"YUXI_TEST_pending_input"}]}'

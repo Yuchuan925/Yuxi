@@ -67,7 +67,7 @@ async def _wait_turn(
     """等待持久 Turn 结果，不依赖旧 Invocation 的同步包装。"""
     deadline = asyncio.get_running_loop().time() + RUN_TIMEOUT_SECONDS
     while asyncio.get_running_loop().time() < deadline:
-        response = await client.get(f"/api/v1/agents/threads/{thread_id}/turns/{turn_id}", headers=headers)
+        response = await client.get(f"/api/v1/agents/sessions/{thread_id}/turns/{turn_id}", headers=headers)
         assert response.status_code == 200, response.text
         turn = response.json()
         if turn["status"] in {"completed", "failed", "cancelled"}:
@@ -125,7 +125,7 @@ async def test_public_thread_evaluation_sample_uses_one_input_turn_run_flow(
     completed = False
     try:
         create_response = await e2e_client.post(
-            "/api/v1/agents/threads",
+            "/api/v1/agents/sessions",
             json={
                 "agent_id": agent_slug,
                 "title": make_test_session_title("agent-eval-e2e"),
@@ -156,7 +156,7 @@ async def test_public_thread_evaluation_sample_uses_one_input_turn_run_flow(
         completed = True
 
         run_response = await e2e_client.get(
-            f"/api/v1/agents/threads/{thread_id}/runs/{accepted['run_id']}", headers=e2e_headers
+            f"/api/v1/agents/sessions/{thread_id}/runs/{accepted['run_id']}", headers=e2e_headers
         )
         assert run_response.status_code == 200, run_response.text
         run = run_response.json()
@@ -173,7 +173,7 @@ async def test_public_thread_evaluation_sample_uses_one_input_turn_run_flow(
         )
 
         invalid = await e2e_client.post(
-            f"/api/v1/agents/threads/{thread_id}/events",
+            f"/api/v1/agents/sessions/{thread_id}/events",
             json={
                 "events": [
                     {
@@ -195,7 +195,7 @@ async def test_public_thread_evaluation_sample_uses_one_input_turn_run_flow(
     finally:
         if accepted and thread_id and not completed:
             await e2e_client.post(
-                f"/api/v1/agents/threads/{thread_id}/events",
+                f"/api/v1/agents/sessions/{thread_id}/events",
                 json={
                     "events": [
                         {

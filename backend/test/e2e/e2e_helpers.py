@@ -53,7 +53,7 @@ async def delete_agent(client: httpx.AsyncClient, headers: dict[str, str], slug:
 
 async def iter_public_thread_events(client: httpx.AsyncClient, headers: dict[str, str], thread_id: str):
     """解析 Public Thread SSE 的结构化事件。"""
-    async with client.stream("GET", f"/api/v1/agents/threads/{thread_id}/events", headers=headers) as response:
+    async with client.stream("GET", f"/api/v1/agents/sessions/{thread_id}/events", headers=headers) as response:
         assert response.status_code == 200, await response.aread()
         async for line in response.aiter_lines():
             if line.startswith("data: "):
@@ -69,14 +69,14 @@ async def archive_public_thread(
 ) -> None:
     """取消仍活跃的测试 Turn，等待收敛后归档 Thread。"""
     if turn_id:
-        turn_url = f"/api/v1/agents/threads/{thread_id}/turns/{turn_id}"
+        turn_url = f"/api/v1/agents/sessions/{thread_id}/turns/{turn_id}"
         try:
             async with asyncio.timeout(RUN_TIMEOUT_SECONDS):
                 snapshot = await client.get(turn_url, headers=headers)
                 assert snapshot.status_code == 200, snapshot.text
                 if snapshot.json()["status"] not in {"completed", "failed", "cancelled"}:
                     cancel = await client.post(
-                        f"/api/v1/agents/threads/{thread_id}/events",
+                        f"/api/v1/agents/sessions/{thread_id}/events",
                         headers={**headers, "Idempotency-Key": f"e2e-cleanup-{turn_id}"},
                         json={"events": [{"type": "agent.session.input.cancel", "yuxi": {"turn_id": turn_id}}]},
                     )
@@ -91,7 +91,7 @@ async def archive_public_thread(
             pytest.fail(f"测试 Turn 取消后未收敛: {turn_id}")
     async with asyncio.timeout(30):
         while True:
-            archive = await client.post(f"/api/v1/agents/threads/{thread_id}/archive", headers=headers)
+            archive = await client.post(f"/api/v1/agents/sessions/{thread_id}/archive", headers=headers)
             if archive.status_code != 409 or archive.json().get("detail") != "Thread 仍有活跃执行或待处理输入":
                 assert archive.status_code == 200, archive.text
                 return

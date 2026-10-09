@@ -65,7 +65,7 @@ async def _create_agent(
 async def _create_thread(client: httpx.AsyncClient, headers: dict[str, str], agent_slug: str) -> str:
     """建立可由 E2E 清理器识别的 Public Thread。"""
     response = await client.post(
-        "/api/v1/agents/threads",
+        "/api/v1/agents/sessions",
         json={
             "agent_id": agent_slug,
             "title": make_test_session_title("read-file-e2e"),
@@ -93,7 +93,7 @@ async def _upload(
     uploaded = upload_response.json()
 
     confirm_response = await client.post(
-        f"/api/v1/agents/threads/{thread_id}/attachments/confirm",
+        f"/api/v1/agents/sessions/{thread_id}/attachments/confirm",
         json={
             "attachments": [
                 {
@@ -120,7 +120,7 @@ async def _run(
 ) -> str:
     """将带附件的消息投递到 Public Thread 并读取本 Turn 结果。"""
     response = await client.post(
-        f"/api/v1/agents/threads/{thread_id}/events",
+        f"/api/v1/agents/sessions/{thread_id}/events",
         json={
             "events": [
                 {
@@ -141,7 +141,7 @@ async def _run(
     completed = False
     try:
         while asyncio.get_running_loop().time() < deadline:
-            result = await client.get(f"/api/v1/agents/threads/{thread_id}/turns/{turn_id}", headers=headers)
+            result = await client.get(f"/api/v1/agents/sessions/{thread_id}/turns/{turn_id}", headers=headers)
             assert result.status_code == 200, result.text
             turn = result.json()
             if turn["status"] in {"completed", "failed", "cancelled"}:
@@ -155,13 +155,13 @@ async def _run(
     finally:
         if not completed:
             cancel = await client.post(
-                f"/api/v1/agents/threads/{thread_id}/events",
+                f"/api/v1/agents/sessions/{thread_id}/events",
                 json={"events": [{"type": "agent.session.input.cancel", "yuxi": {"turn_id": turn_id}}]},
                 headers={**headers, "Idempotency-Key": f"read-file-cancel-{turn_id}"},
             )
             assert cancel.status_code in {202, 409}, cancel.text
             for _ in range(60):
-                settled = await client.get(f"/api/v1/agents/threads/{thread_id}/turns/{turn_id}", headers=headers)
+                settled = await client.get(f"/api/v1/agents/sessions/{thread_id}/turns/{turn_id}", headers=headers)
                 assert settled.status_code == 200, settled.text
                 if settled.json()["status"] in {"completed", "failed", "cancelled"}:
                     break
@@ -232,7 +232,7 @@ async def test_read_file_image_and_document_real_agent_runs(
         assert "ocr_parse_file" in document_output, document_output
     finally:
         for thread_id in thread_ids:
-            archive = await e2e_client.post(f"/api/v1/agents/threads/{thread_id}/archive", headers=e2e_headers)
+            archive = await e2e_client.post(f"/api/v1/agents/sessions/{thread_id}/archive", headers=e2e_headers)
             assert archive.status_code == 200, archive.text
         await delete_agent(e2e_client, e2e_headers, slug)
 
@@ -268,6 +268,6 @@ async def test_non_vision_model_uses_ocr_fallback(
         assert "OCR FALLBACK OK" in " ".join(output.upper().split()), output
     finally:
         if thread_id:
-            archive = await e2e_client.post(f"/api/v1/agents/threads/{thread_id}/archive", headers=e2e_headers)
+            archive = await e2e_client.post(f"/api/v1/agents/sessions/{thread_id}/archive", headers=e2e_headers)
             assert archive.status_code == 200, archive.text
         await delete_agent(e2e_client, e2e_headers, slug)

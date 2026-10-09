@@ -54,6 +54,7 @@ export default defineConfig({
           { text: '认识 Yuxi', link: '/intro/project-overview' },
           { text: '快速开始', link: '/intro/quick-start' },
           { text: '命令行工具', link: '/intro/cli' },
+          { text: '公开 Agent API 接入', link: '/intro/agents-api-quickstart' },
           { text: '模型配置', link: '/intro/model-config' },
           { text: '知识库入门', link: '/intro/knowledge-base' },
           { text: '知识库评估', link: '/intro/evaluation' }

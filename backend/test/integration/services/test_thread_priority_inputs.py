@@ -530,7 +530,7 @@ async def test_http_steer_has_no_target_or_effective_mode_and_keeps_scope(sessio
                 }
             ]
         }
-        url = "/api/v1/agents/threads/input-thread/events"
+        url = "/api/v1/agents/sessions/input-thread/events"
         response = await client.post(url, headers={"Idempotency-Key": "http-S1"}, json=body)
         assert response.status_code == 202, response.text
         accepted = response.json()

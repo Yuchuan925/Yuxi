@@ -56,20 +56,20 @@ export class Client {
   deleteApiKey(id: string) { return this.request<Json>(`/user/apikey/${encodeURIComponent(id)}`, { method: "DELETE" }); }
   agents() { return this.request<Json>("/v1/agents"); }
   agent(id: string) { return this.request<Json>(`/v1/agents/${encodeURIComponent(id)}`); }
-  threads(params = "") { return this.request<Json>(`/v1/agents/threads${params}`); }
-  createThread(agentId: string, idempotencyKey: string) { return this.request<Json>("/v1/agents/threads", { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey }, body: JSON.stringify({ agent_id: agentId }) }); }
-  thread(id: string) { return this.request<Json>(`/v1/agents/threads/${encodeURIComponent(id)}`); }
-  turn(threadId: string, turnId: string) { return this.request<Json>(`/v1/agents/threads/${encodeURIComponent(threadId)}/turns/${encodeURIComponent(turnId)}`); }
-  history(id: string) { return this.request<Json>(`/v1/agents/threads/${encodeURIComponent(id)}/history`); }
+  threads(params = "") { return this.request<Json>(`/v1/agents/sessions${params}`); }
+  createThread(agentId: string, idempotencyKey: string) { return this.request<Json>("/v1/agents/sessions", { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey }, body: JSON.stringify({ agent_id: agentId }) }); }
+  thread(id: string) { return this.request<Json>(`/v1/agents/sessions/${encodeURIComponent(id)}`); }
+  turn(threadId: string, turnId: string) { return this.request<Json>(`/v1/agents/sessions/${encodeURIComponent(threadId)}/turns/${encodeURIComponent(turnId)}`); }
+  history(id: string) { return this.request<Json>(`/v1/agents/sessions/${encodeURIComponent(id)}/history`); }
   send(id: string, message: string, key: string) { return this.event(id, { type: "agent.session.input.message", yuxi: { mode: "follow_up" }, input: [{ role: "user", content: [{ type: "input_text", text: message }] }] }, key); }
-  event(id: string, event: Json, key: string) { return this.request<Json>(`/v1/agents/threads/${encodeURIComponent(id)}/events`, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": key }, body: JSON.stringify({ events: [event] }) }); }
+  event(id: string, event: Json, key: string) { return this.request<Json>(`/v1/agents/sessions/${encodeURIComponent(id)}/events`, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": key }, body: JSON.stringify({ events: [event] }) }); }
   async *events(id: string, cursor?: string): AsyncGenerator<SseEvent> {
     const headers = new Headers({ Accept: "text/event-stream" });
     if (this.remote.apiKey) headers.set("Authorization", `Bearer ${this.remote.apiKey}`);
     if (cursor) headers.set("Last-Event-ID", cursor);
     const controller = new AbortController();
     let response: Response;
-    try { response = await this.fetchImpl(`${this.apiBase}/v1/agents/threads/${encodeURIComponent(id)}/events`, { headers, signal: controller.signal }); }
+    try { response = await this.fetchImpl(`${this.apiBase}/v1/agents/sessions/${encodeURIComponent(id)}/events`, { headers, signal: controller.signal }); }
     catch (error) { throw new YuxiError(`事件流连接失败: ${error instanceof Error ? error.message : String(error)}`); }
     try {
       if (!response.ok || !response.body) throw await this.error(response);

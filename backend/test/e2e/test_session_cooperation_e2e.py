@@ -59,7 +59,7 @@ async def test_sessions_use_public_state_and_shared_sandbox(e2e_client, e2e_head
     conn = await asyncpg.connect(postgres_dsn())
     try:
         created = await e2e_client.post(
-            "/api/v1/agents/threads",
+            "/api/v1/agents/sessions",
             headers={**e2e_headers, "Idempotency-Key": str(uuid.uuid4())},
             json={
                 "agent_id": slug,
@@ -81,7 +81,7 @@ async def test_sessions_use_public_state_and_shared_sandbox(e2e_client, e2e_head
         question_marker = " PARALLEL_QUESTION" if parallel_question else ""
         selection_marker = " SELECT_AGENT" if select_agent else ""
         accepted = await e2e_client.post(
-            f"/api/v1/agents/threads/{thread_id}/events",
+            f"/api/v1/agents/sessions/{thread_id}/events",
             headers={**e2e_headers, "Idempotency-Key": str(uuid.uuid4())},
             json={
                 "events": [
@@ -104,14 +104,14 @@ async def test_sessions_use_public_state_and_shared_sandbox(e2e_client, e2e_head
         async with asyncio.timeout(180):
             while True:
                 response = await e2e_client.get(
-                    f"/api/v1/agents/threads/{thread_id}/turns/{turn_id}", headers=e2e_headers
+                    f"/api/v1/agents/sessions/{thread_id}/turns/{turn_id}", headers=e2e_headers
                 )
                 assert response.status_code == 200, response.text
                 turn = response.json()
                 if parallel_question and turn["status"] == "waiting" and turn["waitpoint"]["kind"] == "answer":
                     await _assert_thread_activity(e2e_client, e2e_headers, thread_id, "waiting_answer")
                     resumed = await e2e_client.post(
-                        f"/api/v1/agents/threads/{thread_id}/events",
+                        f"/api/v1/agents/sessions/{thread_id}/events",
                         headers={**e2e_headers, "Idempotency-Key": str(uuid.uuid4())},
                         json={
                             "events": [
@@ -153,7 +153,7 @@ async def test_sessions_use_public_state_and_shared_sandbox(e2e_client, e2e_head
             assert snapshot["tools"] == ["ask_user_question"]
         else:
             assert "COOP_PARENT_CONFIG" in snapshot["system_prompt"]
-        state = await e2e_client.get(f"/api/v1/agents/threads/{thread_id}/state", headers=e2e_headers)
+        state = await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/state", headers=e2e_headers)
         assert state.status_code == 200, state.text
         member = next(
             s for s in state.json()["agent_state"]["cooperation"]["sessions"] if s["session_id"] == child["thread_id"]
@@ -163,7 +163,7 @@ async def test_sessions_use_public_state_and_shared_sandbox(e2e_client, e2e_head
             user_workspace_dir(uid) / root["workdir_path"] / "cooperation.txt"
         ).read_text() == "cooperation verified"
         child_turn = await e2e_client.get(
-            f"/api/v1/agents/threads/{child['thread_id']}/turns/{run['turn_id']}", headers=e2e_headers
+            f"/api/v1/agents/sessions/{child['thread_id']}/turns/{run['turn_id']}", headers=e2e_headers
         )
         assert child_turn.status_code == 200 and output_text(child_turn.json()["output"]) == OUTPUT
         assert json.loads(child["config_snapshot"])["system_prompt"].count("用户工作区 agents/AGENTS.md") == 0
@@ -179,7 +179,7 @@ async def test_sessions_use_public_state_and_shared_sandbox(e2e_client, e2e_head
         assert (await asyncio.to_thread(backend.execute, f"printf transient > {temporary}")).exit_code == 0
         # 压缩维护不能释放共享环境；根与成员均保留同一 /tmp 事实。
         for target in (thread_id, child["thread_id"]):
-            compressed = await e2e_client.post(f"/api/v1/agents/threads/{target}/compress", headers=e2e_headers)
+            compressed = await e2e_client.post(f"/api/v1/agents/sessions/{target}/compress", headers=e2e_headers)
             assert compressed.status_code == 200, compressed.text
             preserved = await asyncio.to_thread(backend.execute, f"cat {temporary}")
             assert preserved.exit_code == 0 and preserved.output == "transient"
@@ -208,7 +208,7 @@ async def test_sessions_use_public_state_and_shared_sandbox(e2e_client, e2e_head
     finally:
         await conn.close()
         if thread_id:
-            members = await e2e_client.get(f"/api/v1/agents/threads/{thread_id}/state", headers=e2e_headers)
+            members = await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/state", headers=e2e_headers)
             assert members.status_code == 200, members.text
             for member in members.json()["agent_state"]["cooperation"]["sessions"]:
                 if member["session_id"] != thread_id:
@@ -243,7 +243,7 @@ async def test_full_tree_capacity_control_and_sibling_tools(e2e_client, e2e_head
     async def event(thread_id, payload):
         """通过真实公开入口提交独立输入或控制。"""
         result = await e2e_client.post(
-            f"/api/v1/agents/threads/{thread_id}/events",
+            f"/api/v1/agents/sessions/{thread_id}/events",
             headers={**e2e_headers, "Idempotency-Key": str(uuid.uuid4())},
             json={"events": [payload]},
         )
@@ -252,7 +252,7 @@ async def test_full_tree_capacity_control_and_sibling_tools(e2e_client, e2e_head
 
     try:
         created = await e2e_client.post(
-            "/api/v1/agents/threads",
+            "/api/v1/agents/sessions",
             headers={**e2e_headers, "Idempotency-Key": str(uuid.uuid4())},
             json={
                 "agent_id": slug,
@@ -388,11 +388,11 @@ async def test_full_tree_capacity_control_and_sibling_tools(e2e_client, e2e_head
         await conn.close()
         try:
             if root_id:
-                state = await e2e_client.get(f"/api/v1/agents/threads/{root_id}/state", headers=e2e_headers)
+                state = await e2e_client.get(f"/api/v1/agents/sessions/{root_id}/state", headers=e2e_headers)
                 assert state.status_code == 200, state.text
                 for member in reversed(state.json()["agent_state"]["cooperation"]["sessions"]):
                     queue = await e2e_client.get(
-                        f"/api/v1/agents/threads/{member['session_id']}/queue", headers=e2e_headers
+                        f"/api/v1/agents/sessions/{member['session_id']}/queue", headers=e2e_headers
                     )
                     assert queue.status_code == 200, queue.text
                     for pending in queue.json()["inputs"]:
@@ -443,13 +443,13 @@ async def test_full_tree_capacity_control_and_sibling_tools(e2e_client, e2e_head
 async def _assert_thread_activity(client, headers, thread_id, expected):
     """真实 HTTP 查看不改变 Turn 等待，列表与快照保持同一活动投影。"""
     for path, method in (
-        (f"/api/v1/agents/threads/{thread_id}", client.get),
-        (f"/api/v1/agents/threads/{thread_id}/viewed", client.post),
+        (f"/api/v1/agents/sessions/{thread_id}", client.get),
+        (f"/api/v1/agents/sessions/{thread_id}/viewed", client.post),
     ):
         response = await method(path, headers=headers)
         assert response.status_code == 200, response.text
         assert response.json()["activity_status"] == expected, response.json()
-    listed = await client.get("/api/v1/agents/threads", headers=headers, params={"limit": 100})
+    listed = await client.get("/api/v1/agents/sessions", headers=headers, params={"limit": 100})
     assert listed.status_code == 200, listed.text
     thread = next(item for item in listed.json() if item["id"] == thread_id)
     assert thread["activity_status"] == expected, thread

@@ -48,14 +48,14 @@ async def _upload_project_file(
     entry = response.json()["entries"][0]
     if not artifact_path:
         return entry["path"]
-    marker = f"/api/v1/agents/threads/{thread_id}/artifacts/"
+    marker = f"/api/v1/agents/sessions/{thread_id}/artifacts/"
     assert entry["artifact_url"].startswith(marker)
     return f"/{entry['artifact_url'][len(marker) :]}"
 
 
 async def test_public_thread_endpoints_require_authentication(test_client):
-    assert (await test_client.get("/api/v1/agents/threads")).status_code == 401
-    assert (await test_client.get(f"/api/v1/agents/threads/{uuid.uuid4()}/audits")).status_code == 401
+    assert (await test_client.get("/api/v1/agents/sessions")).status_code == 401
+    assert (await test_client.get(f"/api/v1/agents/sessions/{uuid.uuid4()}/audits")).status_code == 401
     assert (await test_client.get("/api/agent")).status_code == 401
 
 
@@ -68,13 +68,13 @@ async def test_thread_message_audits_return_persisted_facts_without_leaking_into
     standard_thread_id = await _create_thread_for_user(test_client, standard_headers)
 
     message_audit_forbidden = await test_client.get(
-        f"/api/v1/agents/threads/{standard_thread_id}/audits",
+        f"/api/v1/agents/sessions/{standard_thread_id}/audits",
         headers=standard_headers,
     )
     assert message_audit_forbidden.status_code == 403, message_audit_forbidden.text
 
     message_audit_cross_user = await test_client.get(
-        f"/api/v1/agents/threads/{standard_thread_id}/audits",
+        f"/api/v1/agents/sessions/{standard_thread_id}/audits",
         headers=admin_headers,
     )
     assert message_audit_cross_user.status_code == 404, message_audit_cross_user.text
@@ -270,7 +270,7 @@ async def test_thread_message_audits_return_persisted_facts_without_leaking_into
     finally:
         await conn.close()
 
-    timeline_response = await test_client.get(f"/api/v1/agents/threads/{thread_id}/audits", headers=admin_headers)
+    timeline_response = await test_client.get(f"/api/v1/agents/sessions/{thread_id}/audits", headers=admin_headers)
     assert timeline_response.status_code == 200, timeline_response.text
     timeline_payload = timeline_response.json()
     timeline = timeline_payload["audits"]
@@ -332,12 +332,12 @@ async def test_thread_message_audits_return_persisted_facts_without_leaking_into
     assert "private_internal_field" not in timeline_response.text
 
     retired_response = await test_client.get(
-        f"/api/v1/agents/threads/{thread_id}/model-audits",
+        f"/api/v1/agents/sessions/{thread_id}/model-audits",
         headers=admin_headers,
     )
     assert retired_response.status_code == 404, retired_response.text
 
-    history = await test_client.get(f"/api/v1/agents/threads/{thread_id}/history", headers=admin_headers)
+    history = await test_client.get(f"/api/v1/agents/sessions/{thread_id}/history", headers=admin_headers)
     assert history.status_code == 200, history.text
     history_items = history.json()["items"]
     # 未进入公开输出链路的原始审计不会因 state_reconciled 或 ToolCall 存在而暴露。
@@ -380,7 +380,7 @@ async def test_image_upload_composites_transparent_png_pixels_on_white(test_clie
 
 async def test_legacy_direct_thread_attachment_upload_is_removed(test_client, admin_headers):
     response = await test_client.post(
-        f"/api/v1/agents/threads/{uuid.uuid4()}/attachments",
+        f"/api/v1/agents/sessions/{uuid.uuid4()}/attachments",
         headers=admin_headers,
         files={"file": ("legacy.txt", b"legacy", "text/plain")},
     )
@@ -393,12 +393,12 @@ async def test_development_thread_file_browse_routes_are_removed(test_client, ad
     path = await _upload_project_file(test_client, admin_headers, thread_id, "removed-route.txt", b"content")
 
     list_response = await test_client.get(
-        f"/api/v1/agents/threads/{thread_id}/files",
+        f"/api/v1/agents/sessions/{thread_id}/files",
         params={"path": "/"},
         headers=admin_headers,
     )
     content_response = await test_client.get(
-        f"/api/v1/agents/threads/{thread_id}/files/content",
+        f"/api/v1/agents/sessions/{thread_id}/files/content",
         params={"path": path},
         headers=admin_headers,
     )
@@ -424,7 +424,7 @@ async def test_thread_artifact_uses_image_signature_for_content_type(test_client
     assert upload_response.status_code == 200, upload_response.text
     uploaded = upload_response.json()
     confirm_response = await test_client.post(
-        f"/api/v1/agents/threads/{thread_id}/attachments/confirm",
+        f"/api/v1/agents/sessions/{thread_id}/attachments/confirm",
         headers=admin_headers,
         json={
             "attachments": [
@@ -437,7 +437,7 @@ async def test_thread_artifact_uses_image_signature_for_content_type(test_client
     )
     assert confirm_response.status_code == 200, confirm_response.text
     attachment = confirm_response.json()["attachments"][0]
-    listed = await test_client.get(f"/api/v1/agents/threads/{thread_id}/attachments", headers=admin_headers)
+    listed = await test_client.get(f"/api/v1/agents/sessions/{thread_id}/attachments", headers=admin_headers)
     assert listed.status_code == 200, listed.text
     assert any(item["file_id"] == attachment["file_id"] for item in listed.json()["attachments"])
 
@@ -460,7 +460,7 @@ async def test_thread_artifact_preview_http_preserves_raw_download(test_client, 
         content,
         artifact_path=True,
     )
-    artifact_url = f"/api/v1/agents/threads/{thread_id}/artifacts/{artifact_path.lstrip('/')}"
+    artifact_url = f"/api/v1/agents/sessions/{thread_id}/artifacts/{artifact_path.lstrip('/')}"
 
     preview_response = await test_client.get(
         artifact_url,
@@ -494,7 +494,7 @@ async def _create_thread_for_user(test_client, headers: dict[str, str]) -> str:
     assert agent_id, f"Agent payload missing identifier: {agents[0]}"
 
     create_resp = await test_client.post(
-        "/api/v1/agents/threads",
+        "/api/v1/agents/sessions",
         json={
             "agent_id": agent_id,
             "title": make_test_session_title("chat-router"),
@@ -517,7 +517,7 @@ async def test_thread_history_envelope_has_all_runs_and_keeps_viewed_explicit(
     prefix = uuid.uuid4().hex
     started_at = datetime(2026, 9, 5, 0, 0, 0, tzinfo=UTC)
     try:
-        empty = await test_client.get(f"/api/v1/agents/threads/{thread_id}/history", headers=admin_headers)
+        empty = await test_client.get(f"/api/v1/agents/sessions/{thread_id}/history", headers=admin_headers)
         assert empty.status_code == 200, empty.text
         assert empty.json()["items"] == []
         assert empty.json()["runs"] == []
@@ -579,7 +579,7 @@ async def test_thread_history_envelope_has_all_runs_and_keeps_viewed_explicit(
             started_at,
             f"turn-{prefix}-0",
         )
-        response = await test_client.get(f"/api/v1/agents/threads/{thread_id}/history", headers=admin_headers)
+        response = await test_client.get(f"/api/v1/agents/sessions/{thread_id}/history", headers=admin_headers)
         assert response.status_code == 200, response.text
         payload = response.json()
         assert set(payload) == {"thread", "runs", "items"}
@@ -593,24 +593,24 @@ async def test_thread_history_envelope_has_all_runs_and_keeps_viewed_explicit(
         assert "must-not-leak" not in response.text
         assert await conn.fetchval("SELECT last_viewed_run_id FROM sessions WHERE thread_id = $1", thread_id) == marker
 
-        denied = await test_client.get(f"/api/v1/agents/threads/{thread_id}/history", headers=standard_user["headers"])
+        denied = await test_client.get(f"/api/v1/agents/sessions/{thread_id}/history", headers=standard_user["headers"])
         assert denied.status_code == 404
         assert prefix not in denied.text
-        viewed = await test_client.post(f"/api/v1/agents/threads/{thread_id}/viewed", headers=admin_headers)
+        viewed = await test_client.post(f"/api/v1/agents/sessions/{thread_id}/viewed", headers=admin_headers)
         assert viewed.status_code == 200, viewed.text
         assert viewed.json()["thread_status"] == "done"
         assert (
             await conn.fetchval("SELECT last_viewed_run_id FROM sessions WHERE thread_id = $1", thread_id)
             == f"{prefix}-500"
         )
-        reread = await test_client.get(f"/api/v1/agents/threads/{thread_id}/history", headers=admin_headers)
+        reread = await test_client.get(f"/api/v1/agents/sessions/{thread_id}/history", headers=admin_headers)
         assert reread.json()["thread"]["thread_status"] == "done"
-        deleted = await test_client.delete(f"/api/v1/agents/threads/{thread_id}", headers=admin_headers)
+        deleted = await test_client.delete(f"/api/v1/agents/sessions/{thread_id}", headers=admin_headers)
         assert deleted.status_code == 405
-        archived = await test_client.post(f"/api/v1/agents/threads/{thread_id}/archive", headers=admin_headers)
+        archived = await test_client.post(f"/api/v1/agents/sessions/{thread_id}/archive", headers=admin_headers)
         assert archived.status_code == 200, archived.text
         assert archived.json()["status"] == "archived"
-        archived_history = await test_client.get(f"/api/v1/agents/threads/{thread_id}/history", headers=admin_headers)
+        archived_history = await test_client.get(f"/api/v1/agents/sessions/{thread_id}/history", headers=admin_headers)
         assert archived_history.status_code == 200, archived_history.text
         assert len(archived_history.json()["runs"]) == 501
     finally:
@@ -621,7 +621,7 @@ async def test_thread_tool_approval_mode_is_saved_in_session_metadata(test_clien
     thread_id = await _create_thread_for_user(test_client, admin_headers)
 
     update_response = await test_client.patch(
-        f"/api/v1/agents/threads/{thread_id}",
+        f"/api/v1/agents/sessions/{thread_id}",
         headers=admin_headers,
         json={"tool_approval_mode": "always_trust"},
     )
@@ -629,7 +629,7 @@ async def test_thread_tool_approval_mode_is_saved_in_session_metadata(test_clien
     assert update_response.status_code == 200, update_response.text
     assert update_response.json()["metadata"]["tool_approval_mode"] == "always_trust"
 
-    list_response = await test_client.get("/api/v1/agents/threads", headers=admin_headers)
+    list_response = await test_client.get("/api/v1/agents/sessions", headers=admin_headers)
     assert list_response.status_code == 200, list_response.text
     thread = next(item for item in list_response.json() if item["id"] == thread_id)
     assert thread["metadata"]["tool_approval_mode"] == "always_trust"
@@ -639,7 +639,7 @@ async def test_thread_tool_approval_mode_rejects_unknown_value(test_client, admi
     thread_id = await _create_thread_for_user(test_client, admin_headers)
 
     response = await test_client.patch(
-        f"/api/v1/agents/threads/{thread_id}",
+        f"/api/v1/agents/sessions/{thread_id}",
         headers=admin_headers,
         json={"tool_approval_mode": "unknown"},
     )
@@ -650,7 +650,7 @@ async def test_thread_tool_approval_mode_rejects_unknown_value(test_client, admi
 async def test_thread_list_exposes_thread_status(test_client, admin_headers):
     thread_id = await _create_thread_for_user(test_client, admin_headers)
 
-    list_response = await test_client.get("/api/v1/agents/threads", headers=admin_headers)
+    list_response = await test_client.get("/api/v1/agents/sessions", headers=admin_headers)
     assert list_response.status_code == 200, list_response.text
     thread = next(item for item in list_response.json() if item["id"] == thread_id)
     assert thread["thread_status"] in {"done", "ready", "loading"}
@@ -659,7 +659,7 @@ async def test_thread_list_exposes_thread_status(test_client, admin_headers):
 async def test_mark_thread_viewed_returns_thread_status(test_client, admin_headers):
     thread_id = await _create_thread_for_user(test_client, admin_headers)
 
-    response = await test_client.post(f"/api/v1/agents/threads/{thread_id}/viewed", headers=admin_headers)
+    response = await test_client.post(f"/api/v1/agents/sessions/{thread_id}/viewed", headers=admin_headers)
     assert response.status_code == 200, response.text
     payload = response.json()
     assert payload["thread_status"] in {"done", "ready", "loading"}
@@ -669,7 +669,7 @@ async def test_mark_thread_viewed_requires_ownership(test_client, standard_user,
     headers = standard_user["headers"]
     thread_id = await _create_thread_for_user(test_client, headers)
 
-    response = await test_client.post(f"/api/v1/agents/threads/{thread_id}/viewed", headers=admin_headers)
+    response = await test_client.post(f"/api/v1/agents/sessions/{thread_id}/viewed", headers=admin_headers)
     assert response.status_code == 404, response.text
 
 
@@ -757,7 +757,7 @@ async def test_save_thread_artifact_to_workspace_copies_output_file(test_client,
     )
 
     response = await test_client.post(
-        f"/api/v1/agents/threads/{thread_id}/artifacts/save",
+        f"/api/v1/agents/sessions/{thread_id}/artifacts/save",
         json={"path": source_path, "destination_path": "/saved_artifacts"},
         headers=headers,
     )
@@ -794,7 +794,7 @@ async def test_save_thread_artifact_to_selected_workspace_directory(test_client,
     assert directory.status_code == 200, directory.text
 
     response = await test_client.post(
-        f"/api/v1/agents/threads/{thread_id}/artifacts/save",
+        f"/api/v1/agents/sessions/{thread_id}/artifacts/save",
         json={"path": source_path, "destination_path": f"/{destination_name}"},
         headers=headers,
     )
@@ -837,7 +837,7 @@ async def test_save_thread_artifact_to_workspace_auto_renames_conflicts(test_cli
         parent_path=directory.json()["entry"]["path"],
         artifact_path=True,
     )
-    save_url = f"/api/v1/agents/threads/{thread_id}/artifacts/save"
+    save_url = f"/api/v1/agents/sessions/{thread_id}/artifacts/save"
     first_response, second_response = await asyncio.gather(
         test_client.post(save_url, json={"path": source_path}, headers=headers),
         test_client.post(save_url, json={"path": second_source_path}, headers=headers),
@@ -862,7 +862,7 @@ async def test_save_thread_artifact_to_workspace_rejects_invalid_paths(test_clie
     thread_id = await _create_thread_for_user(test_client, headers)
 
     invalid_response = await test_client.post(
-        f"/api/v1/agents/threads/{thread_id}/artifacts/save",
+        f"/api/v1/agents/sessions/{thread_id}/artifacts/save",
         json={"path": "/home/gem/user-data/not-allowed/demo.txt"},
         headers=headers,
     )
@@ -885,7 +885,7 @@ async def test_save_thread_artifact_to_workspace_rejects_invalid_paths(test_clie
     )
     directory_path = str(PurePosixPath(child_path).parent)
     directory_response = await test_client.post(
-        f"/api/v1/agents/threads/{thread_id}/artifacts/save",
+        f"/api/v1/agents/sessions/{thread_id}/artifacts/save",
         json={"path": directory_path},
         headers=headers,
     )
@@ -914,7 +914,7 @@ async def test_standard_user_restores_visible_function_items_without_internal_au
     thread_id = turn_id = None
     try:
         created = await test_client.post(
-            "/api/v1/agents/threads",
+            "/api/v1/agents/sessions",
             headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
             json={
                 "agent_id": slug,
@@ -927,7 +927,7 @@ async def test_standard_user_restores_visible_function_items_without_internal_au
         assert created.status_code == 200, created.text
         thread_id, turn_id = created.json()["thread_id"], created.json()["turn_id"]
         assert (await _terminal_turn(test_client, headers, thread_id, turn_id))["status"] == "completed"
-        history = await test_client.get(f"/api/v1/agents/threads/{thread_id}/history", headers=headers)
+        history = await test_client.get(f"/api/v1/agents/sessions/{thread_id}/history", headers=headers)
         assert history.status_code == 200, history.text
         items = history.json()["items"]
         call = next(item for item in items if item["type"] == "function_call")
@@ -935,7 +935,7 @@ async def test_standard_user_restores_visible_function_items_without_internal_au
         assert call["name"] == "present_artifacts" and call["arguments"] == {"filepaths": []}
         assert call["status"] == output["status"] == "completed" and call["call_id"] == output["call_id"]
         assert TOOL_RESULT in output["output"]
-        assert (await test_client.get(f"/api/v1/agents/threads/{thread_id}/audits", headers=headers)).status_code == 403
+        assert (await test_client.get(f"/api/v1/agents/sessions/{thread_id}/audits", headers=headers)).status_code == 403
         assert all(
             field not in history.text
             for field in ("system_prompt", "checkpoint", "manifest_fingerprint", "source_model_operation_id")
