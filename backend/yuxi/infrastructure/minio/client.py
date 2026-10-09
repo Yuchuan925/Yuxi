@@ -108,9 +108,15 @@ class MinIOClient:
         try:
             created = False
             if not self.client.bucket_exists(bucket_name=bucket_name):
-                self.client.make_bucket(bucket_name=bucket_name)
-                created = True
-                logger.info(f"存储桶 '{bucket_name}' 已创建")
+                try:
+                    self.client.make_bucket(bucket_name=bucket_name)
+                except S3Error as e:
+                    # 其他上传可能已创建同一桶；只有明确归当前账号所有才可继续。
+                    if e.code != "BucketAlreadyOwnedByYou":
+                        raise
+                else:
+                    created = True
+                    logger.info(f"存储桶 '{bucket_name}' 已创建")
 
             self._ensure_public_read_access(bucket_name)
 

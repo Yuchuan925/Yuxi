@@ -1,5 +1,7 @@
 """真实 HTTP 上传后回读工作区文件与 MinIO 对象。"""
 
+import asyncio
+from hashlib import sha256
 from io import BytesIO
 from urllib.parse import unquote, urlsplit
 from uuid import uuid4
@@ -12,6 +14,37 @@ from yuxi.infrastructure.postgres.manager import pg_manager
 from yuxi.modules.agents.models.attachments import AgentAttachment
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
+
+
+async def test_concurrent_knowledge_uploads_preserve_both_files(test_client, admin_headers, knowledge_database):
+    """知识库并发上传两个文件，回读真实对象核对内容与哈希。"""
+    storage = get_minio_client()
+    contents = {f"pytest-upload-{uuid4().hex}.txt": content for content in (b"first knowledge file", b"second knowledge file")}
+    uploaded = []
+
+    async def upload(name, content):
+        """保存成功上传的对象位置，供核对与清理。"""
+        response = await test_client.post(
+            "/api/knowledge/files/upload",
+            params={"kb_id": knowledge_database["kb_id"]},
+            files={"file": (name, content, "text/plain")},
+            headers=admin_headers,
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        uploaded.append(payload)
+        assert payload["filename"] == name
+        assert payload["size"] == len(content)
+        assert payload["content_hash"] == sha256(content).hexdigest()
+        assert await storage.adownload_file(payload["bucket_name"], payload["object_name"]) == content
+
+    try:
+        results = await asyncio.gather(*(upload(name, content) for name, content in contents.items()), return_exceptions=True)
+        assert results == [None, None], results
+        assert len(uploaded) == 2
+    finally:
+        for payload in uploaded:
+            await storage.adelete_file(payload["bucket_name"], payload["object_name"])
 
 
 async def test_workspace_upload_preserves_bytes_and_existing_file(test_client, standard_user):
