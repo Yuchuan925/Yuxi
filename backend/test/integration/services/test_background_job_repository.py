@@ -800,3 +800,50 @@ async def test_observer_preserves_executor_outcome_and_rejects_late_progress(bac
     observed = await observer.get_job(job.id)
     assert observed["status"] == status
     assert observed["result"] == {"failed": 2}
+
+
+@pytest.mark.parametrize("action", ["parse", "index"])
+@pytest.mark.parametrize("scope", ["files", "pending"])
+async def test_document_partial_failure_persists_failed_job_and_details(background_job_schema, monkeypatch, action, scope) -> None:
+    """真实 worker 入口将部分失败保存为失败终态，保留已提交的文件明细。"""
+    import yuxi.modules.knowledge.services.background_jobs as knowledge_jobs
+    from yuxi.workers.background_jobs import process_background_job
+
+    async def process(_kb_id, file_id, **_kwargs):
+        if file_id == "bad":
+            raise RuntimeError("确定性的文件处理失败")
+        return {"file_id": file_id, "status": "parsed" if action == "parse" else "indexed"}
+
+    async def pending(_kb_id, *, after_file_id, **_kwargs):
+        return [] if after_file_id else ["ok", "bad"]
+
+    monkeypatch.setattr(knowledge_jobs.knowledge_base, f"{action}_file", process)
+    monkeypatch.setattr(knowledge_jobs.knowledge_base, "list_document_file_ids_by_statuses", pending)
+    job_id = uuid.uuid4().hex
+    repo = BackgroundJobRepository()
+    await repo.create(
+        job_id,
+        {
+            **_job_data(),
+            "type": f"knowledge_{action}",
+            "payload": {
+                "kb_id": "pytest-kb",
+                "operator_id": "pytest",
+                "scope": scope,
+                "file_ids": ["ok", "bad"],
+                "statuses": ["uploaded"],
+                "count": 2,
+            },
+        },
+    )
+
+    await process_background_job({"worker_id": "pytest"}, job_id)
+
+    record = await repo.get_by_id(job_id)
+    assert record.status == "failed"
+    assert "失败 1 个" in record.error
+    assert record.worker_id is None
+    assert record.result["processed"] == 2
+    assert record.result["failed"] == 1
+    assert record.result["succeeded"] == 1
+    assert [item["file_id"] for item in record.result["items"]] == ["ok", "bad"]

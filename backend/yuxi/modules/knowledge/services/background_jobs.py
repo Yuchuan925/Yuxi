@@ -282,6 +282,8 @@ async def _run_file_ids(context: BackgroundJobContext, *, action: str) -> dict:
     result = _document_result(processed_items, processed=len(processed_items), failed=failed_count)
     await context.set_result(result)
     await context.set_progress(100.0, f"{label}完成，失败 {failed_count} 个")
+    if failed_count:
+        raise RuntimeError(f"{label}完成，失败 {failed_count} 个")
     return result
 
 
@@ -324,10 +326,7 @@ async def _run_pending_files(context: BackgroundJobContext, *, action: str) -> d
             try:
                 if action == "parse":
                     if params:
-                        try:
-                            await knowledge_base.update_file_params(kb_id, file_id, params, operator_id=operator_id)
-                        except Exception as exc:
-                            logger.error("Failed to update params for pending parse file %s: %s", file_id, exc)
+                        await knowledge_base.update_file_params(kb_id, file_id, params, operator_id=operator_id)
                     result = await knowledge_base.parse_file(
                         kb_id,
                         file_id,
@@ -344,6 +343,8 @@ async def _run_pending_files(context: BackgroundJobContext, *, action: str) -> d
                         params=params,
                         **processing_owner,
                     )
+                if _is_failed_item(result):
+                    failed_count += 1
                 _append_result_sample(result_items, result)
             except Exception as exc:
                 failed_count += 1
@@ -360,6 +361,8 @@ async def _run_pending_files(context: BackgroundJobContext, *, action: str) -> d
         100.0,
         f"{label}完成，失败 {failed_count} 个" if processed_count else f"没有待{label}文档",
     )
+    if failed_count:
+        raise RuntimeError(f"{label}完成，失败 {failed_count} 个")
     return result
 
 

@@ -723,3 +723,43 @@ async def test_document_job_result_keeps_bounded_references_and_counts():
     assert len(result["items"]) == 200
     assert set(result["items"][0]) == {"file_id", "status", "error"}
     assert "private-token" not in str(result) and "private-body" not in str(result)
+
+
+@pytest.mark.parametrize("action", ["parse", "index"])
+@pytest.mark.parametrize("scope", ["files", "pending"])
+@pytest.mark.parametrize("failure", ["exception", "result", "params", None])
+async def test_document_job_failure_keeps_details_and_rejects_success(monkeypatch, action, scope, failure):
+    """解析和入库两种入口都保留明细，任一文件失败时拒绝成功收尾。"""
+    payload = {"kb_id": "kb_1", "operator_id": "user_1", "file_ids": ["ok", "bad"], "statuses": ["uploaded"], "count": 2, "scope": scope}
+    if failure == "params":
+        payload["params"] = {"chunk_size": 10}
+    context = FakeBackgroundJobContext(payload)
+    calls = []
+
+    async def update_params(_kb_id, file_id, _params, **_kwargs):
+        if file_id == "bad":
+            raise RuntimeError("参数更新失败")
+
+    async def process(_kb_id, file_id, **_kwargs):
+        calls.append(file_id)
+        if file_id == "bad" and failure == "exception":
+            raise RuntimeError("处理失败")
+        return {"file_id": file_id, "status": "failed" if file_id == "bad" and failure == "result" else "parsed"}
+
+    async def pending(_kb_id, *, after_file_id, **_kwargs):
+        return [] if after_file_id else ["ok", "bad"]
+
+    monkeypatch.setattr(knowledge_job_service.knowledge_base, "update_file_params", update_params)
+    monkeypatch.setattr(knowledge_job_service.knowledge_base, f"{action}_file", process)
+    monkeypatch.setattr(knowledge_job_service.knowledge_base, "list_document_file_ids_by_statuses", pending)
+    handler = knowledge_job_service.run_knowledge_parse if action == "parse" else knowledge_job_service.run_knowledge_index
+    if failure:
+        with pytest.raises(RuntimeError, match="失败 1 个"):
+            await handler(context)
+    else:
+        assert await handler(context) == context.result
+    assert calls == (["ok"] if failure == "params" else ["ok", "bad"])
+    assert context.result["processed"] == 2
+    assert context.result["failed"] == int(bool(failure))
+    assert context.result["succeeded"] == 2 - int(bool(failure))
+    assert [item["file_id"] for item in context.result["items"]] == ["ok", "bad"]
