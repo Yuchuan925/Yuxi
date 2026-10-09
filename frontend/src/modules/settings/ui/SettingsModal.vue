@@ -543,6 +543,10 @@ watch(
     flex: 1;
     min-height: 0;
 
+    > div:has(> .async-panel-loading) {
+      height: 100%;
+    }
+
     .model-providers-section,
     .user-management,
     .department-management,

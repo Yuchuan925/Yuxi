@@ -8,6 +8,32 @@ const source = readFileSync(
   'utf8'
 )
 
+test('新线程创建后立即退出欢迎布局，不等待路由或首个回复', () => {
+  const props = reactive({ isNewSession: true })
+  const currentThreadId = ref(null)
+  const expression = source.slice(
+    source.indexOf('const showStartScreen ='),
+    source.indexOf('const currentThread =')
+  )
+  const showStartScreen = new Function(
+    'computed',
+    'props',
+    'currentThreadId',
+    `${expression}; return showStartScreen`
+  )(computed, props, currentThreadId)
+  assert.equal(showStartScreen.value, true)
+  currentThreadId.value = 'created-thread'
+  assert.equal(showStartScreen.value, false, '路由仍为新会话时也必须收起欢迎布局')
+  props.isNewSession = false
+  assert.equal(showStartScreen.value, false)
+  currentThreadId.value = null
+  assert.equal(showStartScreen.value, false, '已有会话路由加载期间不能显示欢迎布局')
+  props.isNewSession = true
+  assert.equal(showStartScreen.value, true, '回到新会话时恢复欢迎布局')
+  assert.match(source, /'start-screen': showStartScreen/)
+  assert.match(source, /v-if="showStartScreen" class="chat-greeting-input"/)
+})
+
 test('隐藏成员标签继续接收终态，但不标已读或滚动；显示后恢复可见副作用', () => {
   const props = reactive({ visible: false })
   const visibility = source.slice(

@@ -1546,8 +1546,8 @@ import FallbackAvatar from '@/shared/ui/FallbackAvatar.vue'
   padding: 0;
   height: auto;
   line-height: 1.4;
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 13px;
+  font-weight: 500;
   color: var(--color-text);
   text-decoration: none;
 }

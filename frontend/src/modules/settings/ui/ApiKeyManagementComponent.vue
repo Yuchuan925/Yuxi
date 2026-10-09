@@ -119,7 +119,7 @@
         <a-form-item label="访问权限" required>
           <a-select v-model:value="createForm.access_level">
             <a-select-option value="agents">仅 Agents Public API</a-select-option>
-            <a-select-option value="knowledge">仅知识库 external 查询 API</a-select-option>
+            <a-select-option value="knowledge">仅 Knowledge Public API</a-select-option>
             <a-select-option value="full">完整访问（含产品内接口）</a-select-option>
           </a-select>
         </a-form-item>
@@ -154,7 +154,7 @@
         <a-form-item label="访问权限" required>
           <a-select v-model:value="editForm.access_level">
             <a-select-option value="agents">仅 Agents Public API</a-select-option>
-            <a-select-option value="knowledge">仅知识库 external 查询 API</a-select-option>
+            <a-select-option value="knowledge">仅 Knowledge Public API</a-select-option>
             <a-select-option value="full">完整访问（含产品内接口）</a-select-option>
           </a-select>
         </a-form-item>
@@ -242,7 +242,7 @@ const APP_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/
 
 const accessLevelLabel = (level) => ({
   agents: '仅 Agents API',
-  knowledge: '仅知识库 external 查询',
+  knowledge: '仅 Knowledge Public API',
   full: '完整访问'
 }[level] || level)
 

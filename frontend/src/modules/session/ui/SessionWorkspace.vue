@@ -172,7 +172,7 @@
                 </div>
               </div>
             </div>
-            <div ref="messageInputDockRef" class="bottom" :class="{ 'start-screen': isNewSession }">
+            <div ref="messageInputDockRef" class="bottom" :class="{ 'start-screen': showStartScreen }">
               <div class="message-input-wrapper">
                 <!-- 加载状态：加载消息 -->
                 <div v-if="isLoadingMessages" class="chat-loading" role="status">
@@ -181,7 +181,7 @@
                 </div>
 
                 <!-- 打招呼区域 - 在输入框上方 -->
-                <div v-if="isNewSession" class="chat-greeting-input">
+                <div v-if="showStartScreen" class="chat-greeting-input">
                   <h1>{{ randomGreeting }}</h1>
                 </div>
 
@@ -948,6 +948,7 @@ const { agents, selectedAgentId, agentDetails, availableKnowledgeBases } = store
 const threadStoreRefs = storeToRefs(chatThreadsStore)
 const { threads, threadCreationInFlight } = threadStoreRefs
 const currentThreadId = ref(null)
+const showStartScreen = computed(() => props.isNewSession && !currentThreadId.value)
 const currentThread = ref(null)
 // 列表翻页不能丢弃保活实例的会话详情；新详情仍从共享目录同步。
 watch(

@@ -14,26 +14,39 @@ const dock = source.slice(
   source.indexOf('<section', source.indexOf('ref="messageInputDockRef"'))
 )
 const render = Vue.compile(`${dock}</div></div>`)
+const layoutExpression = source.slice(
+  source.indexOf('const showStartScreen ='),
+  source.indexOf('const currentThread =')
+)
 
-test('路由决定新建布局，已有线程的加载和空消息不显示居中输入框或欢迎语', async () => {
+test('新建路由且没有线程才显示欢迎布局，加载和空消息不改变布局', async () => {
   assert.ok(view.includes(':is-new-session="!threadId"'), '新建布局由路由传入')
   for (const isNewSession of [false, true]) {
-    for (const isLoadingMessages of [false, true]) {
-      for (const runGroups of [[], [{ id: 'history' }]]) {
-        const html = await renderToString(
-          Vue.createSSRApp({
-            data: () => ({
-              isNewSession,
-              isLoadingMessages,
-              runGroups,
-              randomGreeting: '欢迎测试'
-            }),
-            render
-          })
-        )
-        assert.equal(html.includes('start-screen'), isNewSession)
-        assert.equal(html.includes('欢迎测试'), isNewSession)
-        assert.equal(html.includes('正在加载消息'), isLoadingMessages)
+    for (const threadId of [null, 'created-thread']) {
+      const showStartScreen = new Function(
+        'computed',
+        'props',
+        'currentThreadId',
+        `${layoutExpression}; return showStartScreen`
+      )(Vue.computed, { isNewSession }, Vue.ref(threadId))
+      for (const isLoadingMessages of [false, true]) {
+        for (const runGroups of [[], [{ id: 'history' }]]) {
+          const html = await renderToString(
+            Vue.createSSRApp({
+              data: () => ({
+                isNewSession,
+                showStartScreen: showStartScreen.value,
+                isLoadingMessages,
+                runGroups,
+                randomGreeting: '欢迎测试'
+              }),
+              render
+            })
+          )
+          assert.equal(html.includes('start-screen'), isNewSession && !threadId)
+          assert.equal(html.includes('欢迎测试'), isNewSession && !threadId)
+          assert.equal(html.includes('正在加载消息'), isLoadingMessages)
+        }
       }
     }
   }

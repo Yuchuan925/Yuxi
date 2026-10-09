@@ -7,7 +7,7 @@ const PanelStatus = ({ error }) =>
         h('p', '面板加载失败，请检查网络后重新加载页面。'),
         h(Button, { onClick: () => window.location.reload() }, () => '重新加载页面')
       ])
-    : h('div', { role: 'status', 'aria-label': '正在加载面板' }, [h(Spin)])
+    : h('div', { class: 'async-panel-loading', role: 'status', 'aria-label': '正在加载面板' }, [h(Spin)])
 
 PanelStatus.props = ['error']
 
