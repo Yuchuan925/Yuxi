@@ -49,11 +49,6 @@ class BackgroundJobRepository:
                 "type_counts": {str(value): int(count) for value, count in type_rows},
             }
 
-    async def list_all(self) -> list[BackgroundJobRecord]:
-        async with pg_manager.get_async_session_context() as session:
-            result = await session.execute(select(BackgroundJobRecord).order_by(BackgroundJobRecord.created_at.desc()))
-            return list(result.scalars().all())
-
     async def find_latest_by_payload(
         self,
         *,

@@ -2,7 +2,7 @@ from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
 from langchain.agents import create_agent
 from langchain.agents.middleware import TodoListMiddleware
 
-from yuxi.modules.agents.runtime import BaseAgent
+from yuxi.modules.agents.runtime.base import BaseAgent
 from yuxi.modules.agents.runtime.agent_backends.chatbot.context import ChatBotContext
 from yuxi.modules.agents.runtime.agent_backends.chatbot.prompt import TODO_MID_PROMPT, build_prompt_with_context
 from yuxi.modules.agents.runtime.agent_backends.chatbot.state import ChatBotState
@@ -110,12 +110,3 @@ class ChatbotAgent(BaseAgent):
             state_schema=ChatBotState,
             checkpointer=await self._get_checkpointer(),
         )
-
-
-def main():
-    pass
-
-
-if __name__ == "__main__":
-    main()
-    # asyncio.run(main())
