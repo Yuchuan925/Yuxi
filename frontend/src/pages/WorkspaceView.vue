@@ -47,13 +47,13 @@
         <WorkspaceSidebar
           :active-key="activeSourceKey"
           :current-path="currentPath"
-          :databases="databases"
-          :loading-databases="loadingDatabases"
+          :knowledge-bases="knowledgeBases"
+          :loading-knowledge-bases="loadingKnowledgeBases"
           :current-uid="userStore.uid"
           :disabled="activeSourceKey !== 'personal' || isReadonlyWorkspacePath"
           :uploading="uploadingFile"
           @select-personal="selectPersonalWorkspace"
-          @select-database="selectDatabase"
+          @select-knowledge-base="selectKnowledgeBase"
           @select-path="selectWorkspacePath"
           @upload-file="openUploadFilePicker"
           @create-directory="openCreateDirectoryModal"
@@ -74,7 +74,7 @@
         class="workspace-main"
         :class="{ 'is-inline-preview': showInlinePreview }"
       >
-        <template v-if="activeSourceKey === 'personal' || selectedDatabase">
+        <template v-if="activeSourceKey === 'personal' || selectedKnowledgeBase">
           <WorkspaceFileList
             :entries="entries"
             :current-path="currentPath"
@@ -84,7 +84,7 @@
             :selection-mode="selectionMode"
             :loading="loadingTree"
             :readonly="isReadonlyWorkspacePath"
-            :root-label="selectedDatabase?.name || '全部文件'"
+            :root-label="selectedKnowledgeBase?.name || '全部文件'"
             :breadcrumb-items="
               isKnowledgeSource ? knowledgeBreadcrumbItems : workspaceBreadcrumbItems
             "
@@ -219,7 +219,7 @@ import AgentFilePreview from '@/modules/session/ui/workspace/AgentFilePreview.vu
 import WorkspaceFileList from '@/modules/workspace/ui/WorkspaceFileList.vue'
 import WorkspacePreviewPane from '@/modules/workspace/ui/WorkspacePreviewPane.vue'
 import WorkspaceSidebar from '@/modules/workspace/ui/WorkspaceSidebar.vue'
-import { databaseApi } from '@/apis/knowledge_api'
+import { knowledgeBaseApi } from '@/apis/knowledge_api'
 import { useUserStore } from '@/modules/identity/model/user'
 import {
   createWorkspaceDirectory,
@@ -285,9 +285,9 @@ const inlinePreviewVisible = ref(false)
 const loadingTree = ref(false)
 const loadingPreview = ref(false)
 const savingPreviewFile = ref(false)
-const loadingDatabases = ref(false)
-const databases = ref([])
-const selectedDatabase = ref(null)
+const loadingKnowledgeBases = ref(false)
+const knowledgeBases = ref([])
+const selectedKnowledgeBase = ref(null)
 const workspaceMainRef = ref(null)
 const workspaceMainWidth = ref(0)
 const workspaceActive = ref(true)
@@ -315,7 +315,7 @@ const knowledgeFileBrowser = reactive({
 })
 
 const useInlinePreview = computed(() => workspaceMainWidth.value >= INLINE_PREVIEW_MIN_WIDTH)
-const isKnowledgeSource = computed(() => activeSourceKey.value.startsWith('database:'))
+const isKnowledgeSource = computed(() => activeSourceKey.value.startsWith('knowledge-base:'))
 const comparablePath = (path) => String(path || '/').replace(/\/$/, '') || '/'
 const isSameOrChildPath = (path, targetPath) => {
   const normalizedPath = comparablePath(path)
@@ -524,7 +524,7 @@ const buildWorkspaceBreadcrumbItems = () => {
 }
 
 const loadKnowledgeEntries = async (
-  database,
+  knowledgeBase,
   {
     parentId = null,
     pathPrefix = '',
@@ -533,11 +533,11 @@ const loadKnowledgeEntries = async (
     breadcrumbs = null
   } = {}
 ) => {
-  if (!database?.kb_id) return
+  if (!knowledgeBase?.kb_id) return
 
   loadingTree.value = true
   try {
-    const response = await getWorkspaceKnowledgeTree(database.kb_id, {
+    const response = await getWorkspaceKnowledgeTree(knowledgeBase.kb_id, {
       parentId,
       pathPrefix,
       page,
@@ -546,7 +546,7 @@ const loadKnowledgeEntries = async (
     entries.value = response.entries || []
     knowledgeBreadcrumbItems.value = breadcrumbs || [
       {
-        name: database.name || '知识库',
+        name: knowledgeBase.name || '知识库',
         path: '/',
         parentId: null,
         pathPrefix: '',
@@ -575,25 +575,25 @@ const loadKnowledgeEntries = async (
   }
 }
 
-const loadDatabases = async () => {
-  loadingDatabases.value = true
+const loadKnowledgeBases = async () => {
+  loadingKnowledgeBases.value = true
   try {
-    const response = await databaseApi.getAccessibleDatabases()
-    databases.value = (response?.databases || []).filter((database) => {
-      return database?.supports_documents !== false
+    const response = await knowledgeBaseApi.getAccessibleKnowledgeBases()
+    knowledgeBases.value = (response?.knowledge_bases || []).filter((knowledgeBase) => {
+      return knowledgeBase?.supports_documents !== false
     })
   } catch (error) {
     console.warn('加载可访问知识库失败:', error)
-    databases.value = []
+    knowledgeBases.value = []
   } finally {
-    loadingDatabases.value = false
+    loadingKnowledgeBases.value = false
   }
 }
 
 const selectPersonalWorkspace = async () => {
   const wasKnowledgeSource = isKnowledgeSource.value
   activeSourceKey.value = 'personal'
-  selectedDatabase.value = null
+  selectedKnowledgeBase.value = null
   knowledgeBreadcrumbItems.value = []
   closePreview()
   clearWorkspaceSelection()
@@ -604,7 +604,7 @@ const selectPersonalWorkspace = async () => {
 
 const selectWorkspacePath = async (path) => {
   activeSourceKey.value = 'personal'
-  selectedDatabase.value = null
+  selectedKnowledgeBase.value = null
   knowledgeBreadcrumbItems.value = []
   closePreview()
   clearWorkspaceSelection()
@@ -612,11 +612,11 @@ const selectWorkspacePath = async (path) => {
 }
 
 const selectKnowledgeBreadcrumb = async (item, index) => {
-  if (!selectedDatabase.value || !item) return
+  if (!selectedKnowledgeBase.value || !item) return
   closePreview()
   clearWorkspaceSelection()
   const breadcrumbs = knowledgeBreadcrumbItems.value.slice(0, index + 1)
-  await loadKnowledgeEntries(selectedDatabase.value, {
+  await loadKnowledgeEntries(selectedKnowledgeBase.value, {
     parentId: item.parentId || null,
     pathPrefix: item.pathPrefix || '',
     page: 1,
@@ -632,13 +632,13 @@ const handleListBreadcrumbClick = async ({ item, index }) => {
   await selectWorkspacePath(item?.path || '/')
 }
 
-const selectDatabase = async (database) => {
-  if (database?.supports_documents === false) return
+const selectKnowledgeBase = async (knowledgeBase) => {
+  if (knowledgeBase?.supports_documents === false) return
   closePreview()
   clearWorkspaceSelection()
-  selectedDatabase.value = database
-  activeSourceKey.value = `database:${database.kb_id}`
-  await loadKnowledgeEntries(database)
+  selectedKnowledgeBase.value = knowledgeBase
+  activeSourceKey.value = `knowledge-base:${knowledgeBase.kb_id}`
+  await loadKnowledgeEntries(knowledgeBase)
 }
 
 const openKnowledgeDirectory = async (entry) => {
@@ -655,7 +655,7 @@ const openKnowledgeDirectory = async (entry) => {
     pathPrefix: isVirtualFolder ? entry.path_prefix || '' : '',
     isVirtualFolder
   }
-  await loadKnowledgeEntries(selectedDatabase.value, {
+  await loadKnowledgeEntries(selectedKnowledgeBase.value, {
     parentId: nextBreadcrumb.parentId,
     pathPrefix: nextBreadcrumb.pathPrefix,
     page: 1,
@@ -664,11 +664,11 @@ const openKnowledgeDirectory = async (entry) => {
 }
 
 const handleKnowledgePageChange = async ({ page, pageSize }) => {
-  if (!selectedDatabase.value || !isKnowledgeSource.value) return
+  if (!selectedKnowledgeBase.value || !isKnowledgeSource.value) return
   closePreview()
   clearWorkspaceSelection()
   const currentBreadcrumb = knowledgeBreadcrumbItems.value.at(-1)
-  await loadKnowledgeEntries(selectedDatabase.value, {
+  await loadKnowledgeEntries(selectedKnowledgeBase.value, {
     parentId: currentBreadcrumb?.parentId || null,
     pathPrefix: currentBreadcrumb?.pathPrefix || '',
     page,
@@ -924,7 +924,7 @@ let workspaceResizeObserver = null
 let workspaceMounted = false
 
 onMounted(async () => {
-  await Promise.all([loadWorkspaceEntries('/'), loadDatabases()])
+  await Promise.all([loadWorkspaceEntries('/'), loadKnowledgeBases()])
 
   if (workspaceMainRef.value && typeof ResizeObserver !== 'undefined') {
     workspaceMainWidth.value = workspaceMainRef.value.clientWidth || 0

@@ -28,11 +28,13 @@ async def test_minio_download_enforces_actual_bytes_without_changing_object():
 
 
 @pytest.mark.parametrize("suffix", [".pdf", ".docx", ".pptx"])
-async def test_knowledge_preview_rejects_large_object_despite_understated_metadata(test_client, admin_headers, knowledge_database, suffix):
+async def test_knowledge_preview_rejects_large_object_despite_understated_metadata(
+    test_client, admin_headers, knowledge_base_resource, suffix
+):
     """持久元数据低估大小时，HTTP 仍拒绝实际超限源文件且不生成缓存。"""
     storage = get_minio_client()
     bucket = storage.KB_BUCKETS["documents"]
-    kb_id = knowledge_database["kb_id"]
+    kb_id = knowledge_base_resource["kb_id"]
     object_name = f"{kb_id}/upload/pytest-preview-{uuid4().hex}{suffix}"
     source = f"minio://{bucket}/{object_name}"
     content = b"x" * (MAX_FILE_PREVIEW_BYTES + 1)
@@ -40,7 +42,7 @@ async def test_knowledge_preview_rejects_large_object_despite_understated_metada
     try:
         await storage.aupload_file(bucket, object_name, content)
         added = await test_client.post(
-            f"/api/knowledge/databases/{kb_id}/documents/add",
+            f"/api/knowledge/knowledge-bases/{kb_id}/documents/add",
             json={
                 "items": [source],
                 "params": {"content_hashes": {source: sha256(content).hexdigest()}, "file_sizes": {source: 0}},
@@ -52,9 +54,9 @@ async def test_knowledge_preview_rejects_large_object_despite_understated_metada
         assert added_payload["status"] == "success", added_payload
         file_id = added_payload["items"][0]["file_id"]
 
-        basic = await test_client.get(f"/api/knowledge/databases/{kb_id}/documents/{file_id}/basic", headers=admin_headers)
+        basic = await test_client.get(f"/api/knowledge/knowledge-bases/{kb_id}/documents/{file_id}/basic", headers=admin_headers)
         assert basic.status_code == 200, basic.text
-        assert basic.json()["size"] == 0
+        assert basic.json()["meta"]["size"] == 0
         assert await storage.astat_file(bucket, object_name) == len(content)
 
         preview = await test_client.get("/api/workspace/knowledge/file", params={"kb_id": kb_id, "file_id": file_id}, headers=admin_headers)
@@ -69,6 +71,6 @@ async def test_knowledge_preview_rejects_large_object_despite_understated_metada
         assert await storage.adownload_file(bucket, object_name) == content
     finally:
         if file_id:
-            removed = await test_client.delete(f"/api/knowledge/databases/{kb_id}/documents/{file_id}", headers=admin_headers)
+            removed = await test_client.delete(f"/api/knowledge/knowledge-bases/{kb_id}/documents/{file_id}", headers=admin_headers)
             assert removed.status_code in {200, 404}, removed.text
         await storage.adelete_file(bucket, object_name)

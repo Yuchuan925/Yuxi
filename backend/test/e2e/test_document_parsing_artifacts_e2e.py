@@ -199,9 +199,9 @@ async def test_knowledge_worker_hosts_document_resources_and_file_delete_reclaim
     """真实 worker 发布资源，PG 拥有结果，删除单个文档不影响其他文档。"""
     archive, image = _result_archive()
     created = await e2e_client.post(
-        "/api/knowledge/databases",
+        "/api/knowledge/knowledge-bases",
         json={
-            "database_name": f"pytest_parser_{uuid4().hex}",
+            "name": f"pytest_parser_{uuid4().hex}",
             "description": "Parser artifact E2E",
             "kb_type": "milvus",
             "embedding_model_spec": "siliconflow-cn:Pro/BAAI/bge-m3",
@@ -222,7 +222,7 @@ async def test_knowledge_worker_hosts_document_resources_and_file_delete_reclaim
         assert uploaded.status_code == 200, uploaded.text
         info = uploaded.json()
         added = await e2e_client.post(
-            f"/api/knowledge/databases/{kb_id}/documents/add",
+            f"/api/knowledge/knowledge-bases/{kb_id}/documents/add",
             json={
                 "items": [info["file_path"]],
                 "params": {
@@ -235,7 +235,7 @@ async def test_knowledge_worker_hosts_document_resources_and_file_delete_reclaim
         assert added.status_code == 200, added.text
         file_id = added.json()["items"][0]["file_id"]
         parsing = await e2e_client.post(
-            f"/api/knowledge/databases/{kb_id}/documents/parse",
+            f"/api/knowledge/knowledge-bases/{kb_id}/documents/parse",
             json={"file_ids": [file_id], "params": {}},
             headers=e2e_headers,
         )
@@ -261,7 +261,7 @@ async def test_knowledge_worker_hosts_document_resources_and_file_delete_reclaim
         image_name = image_objects[0]["object_name"]
         assert await client.adownload_file(client.KB_BUCKETS["images"], image_name) == image
         relative_image = image_name.split("/", 1)[1]
-        assert f"/api/knowledge/databases/{kb_id}/images/{quote(relative_image, safe='/')}" in markdown
+        assert f"/api/knowledge/knowledge-bases/{kb_id}/images/{quote(relative_image, safe='/')}" in markdown
         # 上传已完成但 owning PG 更新失去 owner 时，只回收本次 attempt。
         from yuxi.modules.documents import service as document_service
         from yuxi.modules.knowledge.implementations.milvus import MilvusKB
@@ -317,7 +317,7 @@ async def test_knowledge_worker_hosts_document_resources_and_file_delete_reclaim
             data={"status": "uploaded", "processing_owner": None, "processing_job_id": None},
         )
         retry = await e2e_client.post(
-            f"/api/knowledge/databases/{kb_id}/documents/parse",
+            f"/api/knowledge/knowledge-bases/{kb_id}/documents/parse",
             json={"file_ids": [file_id], "params": {}},
             headers=e2e_headers,
         )
@@ -338,7 +338,7 @@ async def test_knowledge_worker_hosts_document_resources_and_file_delete_reclaim
         # 单文件清理的负控：其他文件的对象不能被知识库级前缀误删。
         other_name = f"{kb_id}/kb-images/other-file/attempt/images/chart.png"
         await client.aupload_file(bucket_name=client.KB_BUCKETS["images"], object_name=other_name, data=image)
-        deleted = await e2e_client.delete(f"/api/knowledge/databases/{kb_id}/documents/{file_id}", headers=e2e_headers)
+        deleted = await e2e_client.delete(f"/api/knowledge/knowledge-bases/{kb_id}/documents/{file_id}", headers=e2e_headers)
         assert deleted.status_code == 200, deleted.text
         assert await KnowledgeFileRepository().get_by_file_id(file_id) is None
         # 删除先提交 tombstone；真实 worker 异步回收对象，读取最终产物确认完成。
@@ -352,6 +352,6 @@ async def test_knowledge_worker_hosts_document_resources_and_file_delete_reclaim
         assert parsed == []
         assert await client.adownload_file(client.KB_BUCKETS["images"], other_name) == image
     finally:
-        deleted = await e2e_client.delete(f"/api/knowledge/databases/{kb_id}", headers=e2e_headers)
+        deleted = await e2e_client.delete(f"/api/knowledge/knowledge-bases/{kb_id}", headers=e2e_headers)
         assert deleted.status_code == 200, deleted.text
         await pg_manager.close()

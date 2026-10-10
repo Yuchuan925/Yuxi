@@ -16,9 +16,9 @@ async def _create_restricted_database(test_client, admin_headers):
     owner_uid = profile_response.json()["uid"]
 
     response = await test_client.post(
-        "/api/knowledge/databases",
+        "/api/knowledge/knowledge-bases",
         json={
-            "database_name": f"pytest_tool_consumer_{uuid.uuid4().hex[:8]}",
+            "name": f"pytest_tool_consumer_{uuid.uuid4().hex[:8]}",
             "description": "Public tool consumer test",
             "embedding_model_spec": "siliconflow-cn:Pro/BAAI/bge-m3",
             "kb_type": "milvus",
@@ -41,14 +41,14 @@ async def _create_restricted_database(test_client, admin_headers):
 
 async def _delete_database(test_client, admin_headers, kb_id):
     """清理用例创建的知识库。"""
-    response = await test_client.delete(f"/api/knowledge/databases/{kb_id}", headers=admin_headers)
+    response = await test_client.delete(f"/api/knowledge/knowledge-bases/{kb_id}", headers=admin_headers)
     assert response.status_code in (200, 404), response.text
 
 
 async def test_tool_file_search_is_restricted_to_owner(test_client, admin_headers, standard_user):
     """JWT 与 Knowledge Key 均不能按 ID 搜索他人私有库。"""
-    database = await _create_restricted_database(test_client, admin_headers)
-    kb_id = database["kb_id"]
+    knowledge_base = await _create_restricted_database(test_client, admin_headers)
+    kb_id = knowledge_base["kb_id"]
     key_id = None
     try:
         owner_response = await test_client.get(
@@ -99,9 +99,9 @@ async def test_tool_file_search_is_restricted_to_owner(test_client, admin_header
         await _delete_database(test_client, admin_headers, kb_id)
 
 
-async def test_tool_file_search_by_id_preserves_pagination(test_client, admin_headers, knowledge_database):
+async def test_tool_file_search_by_id_preserves_pagination(test_client, admin_headers, knowledge_base_resource):
     """按 ID 列文件可省略查询词，并保留分页与未知资源拒绝。"""
-    kb_id = knowledge_database["kb_id"]
+    kb_id = knowledge_base_resource["kb_id"]
     response = await test_client.post(
         "/api/v1/knowledge/tools/search_file",
         json={"kb_id": kb_id, "offset": 0, "limit": 100},

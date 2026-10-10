@@ -9,9 +9,9 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
 async def _create_dify_database(test_client, admin_headers) -> str:
     response = await test_client.post(
-        "/api/knowledge/databases",
+        "/api/knowledge/knowledge-bases",
         json={
-            "database_name": f"pytest_graph_dify_{uuid.uuid4().hex[:8]}",
+            "name": f"pytest_graph_dify_{uuid.uuid4().hex[:8]}",
             "description": "Graph router Dify negative test",
             "kb_type": "dify",
             "additional_params": {
@@ -27,7 +27,7 @@ async def _create_dify_database(test_client, admin_headers) -> str:
 
 
 async def _delete_database(test_client, admin_headers, kb_id: str) -> None:
-    await test_client.delete(f"/api/knowledge/databases/{kb_id}", headers=admin_headers)
+    await test_client.delete(f"/api/knowledge/knowledge-bases/{kb_id}", headers=admin_headers)
 
 
 async def test_graph_routes_require_auth(test_client):
@@ -40,7 +40,7 @@ async def test_standard_user_cannot_access_graph_endpoints(test_client, standard
     assert response.status_code == 403
 
 
-async def test_get_graphs_list_only_returns_milvus(test_client, admin_headers, knowledge_database):
+async def test_get_graphs_list_only_returns_milvus(test_client, admin_headers, knowledge_base_resource):
     response = await test_client.get("/api/graph/list", headers=admin_headers)
 
     assert response.status_code == 200
@@ -49,7 +49,7 @@ async def test_get_graphs_list_only_returns_milvus(test_client, admin_headers, k
     assert isinstance(payload["data"], list)
     assert payload["data"]
     assert all(graph["type"] == "milvus" for graph in payload["data"])
-    assert any(graph["id"] == knowledge_database["kb_id"] for graph in payload["data"])
+    assert any(graph["id"] == knowledge_base_resource["kb_id"] for graph in payload["data"])
 
 
 @pytest.mark.parametrize("path", ["/api/graph/subgraph", "/api/graph/stats", "/api/graph/labels"])
@@ -72,10 +72,10 @@ async def test_graph_endpoints_reject_non_milvus_types(test_client, admin_header
         ("/api/graph/labels", {}, ("labels",)),
     ],
 )
-async def test_milvus_graph_endpoints(test_client, admin_headers, knowledge_database, path, params, expected_keys):
+async def test_milvus_graph_endpoints(test_client, admin_headers, knowledge_base_resource, path, params, expected_keys):
     response = await test_client.get(
         path,
-        params={"kb_id": knowledge_database["kb_id"], **params},
+        params={"kb_id": knowledge_base_resource["kb_id"], **params},
         headers=admin_headers,
     )
 

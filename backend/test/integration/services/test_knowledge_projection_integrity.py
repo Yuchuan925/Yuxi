@@ -130,7 +130,7 @@ async def test_new_generation_isolates_old_tail_and_cleanup_bounds_generation_re
         assert set(await session.scalars(select(KnowledgeProjectionOutbox.status))) == {"applied"}
 
 
-async def test_deleted_database_rejects_activation_and_new_files(database):
+async def test_deleted_knowledge_base_rejects_activation_and_new_files(database):
     """删除后即使旧写入完成，也不能激活或在 tombstone 下新建文件。"""
     await _file()
     repo = KnowledgeFileRepository()
@@ -192,12 +192,12 @@ async def test_cleanup_error_remains_pending_and_concurrent_worker_skips_locked_
     async with database() as session, session.begin():
         session.add(
             KnowledgeProjectionOutbox(
-                event_key="event", kb_id="kb-test", aggregate_id="kb-test", generation=1, operation="database_deleted"
+                event_key="event", kb_id="kb-test", aggregate_id="kb-test", generation=1, operation="knowledge_base_deleted"
             )
         )
     monkeypatch.setattr(
         background_jobs.knowledge_base,
-        "cleanup_deleted_database",
+        "cleanup_deleted_knowledge_base",
         AsyncMock(side_effect=RuntimeError("external unavailable")),
     )
     assert await background_jobs.process_knowledge_projections() == []
@@ -213,7 +213,7 @@ async def test_cleanup_error_remains_pending_and_concurrent_worker_skips_locked_
         async with database() as session, session.begin():
             await session.execute(delete(KnowledgeBase).where(KnowledgeBase.kb_id == kb_id))
 
-    monkeypatch.setattr(background_jobs.knowledge_base, "cleanup_deleted_database", cleanup)
+    monkeypatch.setattr(background_jobs.knowledge_base, "cleanup_deleted_knowledge_base", cleanup)
     running = asyncio.create_task(background_jobs.process_knowledge_projections())
     try:
         await asyncio.wait_for(started.wait(), 5)
@@ -335,20 +335,20 @@ async def test_http_delete_does_not_remove_original_before_tombstone_commit(data
     )
     monkeypatch.setattr(
         knowledge_router,
-        "knowledge_base",
+        "knowledge_base_manager",
         SimpleNamespace(
             get_file_basic_info=get_meta,
             delete_file=fail_commit,
         ),
     )
-    monkeypatch.setattr(knowledge_router, "_ensure_database_supports_documents", AsyncMock())
+    monkeypatch.setattr(knowledge_router, "_ensure_knowledge_base_supports_documents", AsyncMock())
     app = FastAPI()
     app.include_router(knowledge_router.knowledge, prefix="/api")
     app.dependency_overrides[knowledge_router.require_knowledge_base_manage] = lambda: SimpleNamespace(role="superadmin")
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         response = await client.request(
             "DELETE",
-            "/api/knowledge/databases/kb-test/documents/" + ("batch" if batch else "file-test"),
+            "/api/knowledge/knowledge-bases/kb-test/documents/" + ("batch" if batch else "file-test"),
             **({"json": ["file-test"]} if batch else {}),
         )
     assert response.status_code == 400

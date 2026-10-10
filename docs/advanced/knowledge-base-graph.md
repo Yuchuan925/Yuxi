@@ -43,11 +43,11 @@ Durable Task 的 `success` 只表示 worker 已完成编排，不能单独证明
 
 | 方法 | 路径 | 作用 |
 | --- | --- | --- |
-| `GET` | `/api/knowledge/databases/{kb_id}/graph-build/status` | 查看图谱构建状态 |
-| `POST` | `/api/knowledge/databases/{kb_id}/graph-build/config` | 保存抽取配置 |
-| `POST` | `/api/knowledge/databases/{kb_id}/graph-build/index` | 提交图谱构建 |
-| `POST` | `/api/knowledge/databases/{kb_id}/graph-build/reset` | 重置图谱状态 |
-| `POST` | `/api/knowledge/databases/{kb_id}/graph-build/reconcile` | 修复图向量索引 |
+| `GET` | `/api/knowledge/knowledge-bases/{kb_id}/graph-build/status` | 查看图谱构建状态 |
+| `POST` | `/api/knowledge/knowledge-bases/{kb_id}/graph-build/config` | 保存抽取配置 |
+| `POST` | `/api/knowledge/knowledge-bases/{kb_id}/graph-build/index` | 提交图谱构建 |
+| `POST` | `/api/knowledge/knowledge-bases/{kb_id}/graph-build/reset` | 重置图谱状态 |
+| `POST` | `/api/knowledge/knowledge-bases/{kb_id}/graph-build/reconcile` | 修复图向量索引 |
 
 接口字段和权限以部署实例的 Swagger 页面为准。只读用户可以调用读取接口，不能通过改 URL 绕过管理权限。
 

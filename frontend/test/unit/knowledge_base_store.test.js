@@ -31,7 +31,7 @@ test('从二级目录点击全部文件会清空 parent_id 并返回根目录', 
     app.use(createRouter({ history: createMemoryHistory(), routes: [] }))
     setActivePinia(pinia)
     const { documentApi } = await server.ssrLoadModule('/src/apis/knowledge_api.js')
-    const { useDatabaseStore } = await server.ssrLoadModule('/src/modules/knowledge/model/database.js')
+    const { useKnowledgeBaseStore } = await server.ssrLoadModule('/src/modules/knowledge/model/knowledgeBase.js')
     const requests = []
 
     documentApi.listDocuments = async (kbId, params) => {
@@ -46,7 +46,7 @@ test('从二级目录点击全部文件会清空 parent_id 并返回根目录', 
       }
     }
 
-    const store = app.runWithContext(() => useDatabaseStore())
+    const store = app.runWithContext(() => useKnowledgeBaseStore())
     store.kbId = 'kb_1'
     store.fileBrowser.parentId = 'folder_2'
     store.folderBreadcrumbs = [
@@ -87,12 +87,12 @@ test('知识库提交跨账号返回时，不把旧入队任务登记给新账�
   app.use(pinia)
   app.use(createRouter({ history: createMemoryHistory(), routes: [] }))
   setActivePinia(pinia)
-  const { documentApi, databaseApi } = await server.ssrLoadModule('/src/apis/knowledge_api.js')
-  const { useDatabaseStore } = await server.ssrLoadModule('/src/modules/knowledge/model/database.js')
+  const { documentApi, knowledgeBaseApi } = await server.ssrLoadModule('/src/apis/knowledge_api.js')
+  const { useKnowledgeBaseStore } = await server.ssrLoadModule('/src/modules/knowledge/model/knowledgeBase.js')
   const { useUserStore } = await server.ssrLoadModule('/src/modules/identity/model/user.js')
   const { useBackgroundJobsStore } = await server.ssrLoadModule('/src/modules/background-jobs/model/jobs.js')
   const { backgroundJobsApi } = await server.ssrLoadModule('/src/apis/background_jobs.js')
-  const database = app.runWithContext(() => useDatabaseStore())
+  const knowledgeBase = app.runWithContext(() => useKnowledgeBaseStore())
   const user = useUserStore()
   const job_tracker = useBackgroundJobsStore()
   const detailRequests = []
@@ -101,7 +101,7 @@ test('知识库提交跨账号返回时，不把旧入队任务登记给新账�
     return { job: { id, status: 'success', progress: 100 } }
   })
   t.mock.method(message, 'success', () => {})
-  t.mock.method(databaseApi, 'getDatabaseInfo', async () => ({ stats: { processing_count: 0 } }))
+  t.mock.method(knowledgeBaseApi, 'getKnowledgeBaseInfo', async () => ({ stats: { processing_count: 0 } }))
   t.mock.method(documentApi, 'listDocuments', async () => ({
     items: [],
     stats: { processing_count: 0 }
@@ -115,7 +115,7 @@ test('知识库提交跨账号返回时，不把旧入队任务登记给新账�
       ['indexPendingFiles', 'indexPendingDocuments', []]
     ]) {
       await t.test(action, async () => {
-        database.kbId = 'test-kb'
+        knowledgeBase.kbId = 'test-kb'
         user.token = `old-${action}`
         user.userRole = 'admin'
         let resolve
@@ -127,7 +127,7 @@ test('知识库提交跨账号返回时，不把旧入队任务登记给新账�
               resolve = done
             })
         )
-        const pending = database[action](...args)
+        const pending = knowledgeBase[action](...args)
         user.logout()
         user.token = `new-${action}`
         user.userRole = 'admin'
@@ -135,7 +135,7 @@ test('知识库提交跨账号返回时，不把旧入队任务登记给新账�
         assert.equal(await pending, true)
         assert.deepEqual(job_tracker.jobs, [])
         assert.equal(detailRequests.includes('old-job'), false)
-        const current = database[action](...args)
+        const current = knowledgeBase[action](...args)
         resolve({ status: 'queued', job_id: `new-${action}` })
         assert.equal(await current, true)
         await setImmediate()
@@ -145,7 +145,7 @@ test('知识库提交跨账号返回时，不把旧入队任务登记给新账�
       })
     }
   } finally {
-    database.stopAutoRefresh()
+    knowledgeBase.stopAutoRefresh()
     job_tracker.$dispose()
     await server.close()
   }

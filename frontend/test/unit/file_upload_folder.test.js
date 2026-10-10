@@ -18,7 +18,7 @@ globalThis.localStorage = {
 }
 
 test('知识库详情页下拉菜单提供上传文件夹入口', () => {
-  const source = readSource('../../src/pages/DataBaseInfoView.vue')
+  const source = readSource('../../src/pages/KnowledgeBaseInfoView.vue')
   const menu = source.slice(source.indexOf('<Transition name="file-action-menu">'), source.indexOf('</Transition>'))
 
   assert.match(menu, /onUploadFolderAction/)
@@ -86,7 +86,7 @@ test('documentApi.addDocuments 能够将 source_paths 正确打包发送给知�
 
     assert.equal(response.status, 'success')
     assert.equal(requests.length, 1)
-    assert.equal(requests[0].url, '/api/knowledge/databases/kb_123/documents')
+    assert.equal(requests[0].url, '/api/knowledge/knowledge-bases/kb_123/documents')
     assert.equal(requests[0].options.method, 'POST')
     const parsedBody = JSON.parse(requests[0].options.body)
     assert.deepEqual(parsedBody.items, items)

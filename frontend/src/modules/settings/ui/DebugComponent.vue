@@ -604,7 +604,7 @@
 import { ref, reactive, computed, onMounted, onActivated, onUnmounted, nextTick, watch } from 'vue'
 import { useConfigStore } from '@/modules/settings/model/config'
 import { useUserStore } from '@/modules/identity/model/user'
-import { useDatabaseStore } from '@/modules/knowledge/model/database'
+import { useKnowledgeBaseStore } from '@/modules/knowledge/model/knowledgeBase'
 import { useAgentStore } from '@/modules/agents/model/agent'
 import { useInfoStore } from '@/modules/settings/model/info'
 import { useThrottleFn } from '@vueuse/core'
@@ -642,7 +642,7 @@ const showModal = defineModel('show')
 
 const configStore = useConfigStore()
 const userStore = useUserStore()
-const databaseStore = useDatabaseStore()
+const knowledgeBaseStore = useKnowledgeBaseStore()
 const agentStore = useAgentStore()
 const infoStore = useInfoStore()
 
@@ -1189,7 +1189,7 @@ const reloadAllStores = async () => {
     await Promise.all([
       configStore.refreshConfig(),
       infoStore.loadInfoConfig(true),
-      databaseStore.loadDatabases(),
+      knowledgeBaseStore.loadKnowledgeBases(),
       agentStore.initialize()
     ])
     loadLocalStorageItems()

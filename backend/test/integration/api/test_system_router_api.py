@@ -92,7 +92,7 @@ async def test_discovery_and_openapi_declare_full_knowledge_capabilities(test_cl
     assert openapi_response.status_code == 200, openapi_response.text
     openapi_paths = openapi_response.json()["paths"]
     assert {
-        "/api/knowledge/databases",
+        "/api/knowledge/knowledge-bases",
         "/api/dashboard/stats/knowledge",
         "/api/workspace/knowledge/tree",
         "/api/workspace/knowledge/file",

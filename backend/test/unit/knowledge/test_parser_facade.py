@@ -447,7 +447,7 @@ async def test_missing_image_rejects_successful_text(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_default_engine_resolves_database_config_before_conversion(tmp_path, monkeypatch):
+async def test_default_engine_resolves_system_ocr_config_before_conversion(tmp_path, monkeypatch):
     """应用层解析默认引擎，底层只接收有效值。"""
     source = tmp_path / "source.pdf"
     _build_pdf(source, "text")
@@ -543,7 +543,7 @@ async def test_local_destinations_encode_url_delimiters_without_changing_hosted_
     links = local_image_links(result.markdown_path.read_text())
     assert len(links) == len(names)
     assert [(result.directory / unquote(link)).read_bytes() for link in links] == [name.encode() for name in names]
-    hosted = "/api/knowledge/databases/kb/images/chart%23one.png"
+    hosted = "/api/knowledge/knowledge-bases/kb/images/chart%23one.png"
     assert replace_image_links("![](chart.png)", {"chart.png": hosted}) == f"![]({hosted})"
 
 

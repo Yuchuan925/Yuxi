@@ -12,11 +12,11 @@ graph = APIRouter(prefix="/graph", tags=["graph"])
 
 
 async def _get_graph_service(kb_id: str) -> MilvusGraphService:
-    db_info = await knowledge_base.get_database_info(kb_id)
-    if not db_info:
+    kb_info = await knowledge_base.get_knowledge_base_info(kb_id)
+    if not kb_info:
         raise HTTPException(status_code=404, detail="Knowledge base not found")
 
-    kb_type = db_info.kb_type.lower()
+    kb_type = kb_info.kb_type.lower()
     if kb_type != "milvus":
         raise HTTPException(status_code=404, detail="Graph API only supports Milvus knowledge bases")
 
@@ -27,18 +27,18 @@ async def _get_graph_service(kb_id: str) -> MilvusGraphService:
 async def get_graphs(current_user: User = Depends(get_admin_user)):
     """获取支持图谱能力的 Milvus 知识库列表"""
     try:
-        databases = await knowledge_base.get_databases_by_uid(current_user.uid)
+        knowledge_bases = await knowledge_base.get_knowledge_bases_by_uid(current_user.uid)
         graphs = []
-        for db in databases:
-            if db.kb_type.lower() != "milvus":
+        for kb in knowledge_bases:
+            if kb.kb_type.lower() != "milvus":
                 continue
-            serialized = serialize_knowledge_base(db)
+            serialized = serialize_knowledge_base(kb)
             graphs.append(
                 {
-                    "id": db.kb_id,
-                    "name": db.name,
+                    "id": kb.kb_id,
+                    "name": kb.name,
                     "type": "milvus",
-                    "description": db.description,
+                    "description": kb.description,
                     "status": "已连接",
                     "created_at": serialized["created_at"],
                     "metadata": serialized,

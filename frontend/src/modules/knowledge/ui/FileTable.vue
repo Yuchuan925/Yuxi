@@ -60,7 +60,7 @@
           :show-chunk-size-overlap="true"
           :show-preset="true"
           :allow-preset-follow-default="true"
-          :database-preset-id="store.database?.additional_params?.chunk_preset_id || 'general'"
+          :knowledge-base-preset-id="store.knowledgeBase?.additional_params?.chunk_preset_id || 'general'"
         />
       </div>
     </a-modal>
@@ -463,7 +463,7 @@
 
 <script setup>
 import { ref, computed, h, watch } from 'vue'
-import { useDatabaseStore } from '@/modules/knowledge/model/database'
+import { useKnowledgeBaseStore } from '@/modules/knowledge/model/knowledgeBase'
 import { useConfigStore } from '@/modules/settings/model/config'
 import OCRSelector from '@/modules/settings/ui/OCRSelector.vue'
 import { message, Modal } from 'ant-design-vue'
@@ -508,7 +508,7 @@ import {
   FileText as FileTextFilled
 } from '@lucide/vue'
 
-const store = useDatabaseStore()
+const store = useKnowledgeBaseStore()
 
 const emit = defineEmits(['search'])
 
@@ -580,7 +580,7 @@ const fileBreadcrumbItems = computed(() =>
 )
 const isFilteredView = computed(() => Boolean(store.fileBrowser.recursive))
 const isVirtualPathView = computed(() => Boolean(store.fileBrowser.pathPrefix))
-const refreshing = computed(() => store.state.databaseLoading || store.fileBrowser.loading)
+const refreshing = computed(() => store.state.knowledgeBaseLoading || store.fileBrowser.loading)
 const lock = computed(() => store.state.lock)
 const batchDeleting = computed(() => store.state.batchDeleting)
 const batchParsing = computed(() => store.state.chunkLoading)
@@ -983,7 +983,7 @@ const canBatchIndex = computed(() => {
 
 const handleRefresh = async () => {
   await Promise.all([
-    store.getDatabaseInfo(undefined, true, true),
+    store.getKnowledgeBaseInfo(undefined, true, true),
     store.loadDocumentFiles({ isBackground: true })
   ])
 }
@@ -1151,8 +1151,8 @@ const handleDownloadFile = async (record) => {
   closePopover(record.file_id)
   const kbId = store.kbId
   if (!kbId) {
-    console.error('无法获取数据库ID，数据库ID:', store.kbId, '记录:', record)
-    message.error('无法获取数据库ID，请刷新页面后重试')
+    console.error('无法获取知识库ID，知识库ID:', store.kbId, '记录:', record)
+    message.error('无法获取知识库ID，请刷新页面后重试')
     return
   }
 

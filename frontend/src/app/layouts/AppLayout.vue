@@ -20,7 +20,7 @@ import { useConfigStore } from '@/modules/settings/model/config'
 import { useAgentStore } from '@/modules/agents/model/agent'
 import { useChatThreadsStore } from '@/modules/session/model/chatThreads'
 import { useChatUIStore } from '@/modules/session/model/chatUI'
-import { useDatabaseStore } from '@/modules/knowledge/model/database'
+import { useKnowledgeBaseStore } from '@/modules/knowledge/model/knowledgeBase'
 import { useInfoStore } from '@/modules/settings/model/info'
 import { useProjectsStore } from '@/modules/projects/model/projects'
 import { useBackgroundJobsStore } from '@/modules/background-jobs/model/jobs'
@@ -38,7 +38,7 @@ const configStore = useConfigStore()
 const agentStore = useAgentStore()
 const chatThreadsStore = useChatThreadsStore()
 const chatUIStore = useChatUIStore()
-const databaseStore = useDatabaseStore()
+const knowledgeBaseStore = useKnowledgeBaseStore()
 const infoStore = useInfoStore()
 const projectsStore = useProjectsStore()
 const jobsStore = useBackgroundJobsStore()
@@ -82,9 +82,9 @@ const getRemoteConfig = async () => {
   }
 }
 
-const getRemoteDatabase = async () => {
+const getRemoteKnowledgeBase = async () => {
   try {
-    await databaseStore.loadDatabases()
+    await knowledgeBaseStore.loadKnowledgeBases()
   } catch (error) {
     console.warn('加载知识库列表失败:', error)
   }
@@ -119,7 +119,7 @@ onMounted(() => {
   window.addEventListener('keydown', handleGlobalKeydown)
   // 各 Store 自行处理错误，导航不等待无依赖的品牌、知识库或配置请求。
   void infoStore.loadInfoConfig()
-  void getRemoteDatabase()
+  void getRemoteKnowledgeBase()
   void initAgentNavigation()
   void getRemoteConfig()
   // 仅管理员加载后台作业数据

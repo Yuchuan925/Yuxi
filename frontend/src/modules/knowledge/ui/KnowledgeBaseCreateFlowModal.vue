@@ -1,7 +1,7 @@
 <template>
   <a-modal
     :open="open"
-    class="database-create-flow-modal"
+    class="knowledge-base-create-flow-modal"
     :width="840"
     :closable="false"
     :mask-closable="!creating"
@@ -37,9 +37,9 @@
       <main class="create-flow-body">
         <section v-if="currentStep === 0" class="flow-section">
           <div class="form-section">
-            <label for="database-create-name">知识库名称 <b>*</b></label>
+            <label for="knowledge-base-create-name">知识库名称 <b>*</b></label>
             <a-input
-              id="database-create-name"
+              id="knowledge-base-create-name"
               v-model:value="form.name"
               placeholder="例如：产品资料库"
             />
@@ -99,18 +99,18 @@
           </div>
           <div v-if="createParamOptions.length" class="form-grid">
             <div v-for="field in createParamOptions" :key="field.key" class="form-section">
-              <label :for="`database-param-${field.key}`">
+              <label :for="`knowledge-base-param-${field.key}`">
                 {{ field.label || field.key }} <b v-if="field.required">*</b>
               </label>
               <a-input-password
                 v-if="field.type === 'password'"
-                :id="`database-param-${field.key}`"
+                :id="`knowledge-base-param-${field.key}`"
                 v-model:value="form.additional_params[field.key]"
                 :placeholder="field.placeholder"
               />
               <a-input-number
                 v-else-if="field.type === 'number'"
-                :id="`database-param-${field.key}`"
+                :id="`knowledge-base-param-${field.key}`"
                 v-model:value="form.additional_params[field.key]"
                 :min="field.min"
                 :max="field.max"
@@ -123,14 +123,14 @@
               />
               <a-select
                 v-else-if="field.type === 'select'"
-                :id="`database-param-${field.key}`"
+                :id="`knowledge-base-param-${field.key}`"
                 v-model:value="form.additional_params[field.key]"
                 :options="field.options || []"
                 class="full-width"
               />
               <a-input
                 v-else
-                :id="`database-param-${field.key}`"
+                :id="`knowledge-base-param-${field.key}`"
                 v-model:value="form.additional_params[field.key]"
                 :placeholder="field.placeholder"
               />
@@ -222,15 +222,15 @@ import EmbeddingModelSelector from '@/modules/settings/ui/EmbeddingModelSelector
 import ShareConfigForm from '@/modules/agents/ui/ShareConfigForm.vue'
 import { useChunkPresetOptions } from '@/modules/knowledge/model/useChunkPresetOptions'
 import { useConfigStore } from '@/modules/settings/model/config'
-import { useDatabaseStore } from '@/modules/knowledge/model/database'
+import { useKnowledgeBaseStore } from '@/modules/knowledge/model/knowledgeBase'
 import { getKbTypeIcon, getKbTypeLabel } from '@/modules/knowledge/model/kb_utils'
 import {
-  buildDatabaseRequest,
+  buildKnowledgeBaseRequest,
   createDefaultShareConfig,
-  createEmptyDatabaseForm,
-  selectDatabaseType,
-  validateDatabaseConfig
-} from '@/modules/knowledge/model/databaseCreateForm'
+  createEmptyKnowledgeBaseForm,
+  selectKnowledgeBaseType,
+  validateKnowledgeBaseConfig
+} from '@/modules/knowledge/model/knowledgeBaseCreateForm'
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -238,7 +238,7 @@ const props = defineProps({
 })
 const emit = defineEmits(['update:open', 'completed'])
 const configStore = useConfigStore()
-const databaseStore = useDatabaseStore()
+const knowledgeBaseStore = useKnowledgeBaseStore()
 const {
   chunkPresetSelectOptions: chunkPresetOptions,
   chunkPresetLoading,
@@ -248,10 +248,10 @@ const {
 
 const stepLabels = ['类型', '配置', '权限']
 const currentStep = ref(0)
-const form = reactive(createEmptyDatabaseForm(configStore.config?.embed_model))
+const form = reactive(createEmptyKnowledgeBaseForm(configStore.config?.embed_model))
 const shareConfig = ref(createDefaultShareConfig())
 const shareConfigFormRef = ref(null)
-const creating = computed(() => databaseStore.state.creating)
+const creating = computed(() => knowledgeBaseStore.state.creating)
 const selectedTypeInfo = computed(() => props.supportedKbTypes[form.kb_type] || null)
 const selectedTypeLabel = computed(
   () => getKbTypeLabel(form.kb_type) || selectedTypeInfo.value?.name || form.kb_type
@@ -281,15 +281,15 @@ const footerSummary = computed(() => {
 })
 
 const reset = () => {
-  Object.assign(form, createEmptyDatabaseForm(configStore.config?.embed_model))
+  Object.assign(form, createEmptyKnowledgeBaseForm(configStore.config?.embed_model))
   const firstType = Object.keys(props.supportedKbTypes)[0] || ''
-  Object.assign(form, selectDatabaseType(form, firstType, props.supportedKbTypes[firstType]))
+  Object.assign(form, selectKnowledgeBaseType(form, firstType, props.supportedKbTypes[firstType]))
   shareConfig.value = createDefaultShareConfig()
   currentStep.value = 0
 }
 
 const selectType = (type) =>
-  Object.assign(form, selectDatabaseType(form, type, props.supportedKbTypes[type]))
+  Object.assign(form, selectKnowledgeBaseType(form, type, props.supportedKbTypes[type]))
 const handleCancel = () => {
   if (creating.value) return
   emit('update:open', false)
@@ -306,7 +306,7 @@ const goNext = () => {
     }
   }
   if (currentStep.value === 1) {
-    const error = validateDatabaseConfig(form, selectedTypeInfo.value)
+    const error = validateKnowledgeBaseConfig(form, selectedTypeInfo.value)
     if (error) {
       message.warning(error)
       return
@@ -315,7 +315,7 @@ const goNext = () => {
   currentStep.value++
 }
 const handleCreate = async () => {
-  const error = validateDatabaseConfig(form, selectedTypeInfo.value)
+  const error = validateKnowledgeBaseConfig(form, selectedTypeInfo.value)
   if (error) {
     if (!form.name?.trim()) {
       currentStep.value = 0
@@ -330,14 +330,14 @@ const handleCreate = async () => {
     message.warning(shareValidation.message)
     return
   }
-  const request = buildDatabaseRequest(
+  const request = buildKnowledgeBaseRequest(
     form,
     selectedTypeInfo.value,
     shareConfig.value,
     configStore.config?.embed_model
   )
   try {
-    const result = await databaseStore.createDatabase(request)
+    const result = await knowledgeBaseStore.createKnowledgeBase(request)
     if (!result) return
     emit('completed', result)
     emit('update:open', false)
@@ -694,14 +694,14 @@ watch(
 
 <style lang="less">
 @media (max-width: 600px) {
-  .database-create-flow-modal {
+  .knowledge-base-create-flow-modal {
     top: 0;
     width: 100% !important;
     max-width: none;
     margin: 0;
     padding: 0;
   }
-  .database-create-flow-modal .ant-modal-content {
+  .knowledge-base-create-flow-modal .ant-modal-content {
     min-height: 100vh;
     border-radius: 0;
   }

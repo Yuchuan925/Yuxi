@@ -59,7 +59,7 @@ def _patch_cache_lock(monkeypatch, events: list[str]):
 
 
 @pytest.mark.asyncio
-async def test_update_invalidates_cache_before_database_commit(monkeypatch):
+async def test_update_invalidates_cache_before_knowledge_base_commit(monkeypatch):
     events = []
     row = SimpleNamespace(kb_id="kb_1", name="Old")
     session = _FakeSession(row, events)
@@ -85,7 +85,7 @@ async def test_update_invalidates_cache_before_database_commit(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_cache_invalidation_failure_aborts_before_database_update(monkeypatch):
+async def test_cache_invalidation_failure_aborts_before_knowledge_base_update(monkeypatch):
     events = []
     row = SimpleNamespace(kb_id="kb_1", name="Old")
     session = _FakeSession(row, events)
@@ -105,7 +105,7 @@ async def test_cache_invalidation_failure_aborts_before_database_update(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_delete_holds_cache_lock_through_database_commit(monkeypatch):
+async def test_delete_holds_cache_lock_through_knowledge_base_commit(monkeypatch):
     events = []
     row = SimpleNamespace(kb_id="kb_1")
     session = _FakeSession(row, events)

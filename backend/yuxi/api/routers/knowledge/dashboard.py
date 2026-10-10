@@ -16,11 +16,11 @@ knowledge_dashboard = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 class KnowledgeStats(BaseModel):
     """知识库统计。"""
 
-    total_databases: int
+    total_knowledge_bases: int
     total_files: int
     total_nodes: int
     total_storage_size: int
-    databases_by_type: dict
+    knowledge_bases_by_type: dict
     file_type_distribution: dict
 
 

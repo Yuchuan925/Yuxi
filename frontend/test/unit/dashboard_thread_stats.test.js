@@ -97,7 +97,7 @@ test('dashboardApi.getAllStats 始终请求知识库统计', async () => {
       '/api/dashboard/stats/users': { total_users: 2 },
       '/api/dashboard/stats/tools': { total_calls: 4 },
       '/api/dashboard/stats/agents': { total_agents: 1 },
-      '/api/dashboard/stats/knowledge': { total_databases: 5 }
+      '/api/dashboard/stats/knowledge': { total_knowledge_bases: 5 }
     }
     globalThis.fetch = async (input) => {
       const url = String(input)

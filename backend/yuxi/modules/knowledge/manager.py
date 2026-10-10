@@ -133,13 +133,13 @@ class KnowledgeBaseManager:
         """读取知识库运行配置，Redis 未命中时回源 PostgreSQL。
 
         Args:
-            kb_id: 数据库ID
+            kb_id: 知识库ID
 
         Returns:
             规范化后的知识库运行配置
 
         Raises:
-            KBNotFoundError: 数据库不存在或知识库类型不支持
+            KBNotFoundError: 知识库不存在或知识库类型不支持
         """
         from yuxi.modules.knowledge.repositories.bases import KnowledgeBaseRepository
 
@@ -152,7 +152,7 @@ class KnowledgeBaseManager:
                     if snapshot is None:
                         kb = await KnowledgeBaseRepository().get_by_kb_id(kb_id)
                         if kb is None:
-                            raise KBNotFoundError(f"Database {kb_id} not found")
+                            raise KBNotFoundError(f"Knowledge base {kb_id} not found")
                         await cache_kb_config(kb)
                         snapshot = serialize_kb_config(kb)
             except (RedisConnectionError, RedisTimeoutError) as exc:
@@ -160,7 +160,7 @@ class KnowledgeBaseManager:
                 logger.warning(f"Bypass knowledge base cache: kb_id={kb_id}: {exc}")
                 kb = await KnowledgeBaseRepository().get_by_kb_id(kb_id)
                 if kb is None:
-                    raise KBNotFoundError(f"Database {kb_id} not found") from exc
+                    raise KBNotFoundError(f"Knowledge base {kb_id} not found") from exc
                 snapshot = serialize_kb_config(kb)
 
         kb_type = snapshot.get("kb_type") or "milvus"
@@ -219,7 +219,7 @@ class KnowledgeBaseManager:
         raise ValueError("知识库共享配置必须使用 version 2")
 
     @staticmethod
-    def _normalize_database_stats(stats: dict | None) -> dict[str, int]:
+    def _normalize_knowledge_base_stats(stats: dict | None) -> dict[str, int]:
         """规范化知识库聚合统计字段。"""
         normalized = {
             "file_count": 0,
@@ -242,14 +242,14 @@ class KnowledgeBaseManager:
                 normalized[key] = 0
         return normalized
 
-    async def _refresh_database_stats(self, kb_id: str) -> dict[str, int]:
+    async def _refresh_knowledge_base_stats(self, kb_id: str) -> dict[str, int]:
         """刷新并持久化知识库聚合统计。"""
         from yuxi.modules.knowledge.repositories.bases import KnowledgeBaseRepository
 
         kb = await KnowledgeBaseRepository().refresh_stats(kb_id)
         if kb is None:
-            raise KBNotFoundError(f"Database {kb_id} not found")
-        return self._normalize_database_stats(kb.additional_params["stats"])
+            raise KBNotFoundError(f"Knowledge base {kb_id} not found")
+        return self._normalize_knowledge_base_stats(kb.additional_params["stats"])
 
     async def _run_with_stats_refresh(self, kb_id: str, operation: Awaitable[Any]) -> Any:
         """执行文件操作并刷新统计，同时保留原始操作异常。"""
@@ -257,15 +257,15 @@ class KnowledgeBaseManager:
             result = await operation
         except (Exception, asyncio.CancelledError):
             try:
-                await self._refresh_database_stats(kb_id)
+                await self._refresh_knowledge_base_stats(kb_id)
             except (Exception, asyncio.CancelledError) as refresh_error:
-                logger.error(f"Refresh database stats after failed operation: kb_id={kb_id}: {refresh_error}")
+                logger.error(f"Refresh knowledge_base stats after failed operation: kb_id={kb_id}: {refresh_error}")
             raise
 
-        await self._refresh_database_stats(kb_id)
+        await self._refresh_knowledge_base_stats(kb_id)
         return result
 
-    def _database_read_fields(
+    def _knowledge_base_read_fields(
         self,
         row: Any,
         *,
@@ -283,7 +283,7 @@ class KnowledgeBaseManager:
             additional_params = dict(row.additional_params or {})
             logger.warning(f"Invalid knowledge chunk config: kb_id={row.kb_id}: {error}")
         persisted_stats = additional_params.pop("stats", None)
-        normalized_stats = self._normalize_database_stats(stats if stats is not None else persisted_stats)
+        normalized_stats = self._normalize_knowledge_base_stats(stats if stats is not None else persisted_stats)
 
         try:
             share_config = normalize_permission_config(row.share_config)
@@ -307,38 +307,38 @@ class KnowledgeBaseManager:
             **normalized_stats,
         }
 
-    async def get_databases(self) -> list[KnowledgeBaseSummary]:
+    async def get_knowledge_bases(self) -> list[KnowledgeBaseSummary]:
         """获取所有知识库摘要。"""
         from yuxi.modules.knowledge.repositories.bases import KnowledgeBaseRepository
 
         kb_repo = KnowledgeBaseRepository()
         rows = await kb_repo.get_all()
-        all_databases: list[KnowledgeBaseSummary] = []
+        all_knowledge_bases: list[KnowledgeBaseSummary] = []
         for row in rows:
             kb_type = row.kb_type or "milvus"
             if not KnowledgeBaseFactory.is_type_supported(kb_type):
-                logger.warning(f"Skip unsupported database: kb_id={row.kb_id}, kb_type={kb_type}")
+                logger.warning(f"Skip unsupported knowledge_base: kb_id={row.kb_id}, kb_type={kb_type}")
                 continue
 
             # 单条记录元数据不合法时只跳过该条，避免一条坏记录隐藏整个列表。
             try:
-                database = KnowledgeBaseSummary(**self._database_read_fields(row))
+                knowledge_base = KnowledgeBaseSummary(**self._knowledge_base_read_fields(row))
             except Exception as e:
-                logger.warning(f"Skip database with invalid metadata: kb_id={row.kb_id}, kb_type={kb_type}: {e}")
+                logger.warning(f"Skip knowledge_base with invalid metadata: kb_id={row.kb_id}, kb_type={kb_type}: {e}")
                 continue
-            all_databases.append(database)
-        return all_databases
+            all_knowledge_bases.append(knowledge_base)
+        return all_knowledge_bases
 
     @staticmethod
-    def _database_info_accessible(user: dict, db_info: Any) -> bool:
-        return resolve_knowledge_base_permission(user, db_info) != ResourcePermission.NONE
+    def _knowledge_base_info_accessible(user: dict, kb_info: Any) -> bool:
+        return resolve_knowledge_base_permission(user, kb_info) != ResourcePermission.NONE
 
     async def check_accessible(self, user: dict, kb_id: str) -> bool:
-        """检查用户是否有权限访问数据库
+        """检查用户是否有权限访问知识库
 
         Args:
             user: 用户信息字典
-            kb_id: 数据库ID
+            kb_id: 知识库ID
 
         Returns:
             bool: 是否有权限
@@ -354,35 +354,35 @@ class KnowledgeBaseManager:
         if kb is None:
             return False
 
-        return self._database_info_accessible(user, kb)
+        return self._knowledge_base_info_accessible(user, kb)
 
-    async def get_accessible_database_info_by_uid(self, uid: str, kb_id: str) -> KnowledgeBaseSummary | None:
+    async def get_accessible_knowledge_base_info_by_uid(self, uid: str, kb_id: str) -> KnowledgeBaseSummary | None:
         """按 uid 获取一个可访问知识库的信息，找不到或无权访问时返回 None。"""
         normalized_kb_id = str(kb_id or "").strip()
         if not normalized_kb_id:
             return None
 
-        databases = await self.get_databases_by_uid(uid)
-        for database in databases:
-            if database.kb_id == normalized_kb_id:
-                return database
+        knowledge_bases = await self.get_knowledge_bases_by_uid(uid)
+        for knowledge_base in knowledge_bases:
+            if knowledge_base.kb_id == normalized_kb_id:
+                return knowledge_base
         return None
 
-    def database_type_supports_documents(self, kb_type: str | None) -> bool:
+    def knowledge_base_type_supports_documents(self, kb_type: str | None) -> bool:
         """判断知识库类型是否支持文档全文操作。"""
         normalized_type = (kb_type or "milvus").lower()
         if not KnowledgeBaseFactory.is_type_supported(normalized_type):
             return False
         return KnowledgeBaseFactory.get_kb_class(normalized_type).supports_documents
 
-    async def get_database_document_support(self, kb_id: str) -> tuple[KnowledgeBaseDetail | None, bool]:
+    async def get_knowledge_base_document_support(self, kb_id: str) -> tuple[KnowledgeBaseDetail | None, bool]:
         """返回知识库信息及其是否支持文档全文操作。"""
-        db_info = await self.get_database_info(kb_id)
-        if not db_info:
+        kb_info = await self.get_knowledge_base_info(kb_id)
+        if not kb_info:
             return None, False
-        return db_info, self.database_type_supports_documents(db_info.kb_type)
+        return kb_info, self.knowledge_base_type_supports_documents(kb_info.kb_type)
 
-    async def get_databases_by_uid(self, uid: str) -> list[KnowledgeBaseSummary]:
+    async def get_knowledge_bases_by_uid(self, uid: str) -> list[KnowledgeBaseSummary]:
         """根据 uid 获取知识库列表"""
         from yuxi.modules.identity.repositories.users import UserRepository
 
@@ -392,9 +392,9 @@ class KnowledgeBaseManager:
         if not user:
             logger.warning(f"User not found: {uid}")
             return []
-        return await self.get_databases_by_user(user)
+        return await self.get_knowledge_bases_by_user(user)
 
-    async def get_databases_by_user(self, user: User | dict) -> list[KnowledgeBaseSummary]:
+    async def get_knowledge_bases_by_user(self, user: User | dict) -> list[KnowledgeBaseSummary]:
         """根据用户权限获取知识库列表"""
 
         # 构建用户信息字典（支持 User 对象或 dict）
@@ -409,30 +409,30 @@ class KnowledgeBaseManager:
 
         user_role = user_info.get("role")
         user_dept = user_info.get("department_id")
-        logger.info(f"Getting databases for user with role {user_role} and department {user_dept}")
+        logger.info(f"Getting knowledge_bases for user with role {user_role} and department {user_dept}")
 
-        all_databases = await self.get_databases()
+        all_knowledge_bases = await self.get_knowledge_bases()
 
         # 超级管理员可以看到所有知识库
-        filtered_databases: list[KnowledgeBaseSummary] = []
-        for database in all_databases:
-            permission = resolve_knowledge_base_permission(user_info, database)
+        filtered_knowledge_bases: list[KnowledgeBaseSummary] = []
+        for knowledge_base in all_knowledge_bases:
+            permission = resolve_knowledge_base_permission(user_info, knowledge_base)
             if permission == ResourcePermission.NONE:
                 continue
-            additional_params = database.additional_params
+            additional_params = knowledge_base.additional_params
             if permission == ResourcePermission.READ:
                 additional_params = redact_sensitive_params(additional_params)
-            filtered_databases.append(
+            filtered_knowledge_bases.append(
                 replace(
-                    database,
+                    knowledge_base,
                     additional_params=additional_params,
                     effective_permission=permission,
                 )
             )
 
-        return filtered_databases
+        return filtered_knowledge_bases
 
-    async def database_name_exists(self, database_name: str) -> bool:
+    async def knowledge_base_name_exists(self, name: str) -> bool:
         """检查知识库名称是否已存在"""
         from yuxi.infrastructure.postgres.manager import pg_manager
         from yuxi.modules.knowledge.repositories.bases import KnowledgeBaseRepository
@@ -444,7 +444,7 @@ class KnowledgeBaseManager:
         kb_repo = KnowledgeBaseRepository()
         rows = await kb_repo.get_all()
         for row in rows:
-            if (row.name or "").lower() == database_name.lower():
+            if (row.name or "").lower() == name.lower():
                 return True
         return False
 
@@ -462,9 +462,9 @@ class KnowledgeBaseManager:
             kb_instance.create_folder(kb_id, folder_name, parent_id, operator_id),
         )
 
-    async def create_database(
+    async def create_knowledge_base(
         self,
-        database_name: str,
+        name: str,
         description: str,
         kb_type: str = "milvus",
         embedding_model_spec: str | None = None,
@@ -475,11 +475,11 @@ class KnowledgeBaseManager:
         **kwargs,
     ) -> KnowledgeBaseDetail:
         """
-        创建数据库
+        创建知识库
 
         Args:
-            database_name: 数据库名称
-            description: 数据库描述
+            name: 知识库名称
+            description: 知识库描述
             kb_type: 知识库类型，默认为 milvus
             embedding_model_spec: 嵌入模型 spec
             llm_model_spec: LLM 模型 spec
@@ -489,14 +489,14 @@ class KnowledgeBaseManager:
             **kwargs: 其他配置参数
 
         Returns:
-            数据库信息字典
+            知识库信息字典
         """
         if not KnowledgeBaseFactory.is_type_supported(kb_type):
             available_types = list(KnowledgeBaseFactory.get_available_types().keys())
             raise ValueError(f"Unsupported knowledge base type: {kb_type}. Available types: {available_types}")
 
-        if await self.database_name_exists(database_name):
-            raise KBNameConflictError(f"知识库名称 '{database_name}' 已存在，请使用其他名称")
+        if await self.knowledge_base_name_exists(name):
+            raise KBNameConflictError(f"知识库名称 '{name}' 已存在，请使用其他名称")
 
         share_config = self._normalize_share_config(
             share_config,
@@ -533,11 +533,11 @@ class KnowledgeBaseManager:
                 break
 
         query_params = kb_instance.get_default_query_params(kb_id)
-        persisted_additional_params = {**additional_params, "stats": self._normalize_database_stats(None)}
+        persisted_additional_params = {**additional_params, "stats": self._normalize_knowledge_base_stats(None)}
         await kb_repo.create(
             {
                 "kb_id": kb_id,
-                "name": database_name,
+                "name": name,
                 "description": description,
                 "kb_type": kb_type,
                 "embedding_model_spec": embedding_model_spec,
@@ -550,20 +550,20 @@ class KnowledgeBaseManager:
         )
         os.makedirs(os.path.join(kb_instance.work_dir, kb_id), exist_ok=True)
 
-        logger.info(f"Created {kb_type} database: {database_name} ({kb_id}) with {additional_params}")
-        database = await self.get_database_info(kb_id)
-        if database is None:
-            raise KBNotFoundError(f"Database {kb_id} not found after creation")
-        return database
+        logger.info(f"Created {kb_type} knowledge_base: {name} ({kb_id}) with {additional_params}")
+        knowledge_base = await self.get_knowledge_base_info(kb_id)
+        if knowledge_base is None:
+            raise KBNotFoundError(f"Knowledge base {kb_id} not found after creation")
+        return knowledge_base
 
-    async def delete_database(self, kb_id: str) -> dict:
+    async def delete_knowledge_base(self, kb_id: str) -> dict:
         """提交知识库不可见事实；外部存储清理由 durable outbox 重放。"""
         from yuxi.modules.knowledge.repositories.files import KnowledgeFileRepository
 
         await KnowledgeFileRepository().mark_deleted_by_kb_id(kb_id)
         return {"message": "删除成功"}
 
-    async def cleanup_deleted_database(self, kb_id: str) -> None:
+    async def cleanup_deleted_knowledge_base(self, kb_id: str) -> None:
         """仅为已删除知识库执行可重试外部清理。"""
         from yuxi.modules.knowledge.repositories.bases import KnowledgeBaseRepository
 
@@ -574,7 +574,7 @@ class KnowledgeBaseManager:
         if record.deleted_at is None:
             raise ValueError("Cannot clean a visible knowledge base")
         executor = await self._get_or_create_kb_instance(record.kb_type)
-        await executor.cleanup_database_resources(kb_id)
+        await executor.cleanup_knowledge_base_resources(kb_id)
         await repository.delete(kb_id)
 
     async def get_cleanup_executor(self, kb_id: str) -> KnowledgeBase | None:
@@ -692,7 +692,7 @@ class KnowledgeBaseManager:
 
         kb = await KnowledgeBaseRepository().merge_query_params_options(kb_id, params)
         if kb is None:
-            raise KBNotFoundError(f"Database {kb_id} not found")
+            raise KBNotFoundError(f"Knowledge base {kb_id} not found")
 
     async def export_data(self, kb_id: str, format: str = "zip", **kwargs) -> str:
         """导出知识库数据"""
@@ -736,12 +736,12 @@ class KnowledgeBaseManager:
             "path_prefix": getattr(record, "path_prefix", None),
         }
 
-    async def _get_database_file_stats(self, kb_id: str) -> dict[str, int]:
+    async def _get_knowledge_base_file_stats(self, kb_id: str) -> dict[str, int]:
         from yuxi.modules.knowledge.repositories.files import KnowledgeFileRepository
 
         return await KnowledgeFileRepository().get_kb_file_stats(kb_id)
 
-    async def get_database_info(self, kb_id: str, include_files: bool = False) -> KnowledgeBaseDetail | None:
+    async def get_knowledge_base_info(self, kb_id: str, include_files: bool = False) -> KnowledgeBaseDetail | None:
         """获取知识库详情。"""
         from yuxi.modules.knowledge.repositories.bases import KnowledgeBaseRepository
 
@@ -777,9 +777,9 @@ class KnowledgeBaseManager:
             files_truncated = total > len(records)
             files_page_size = 500
 
-        file_stats = await self._get_database_file_stats(kb_id)
+        file_stats = await self._get_knowledge_base_file_stats(kb_id)
         return KnowledgeBaseDetail(
-            **self._database_read_fields(kb, stats=file_stats),
+            **self._knowledge_base_read_fields(kb, stats=file_stats),
             sample_questions=tuple(kb.sample_questions or []),
             files=files,
             files_truncated=files_truncated,
@@ -805,7 +805,7 @@ class KnowledgeBaseManager:
 
         kb = await KnowledgeBaseRepository().get_by_kb_id(kb_id)
         if kb is None:
-            raise KBNotFoundError(f"Database {kb_id} not found")
+            raise KBNotFoundError(f"Knowledge base {kb_id} not found")
 
         repo = KnowledgeFileRepository()
         if parent_id:
@@ -1072,7 +1072,7 @@ class KnowledgeBaseManager:
         返回基础信息：文件名、大小、上传时间
 
         Args:
-            kb_id: 数据库ID
+            kb_id: 知识库ID
             filename: 要检测的文件名（原始文件名）
 
         Returns:
@@ -1099,8 +1099,8 @@ class KnowledgeBaseManager:
             for record in records
         ]
 
-    async def file_existed_in_db(self, kb_id: str | None, content_hash: str | None) -> bool:
-        """检查指定数据库中是否存在相同内容哈希的文件"""
+    async def file_exists_in_knowledge_base(self, kb_id: str | None, content_hash: str | None) -> bool:
+        """检查指定知识库中是否存在相同内容哈希的文件"""
         if not kb_id or not content_hash:
             return False
 
@@ -1108,7 +1108,7 @@ class KnowledgeBaseManager:
 
         return await KnowledgeFileRepository().exists_by_content_hash(kb_id=kb_id, content_hash=content_hash)
 
-    async def update_database(
+    async def update_knowledge_base(
         self,
         kb_id: str,
         name: str,
@@ -1120,13 +1120,13 @@ class KnowledgeBaseManager:
         operator_uid: str | None = None,
         operator_department_id: int | str | None = None,
     ) -> KnowledgeBaseDetail:
-        """更新数据库"""
+        """更新知识库"""
         from yuxi.modules.knowledge.repositories.bases import KnowledgeBaseRepository
 
         kb_repo = KnowledgeBaseRepository()
         kb = await kb_repo.get_by_kb_id(kb_id)
         if kb is None:
-            raise ValueError(f"数据库 {kb_id} 不存在")
+            raise ValueError(f"知识库 {kb_id} 不存在")
 
         kb_type = kb.kb_type or "milvus"
         if not KnowledgeBaseFactory.is_type_supported(kb_type):
@@ -1159,10 +1159,10 @@ class KnowledgeBaseManager:
         # 保存到数据库
         await kb_repo.update(kb_id, update_data)
 
-        database = await self.get_database_info(kb_id)
-        if database is None:
-            raise KBNotFoundError(f"Database {kb_id} not found after update")
-        return database
+        knowledge_base = await self.get_knowledge_base_info(kb_id)
+        if knowledge_base is None:
+            raise KBNotFoundError(f"Knowledge base {kb_id} not found after update")
+        return knowledge_base
 
     async def retrieve(self, kb_id: str, query: str, **options) -> dict:
         """按 kb_id 加载最新运行时元数据并执行检索。"""
@@ -1221,18 +1221,18 @@ class KnowledgeBaseManager:
         return FindOutputSchema(kb_id=kb_id, file_id=file_id, **result).model_dump()
 
     async def _require_kb_supports_documents(self, kb_id: str, operation: str) -> None:
-        """按数据库元数据判断是否支持文档全文操作；不支持抛 ValueError。"""
-        db_info, supports_documents = await self.get_database_document_support(kb_id)
-        if not db_info:
+        """按知识库元数据判断是否支持文档全文操作；不支持抛 ValueError。"""
+        kb_info, supports_documents = await self.get_knowledge_base_document_support(kb_id)
+        if not kb_info:
             raise KBNotFoundError(f"知识库资源 '{kb_id}' 不存在")
-        kb_type = db_info.kb_type.lower()
+        kb_type = kb_info.kb_type.lower()
         if not supports_documents:
             operation_label = {
                 "open": "文档查看",
                 "find": "文档查找",
                 "download": "文件下载",
             }.get(operation, operation)
-            raise ValueError(f"{db_info.name or kb_type} 只支持检索，不支持{operation_label}")
+            raise ValueError(f"{kb_info.name or kb_type} 只支持检索，不支持{operation_label}")
 
     # =============================================================================
     # 管理器特有的方法
@@ -1250,7 +1250,7 @@ class KnowledgeBaseManager:
         kb_repo = KnowledgeBaseRepository()
         rows = await kb_repo.get_all()
 
-        stats = {"total_databases": len(rows), "kb_types": {}, "total_files": 0}
+        stats = {"total_knowledge_bases": len(rows), "kb_types": {}, "total_files": 0}
 
         # 按知识库类型统计
         for row in rows:
@@ -1320,7 +1320,7 @@ class KnowledgeBaseManager:
             logger.warning(f"  缺失文件记录数量: {len(milvus_files_missing)}")
             for file_info in milvus_files_missing:
                 logger.warning(
-                    f"    - 数据库: {file_info['kb_id']}, 向量数: {file_info['vector_count']}, "
+                    f"    - 知识库: {file_info['kb_id']}, 向量数: {file_info['vector_count']}, "
                     f"元数据文件数: {file_info['metadata_files_count']}"
                 )
 

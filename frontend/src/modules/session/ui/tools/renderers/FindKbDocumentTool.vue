@@ -26,7 +26,7 @@
 import { computed } from 'vue'
 import BaseToolCall from '../BaseToolCall.vue'
 import KbDocumentPreview from './KbDocumentPreview.vue'
-import { useDatabaseStore } from '@/modules/knowledge/model/database'
+import { useKnowledgeBaseStore } from '@/modules/knowledge/model/knowledgeBase'
 import { parseToolCallArgs } from '../toolRegistry'
 
 const props = defineProps({
@@ -36,11 +36,11 @@ const props = defineProps({
   }
 })
 
-const databaseStore = useDatabaseStore()
+const knowledgeBaseStore = useKnowledgeBaseStore()
 
 const args = computed(() => parseToolCallArgs(props.toolCall))
 
-const resourceName = computed(() => databaseStore.getDatabaseNameById(args.value.kb_id))
+const resourceName = computed(() => knowledgeBaseStore.getKnowledgeBaseNameById(args.value.kb_id))
 const fileId = computed(() => args.value.file_id || '')
 const patterns = computed(() => (Array.isArray(args.value.patterns) ? args.value.patterns : []))
 const fullPatternsLabel = computed(() => patterns.value.join(', '))

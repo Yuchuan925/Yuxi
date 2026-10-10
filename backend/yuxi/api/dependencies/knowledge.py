@@ -20,15 +20,15 @@ async def ensure_knowledge_base_permission(
 ) -> KnowledgeBaseDetail:
     """加载知识库并校验当前用户的有效资源权限。"""
 
-    db_info = await knowledge_base.get_database_info(kb_id)
-    if not db_info:
+    kb_info = await knowledge_base.get_knowledge_base_info(kb_id)
+    if not kb_info:
         raise HTTPException(status_code=404, detail=f"知识库 {kb_id} 不存在")
 
     try:
-        require_knowledge_base_permission(current_user, db_info, required)
+        require_knowledge_base_permission(current_user, kb_info, required)
     except ResourcePermissionDenied as error:
         raise HTTPException(status_code=403, detail="无权操作该知识库") from error
-    return db_info
+    return kb_info
 
 
 async def require_knowledge_base_read(

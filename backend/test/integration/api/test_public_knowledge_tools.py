@@ -44,9 +44,9 @@ async def test_knowledge_key_tool_route_boundary_without_kb(test_client, admin_h
 
 
 @pytest_asyncio.fixture
-async def readable_knowledge_tool_data(knowledge_database):
+async def readable_knowledge_tool_data(knowledge_base_resource):
     """在真实 PostgreSQL 与 MinIO 中准备可读文档。"""
-    kb_id = knowledge_database["kb_id"]
+    kb_id = knowledge_base_resource["kb_id"]
     file_id = f"pytest_tool_{uuid.uuid4().hex[:12]}"
     object_name = f"{kb_id}/parsed/{file_id}.md"
     minio = get_minio_client()
@@ -78,9 +78,9 @@ async def readable_knowledge_tool_data(knowledge_database):
         await pg_manager.close()
 
 
-async def test_jwt_can_call_five_read_only_knowledge_tools(test_client, admin_headers, knowledge_database):
+async def test_jwt_can_call_five_read_only_knowledge_tools(test_client, admin_headers, knowledge_base_resource):
     """登录用户 JWT 可调用五个查询工具，缺失资源不会泄露。"""
-    kb_id = knowledge_database["kb_id"]
+    kb_id = knowledge_base_resource["kb_id"]
     prefix = "/api/v1/knowledge/tools"
     unauthenticated = await test_client.get(f"{prefix}/list_kbs")
     assert unauthenticated.status_code == 401, unauthenticated.text
@@ -116,9 +116,9 @@ async def test_jwt_can_call_five_read_only_knowledge_tools(test_client, admin_he
         assert response.status_code == expected, (name, response.text)
 
 
-async def test_document_tools_return_persisted_results(test_client, admin_headers, knowledge_database, readable_knowledge_tool_data):
+async def test_document_tools_return_persisted_results(test_client, admin_headers, knowledge_base_resource, readable_knowledge_tool_data):
     """保留的文档工具经真实 HTTP 回读 PostgreSQL 和 MinIO 文档内容。"""
-    kb_id = knowledge_database["kb_id"]
+    kb_id = knowledge_base_resource["kb_id"]
     file_id = readable_knowledge_tool_data
     prefix = "/api/v1/knowledge/tools"
 
@@ -162,7 +162,7 @@ async def test_document_tools_return_persisted_results(test_client, admin_header
     assert "无效正则表达式" in invalid_regex.json()["detail"]
 
 
-async def test_knowledge_key_can_call_tools_but_not_unlisted_operations(test_client, admin_headers, knowledge_database):
+async def test_knowledge_key_can_call_tools_but_not_unlisted_operations(test_client, admin_headers, knowledge_base_resource):
     """受限 Key 只进入列明的只读工具，下载与管理保持拒绝。"""
     created = await test_client.post(
         "/api/user/apikey/",
@@ -172,7 +172,7 @@ async def test_knowledge_key_can_call_tools_but_not_unlisted_operations(test_cli
     assert created.status_code == 200, created.text
     key_id = created.json()["api_key"]["id"]
     key_headers = {"Authorization": f"Bearer {created.json()['secret']}"}
-    kb_id = knowledge_database["kb_id"]
+    kb_id = knowledge_base_resource["kb_id"]
     try:
         listed = await test_client.get("/api/v1/knowledge/tools/list_kbs", headers=key_headers)
         assert listed.status_code == 200, listed.text
@@ -199,7 +199,7 @@ async def test_knowledge_key_can_call_tools_but_not_unlisted_operations(test_cli
             headers=key_headers,
         )
         assert blocked.status_code == 404, blocked.text
-        blocked = await test_client.get("/api/knowledge/databases", headers=key_headers)
+        blocked = await test_client.get("/api/knowledge/knowledge-bases", headers=key_headers)
         assert blocked.status_code == 403, blocked.text
     finally:
         await test_client.delete(f"/api/user/apikey/{key_id}", headers=admin_headers)
@@ -210,9 +210,9 @@ async def test_tool_query_hides_invisible_knowledge_base(test_client, admin_head
     owner = await test_client.get("/api/auth/me", headers=admin_headers)
     assert owner.status_code == 200, owner.text
     created = await test_client.post(
-        "/api/knowledge/databases",
+        "/api/knowledge/knowledge-bases",
         json={
-            "database_name": f"pytest_private_tool_{uuid.uuid4().hex[:8]}",
+            "name": f"pytest_private_tool_{uuid.uuid4().hex[:8]}",
             "description": "private tool test",
             "embedding_model_spec": "siliconflow-cn:Pro/BAAI/bge-m3",
             "kb_type": "milvus",
@@ -235,5 +235,5 @@ async def test_tool_query_hides_invisible_knowledge_base(test_client, admin_head
         )
         assert response.status_code == 404, response.text
     finally:
-        deleted = await test_client.delete(f"/api/knowledge/databases/{kb_id}", headers=admin_headers)
+        deleted = await test_client.delete(f"/api/knowledge/knowledge-bases/{kb_id}", headers=admin_headers)
         assert deleted.status_code == 200, deleted.text

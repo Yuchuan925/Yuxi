@@ -708,7 +708,7 @@ class MilvusGraphService:
             return await self._reset(kb_id, clear_extraction_result=clear_extraction_result, clear_config=clear_config)
 
     async def _reset(self, kb_id: str, *, clear_extraction_result: bool, clear_config: bool) -> dict[str, Any]:
-        """删除图谱后重置数据库构建状态。"""
+        """删除图谱后重置知识库构建状态。"""
         kb = await self._get_milvus_kb(kb_id)
         await await_io(asyncio.to_thread(self.delete_graph, kb_id))
         await self.graph_repo.delete_by_kb_id(kb_id)
@@ -1225,8 +1225,8 @@ class MilvusGraphService:
             return {}
 
         effective_kb_id = kb_id or self.kb_id
-        db_label = properties.get("kb_id") or effective_kb_id
-        filtered_labels = [label for label in labels if label not in {"MilvusKB", db_label}]
+        kb_label = properties.get("kb_id") or effective_kb_id
+        filtered_labels = [label for label in labels if label not in {"MilvusKB", kb_label}]
         entity_type = "Chunk" if "Chunk" in labels else properties.get("label", "Entity")
         name = properties.get("name") or properties.get("content_preview") or properties.get("chunk_id") or "Unknown"
         return {

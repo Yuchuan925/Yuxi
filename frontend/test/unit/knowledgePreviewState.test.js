@@ -12,10 +12,10 @@ async function createQueryPanel() {
     .replace(/^import[\s\S]*?from '[^']+'\n/gm, '').replace('export default', 'return')
   const requests = []
   const watches = []
-  const store = { database: { kb_id: 'kb-1' }, state: { searchLoading: false }, meta: {} }
+  const store = { knowledgeBase: { kb_id: 'kb-1' }, state: { searchLoading: false }, meta: {} }
   const deps = {
     ref, computed, h, onMounted() {}, watch: (read, run) => watches.push({ read, run }),
-    useDatabaseStore: () => store,
+    useKnowledgeBaseStore: () => store,
     message: { error: (error) => { throw new Error(error) } },
     queryApi: {
       queryTest: () => new Promise((resolve) => requests.push(resolve)),
@@ -58,7 +58,7 @@ test('清空让待处理响应失效，不重新打开结果或原文', async ()
 test('切库与反序响应均不能覆盖当前查询', async () => {
   const { panel, requests, store, watches } = await createQueryPanel()
   const first = panel.onQuery()
-  store.database.kb_id = 'kb-2'
+  store.knowledgeBase.kb_id = 'kb-2'
   await watches.find(({ read }) => read() === 'kb-2').run('kb-2', 'kb-1')
   const second = panel.onQuery()
   requests[1]([{ ...chunk, content: '当前库命中' }])

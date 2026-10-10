@@ -5,7 +5,7 @@
       :tabs="tabs"
       @update:active-key="handleActiveTabChange"
       :loading="loading"
-      :ready="!!dataset && isCurrentDatabaseLoaded"
+      :ready="!!dataset && isCurrentKnowledgeBaseLoaded"
       empty-description="未找到评估基准"
       class="benchmark-detail-layout"
     >
@@ -14,7 +14,7 @@
           <button type="button" class="extension-detail-back" @click="backToKnowledgeList">知识库</button>
           <ChevronRight :size="15" aria-hidden="true" />
           <button type="button" class="extension-detail-back" @click="backToKnowledgeEvaluation">
-            {{ database.name || kbId }}
+            {{ knowledgeBase.name || kbId }}
           </button>
           <ChevronRight :size="15" aria-hidden="true" />
           <span class="extension-detail-current" :title="dataset?.name || datasetId">
@@ -268,15 +268,15 @@ import {
 import ExtensionDetailLayout from '@/shared/ui/ExtensionDetailLayout.vue'
 import ResourceEmptyState from '@/shared/ui/ResourceEmptyState.vue'
 import { evaluationApi } from '@/apis/knowledge_api'
-import { useDatabaseStore } from '@/modules/knowledge/model/database'
+import { useKnowledgeBaseStore } from '@/modules/knowledge/model/knowledgeBase'
 
 const route = useRoute()
 const router = useRouter()
-const store = useDatabaseStore()
+const store = useKnowledgeBaseStore()
 const kbId = computed(() => String(route.params.kbId || ''))
 const datasetId = computed(() => String(route.params.datasetId || ''))
-const database = computed(() => store.database)
-const isCurrentDatabaseLoaded = computed(() => database.value?.kb_id === kbId.value)
+const knowledgeBase = computed(() => store.knowledgeBase)
+const isCurrentKnowledgeBaseLoaded = computed(() => knowledgeBase.value?.kb_id === kbId.value)
 
 const tabs = [
   { key: 'questions', label: '题目', icon: ClipboardList },
@@ -645,7 +645,7 @@ watch(
 onMounted(async () => {
   loading.value = true
   store.kbId = kbId.value
-  await Promise.all([store.getDatabaseInfo(kbId.value, true), loadQuestions(), loadRuns()])
+  await Promise.all([store.getKnowledgeBaseInfo(kbId.value, true), loadQuestions(), loadRuns()])
   loading.value = false
 })
 onUnmounted(() => {

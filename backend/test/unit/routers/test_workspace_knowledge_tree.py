@@ -19,8 +19,8 @@ class FakeKnowledgeBase:
     async def check_accessible(self, _user, _kb_id):
         return True
 
-    async def get_database_document_support(self, kb_id):
-        database = KnowledgeBaseDetail(
+    async def get_knowledge_base_document_support(self, kb_id):
+        knowledge_base = KnowledgeBaseDetail(
             kb_id=kb_id,
             name="知识库",
             description=None,
@@ -33,7 +33,7 @@ class FakeKnowledgeBase:
             created_by=None,
             created_at=None,
         )
-        return database, self.supports
+        return knowledge_base, self.supports
 
     async def list_document_files(self, **kwargs):
         self.list_calls.append(kwargs)

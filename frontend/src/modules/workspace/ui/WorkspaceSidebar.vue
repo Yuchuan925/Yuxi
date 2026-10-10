@@ -81,40 +81,40 @@
       </button>
     </section>
 
-    <section v-if="myDatabases.length" class="sidebar-section">
+    <section v-if="myKnowledgeBases.length" class="sidebar-section">
       <div class="section-title">我的知识库</div>
       <button
-        v-for="database in myDatabases"
-        :key="database.kb_id || database.id || database.name"
+        v-for="knowledgeBase in myKnowledgeBases"
+        :key="knowledgeBase.kb_id || knowledgeBase.id || knowledgeBase.name"
         type="button"
         class="workspace-nav-item secondary"
-        :class="{ active: activeKey === `database:${database.kb_id}` }"
-        @click="$emit('select-database', database)"
+        :class="{ active: activeKey === `knowledge-base:${knowledgeBase.kb_id}` }"
+        @click="$emit('select-knowledge-base', knowledgeBase)"
       >
         <FileTypeIcon is-dir :size="16" />
-        <span>{{ database.name }}</span>
+        <span>{{ knowledgeBase.name }}</span>
       </button>
     </section>
 
-    <section v-if="sharedDatabases.length" class="sidebar-section">
+    <section v-if="sharedKnowledgeBases.length" class="sidebar-section">
       <div class="section-title">共享知识库</div>
       <button
-        v-for="database in sharedDatabases"
-        :key="database.kb_id || database.id || database.name"
+        v-for="knowledgeBase in sharedKnowledgeBases"
+        :key="knowledgeBase.kb_id || knowledgeBase.id || knowledgeBase.name"
         type="button"
         class="workspace-nav-item secondary"
-        :class="{ active: activeKey === `database:${database.kb_id}` }"
-        @click="$emit('select-database', database)"
+        :class="{ active: activeKey === `knowledge-base:${knowledgeBase.kb_id}` }"
+        @click="$emit('select-knowledge-base', knowledgeBase)"
       >
         <FileTypeIcon is-dir :size="16" />
-        <span>{{ database.name }}</span>
+        <span>{{ knowledgeBase.name }}</span>
       </button>
     </section>
 
-    <section v-if="loadingDatabases" class="sidebar-section">
+    <section v-if="loadingKnowledgeBases" class="sidebar-section">
       <div class="sidebar-muted">正在加载知识库...</div>
     </section>
-    <section v-else-if="!databases.length" class="sidebar-section">
+    <section v-else-if="!knowledgeBases.length" class="sidebar-section">
       <div class="sidebar-muted">暂无可访问知识库</div>
     </section>
   </aside>
@@ -143,8 +143,8 @@ const isQuickAccessPath = (path) =>
 const props = defineProps({
   activeKey: { type: String, default: 'personal' },
   currentPath: { type: String, default: '/' },
-  databases: { type: Array, default: () => [] },
-  loadingDatabases: { type: Boolean, default: false },
+  knowledgeBases: { type: Array, default: () => [] },
+  loadingKnowledgeBases: { type: Boolean, default: false },
   currentUid: { type: String, default: '' },
   disabled: { type: Boolean, default: false },
   uploading: { type: Boolean, default: false }
@@ -152,7 +152,7 @@ const props = defineProps({
 
 const emit = defineEmits([
   'select-personal',
-  'select-database',
+  'select-knowledge-base',
   'select-path',
   'upload-file',
   'create-directory'
@@ -178,12 +178,12 @@ const onCreateFolderAction = () => {
 
 useOutsidePointerdown(uploadActionMenuOpen, [uploadActionMenuRef])
 
-const myDatabases = computed(() =>
-  props.databases.filter((db) => db.created_by === props.currentUid)
+const myKnowledgeBases = computed(() =>
+  props.knowledgeBases.filter((kb) => kb.created_by === props.currentUid)
 )
 
-const sharedDatabases = computed(() =>
-  props.databases.filter((db) => db.created_by !== props.currentUid)
+const sharedKnowledgeBases = computed(() =>
+  props.knowledgeBases.filter((kb) => kb.created_by !== props.currentUid)
 )
 </script>
 

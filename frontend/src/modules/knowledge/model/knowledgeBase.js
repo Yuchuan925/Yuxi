@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, reactive } from 'vue'
 import { message, Modal } from 'ant-design-vue'
-import { databaseApi, documentApi, queryApi } from '@/apis/knowledge_api'
+import { knowledgeBaseApi, documentApi, queryApi } from '@/apis/knowledge_api'
 import { useBackgroundJobsStore } from '@/modules/background-jobs/model/jobs'
 import { useUserStore } from '@/modules/identity/model/user'
 import { useRouter } from 'vue-router'
@@ -14,14 +14,14 @@ const AUTO_REFRESH_POLL_INTERVAL_MS = 10000
 const AUTO_REFRESH_MAX_INTERVAL_MS = 30000
 const AUTO_REFRESH_STALE_POLLS_LIMIT = 6
 
-export const useDatabaseStore = defineStore('database', () => {
+export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
   const router = useRouter()
   const jobsStore = useBackgroundJobsStore()
   const userStore = useUserStore()
 
   // State
-  const databases = ref([])
-  const database = ref({})
+  const knowledgeBases = ref([])
+  const knowledgeBase = ref({})
   const kbId = ref(null)
   const fileDetailFileId = ref(null)
   const documentFiles = ref([])
@@ -45,7 +45,7 @@ export const useDatabaseStore = defineStore('database', () => {
   const state = reactive({
     listLoading: false,
     creating: false,
-    databaseLoading: false,
+    knowledgeBaseLoading: false,
     lock: false,
     fileDetailModalVisible: false,
     batchDeleting: false,
@@ -65,8 +65,8 @@ export const useDatabaseStore = defineStore('database', () => {
   let fileBrowserContextId = 0
 
   function setCurrentFileMap(items = []) {
-    database.value = {
-      ...database.value,
+    knowledgeBase.value = {
+      ...knowledgeBase.value,
       files: Object.fromEntries(items.map((item) => [item.file_id, item]))
     }
   }
@@ -92,14 +92,14 @@ export const useDatabaseStore = defineStore('database', () => {
 
   // Actions
   // 管理员获取所有知识库，普通用户获取有权限访问的知识库
-  async function loadDatabases() {
+  async function loadKnowledgeBases() {
     state.listLoading = true
     try {
       const data = userStore.isAdmin
-        ? await databaseApi.getDatabases()
-        : await databaseApi.getAccessibleDatabases()
-      const list = data?.databases || []
-      databases.value = list.sort((a, b) => {
+        ? await knowledgeBaseApi.getKnowledgeBases()
+        : await knowledgeBaseApi.getAccessibleKnowledgeBases()
+      const list = data?.knowledge_bases || []
+      knowledgeBases.value = list.sort((a, b) => {
         const timeA = parseToShanghai(a.created_at)
         const timeB = parseToShanghai(b.created_at)
         if (!timeA && !timeB) return 0
@@ -108,7 +108,7 @@ export const useDatabaseStore = defineStore('database', () => {
         return timeB.valueOf() - timeA.valueOf() // 降序排列，最新的在前面
       })
     } catch (error) {
-      console.error('加载数据库列表失败:', error)
+      console.error('加载知识库列表失败:', error)
       if (error.message.includes('权限')) {
         message.error('没有权限访问知识库')
       }
@@ -118,10 +118,10 @@ export const useDatabaseStore = defineStore('database', () => {
     }
   }
 
-  async function createDatabase(formData) {
+  async function createKnowledgeBase(formData) {
     // 验证
-    if (!formData.database_name?.trim()) {
-      message.error('数据库名称不能为空')
+    if (!formData.name?.trim()) {
+      message.error('知识库名称不能为空')
       return false
     }
 
@@ -132,12 +132,12 @@ export const useDatabaseStore = defineStore('database', () => {
 
     state.creating = true
     try {
-      const data = await databaseApi.createDatabase(formData)
+      const data = await knowledgeBaseApi.createKnowledgeBase(formData)
       message.success('创建成功')
-      await loadDatabases() // 刷新列表
+      await loadKnowledgeBases() // 刷新列表
       return data
     } catch (error) {
-      console.error('创建数据库失败:', error)
+      console.error('创建知识库失败:', error)
       message.error(error.message || '创建失败')
       throw error
     } finally {
@@ -145,18 +145,18 @@ export const useDatabaseStore = defineStore('database', () => {
     }
   }
 
-  async function getDatabaseInfo(id, skipQueryParams = false, isBackground = false) {
+  async function getKnowledgeBaseInfo(id, skipQueryParams = false, isBackground = false) {
     const kbIdValue = id || kbId.value
     if (!kbIdValue) return
 
     if (!isBackground) {
       state.lock = true
-      state.databaseLoading = true
+      state.knowledgeBaseLoading = true
     }
     try {
-      const data = await databaseApi.getDatabaseInfo(kbIdValue)
-      const currentFiles = database.value.files || {}
-      database.value = { ...data, files: data?.files || currentFiles }
+      const data = await knowledgeBaseApi.getKnowledgeBaseInfo(kbIdValue)
+      const currentFiles = knowledgeBase.value.files || {}
+      knowledgeBase.value = { ...data, files: data?.files || currentFiles }
       ensureAutoRefreshForProcessing(data?.files, data?.stats)
 
       // Only load query parameters if explicitly requested or if not loaded yet
@@ -165,21 +165,21 @@ export const useDatabaseStore = defineStore('database', () => {
       }
     } catch (error) {
       console.error(error)
-      message.error(error.message || '获取数据库信息失败')
+      message.error(error.message || '获取知识库信息失败')
     } finally {
       if (!isBackground) {
         state.lock = false
-        state.databaseLoading = false
+        state.knowledgeBaseLoading = false
       }
     }
   }
 
-  async function updateDatabaseInfo(formData) {
+  async function updateKnowledgeBaseInfo(formData) {
     try {
       state.lock = true
-      await databaseApi.updateDatabase(kbId.value, formData)
+      await knowledgeBaseApi.updateKnowledgeBase(kbId.value, formData)
       message.success('知识库信息更新成功')
-      await getDatabaseInfo() // Load query params after updating database info
+      await getKnowledgeBaseInfo() // Load query params after updating knowledgeBase info
     } catch (error) {
       console.error(error)
       message.error(error.message || '更新失败')
@@ -188,16 +188,16 @@ export const useDatabaseStore = defineStore('database', () => {
     }
   }
 
-  function deleteDatabase() {
+  function deleteKnowledgeBase() {
     Modal.confirm({
-      title: '删除数据库',
-      content: '确定要删除该数据库吗？',
+      title: '删除知识库',
+      content: '确定要删除该知识库吗？',
       okText: '确认',
       cancelText: '取消',
       onOk: async () => {
         state.lock = true
         try {
-          const data = await databaseApi.deleteDatabase(kbId.value)
+          const data = await knowledgeBaseApi.deleteKnowledgeBase(kbId.value)
           message.success(data.message || '删除成功')
           router.push({ path: '/extensions', query: { tab: 'knowledge' } })
         } catch (error) {
@@ -214,7 +214,7 @@ export const useDatabaseStore = defineStore('database', () => {
     state.lock = true
     try {
       await documentApi.deleteDocument(kbId.value, fileId)
-      await getDatabaseInfo(undefined, true) // Skip query params for file deletion
+      await getKnowledgeBaseInfo(undefined, true) // Skip query params for file deletion
       await loadDocumentFiles({ isBackground: true })
     } catch (error) {
       console.error(error)
@@ -236,7 +236,7 @@ export const useDatabaseStore = defineStore('database', () => {
   }
 
   function handleBatchDelete() {
-    const files = database.value.files || {}
+    const files = knowledgeBase.value.files || {}
     const validFileIds = selectedRowKeys.value.filter((fileId) => {
       const file = files[fileId]
       return canSelectFile(file)
@@ -295,7 +295,7 @@ export const useDatabaseStore = defineStore('database', () => {
           }
 
           selectedRowKeys.value = []
-          await getDatabaseInfo(undefined, true) // Skip query params for batch deletion
+          await getKnowledgeBaseInfo(undefined, true) // Skip query params for batch deletion
           await loadDocumentFiles({ isBackground: true })
         } catch (error) {
           message.destroy(progressKey)
@@ -414,8 +414,8 @@ export const useDatabaseStore = defineStore('database', () => {
       })
 
       if (data?.stats) {
-        database.value = {
-          ...database.value,
+        knowledgeBase.value = {
+          ...knowledgeBase.value,
           stats: data.stats,
           row_count: data.stats.row_count
         }
@@ -673,7 +673,7 @@ export const useDatabaseStore = defineStore('database', () => {
     if (!state.autoRefresh) return
 
     await Promise.all([
-      getDatabaseInfo(undefined, true, true), // Skip loading query params during auto-refresh
+      getKnowledgeBaseInfo(undefined, true, true), // Skip loading query params during auto-refresh
       loadDocumentFiles({ isBackground: true })
     ])
 
@@ -682,7 +682,7 @@ export const useDatabaseStore = defineStore('database', () => {
     if (!state.autoRefresh) return
 
     // 处理中文件数量持续不变则按 2 倍退避，达到上限仍无进展即自动停止（覆盖僵尸状态）
-    const processingCount = Number(database.value?.stats?.processing_count || 0)
+    const processingCount = Number(knowledgeBase.value?.stats?.processing_count || 0)
     if (processingCount === refreshLastProcessingCount) {
       refreshStablePolls += 1
       refreshIntervalMs = Math.min(refreshIntervalMs * 2, AUTO_REFRESH_MAX_INTERVAL_MS)
@@ -707,7 +707,7 @@ export const useDatabaseStore = defineStore('database', () => {
     refreshGeneration += 1
     refreshStablePolls = 0
     refreshIntervalMs = AUTO_REFRESH_POLL_INTERVAL_MS
-    refreshLastProcessingCount = Number(database.value?.stats?.processing_count || 0)
+    refreshLastProcessingCount = Number(knowledgeBase.value?.stats?.processing_count || 0)
     if (refreshTimer) {
       clearTimeout(refreshTimer)
       refreshTimer = null
@@ -726,7 +726,7 @@ export const useDatabaseStore = defineStore('database', () => {
   // 延时刷新文件理解（延迟1秒后刷新）
   async function delayedRefresh() {
     await new Promise((resolve) => setTimeout(resolve, 1000))
-    await getDatabaseInfo(undefined, true)
+    await getKnowledgeBaseInfo(undefined, true)
     await loadDocumentFiles({ isBackground: true })
   }
 
@@ -745,7 +745,7 @@ export const useDatabaseStore = defineStore('database', () => {
   }
 
   function selectAllFailedFiles() {
-    const files = Object.values(database.value.files || {})
+    const files = Object.values(knowledgeBase.value.files || {})
     const failedFiles = files.filter((file) => file.status === 'failed').map((file) => file.file_id)
 
     const newSelectedKeys = [...new Set([...selectedRowKeys.value, ...failedFiles])]
@@ -758,25 +758,25 @@ export const useDatabaseStore = defineStore('database', () => {
     }
   }
 
-  function getDatabaseNameById(id) {
+  function getKnowledgeBaseNameById(id) {
     const normalizedId = String(id || '').trim()
     if (!normalizedId) return ''
 
-    const matchedDatabase = databases.value.find(
+    const matchedKnowledgeBase = knowledgeBases.value.find(
       (item) => String(item.kb_id || '').trim() === normalizedId
     )
-    if (matchedDatabase?.name) return matchedDatabase.name
+    if (matchedKnowledgeBase?.name) return matchedKnowledgeBase.name
 
-    if (String(database.value?.kb_id || '').trim() === normalizedId) {
-      return database.value?.name || ''
+    if (String(knowledgeBase.value?.kb_id || '').trim() === normalizedId) {
+      return knowledgeBase.value?.name || ''
     }
 
     return ''
   }
 
   return {
-    databases,
-    database,
+    knowledgeBases,
+    knowledgeBase,
     kbId,
     fileDetailFileId,
     documentFiles,
@@ -786,11 +786,11 @@ export const useDatabaseStore = defineStore('database', () => {
     selectedRowKeys,
     fileBrowser,
     state,
-    loadDatabases,
-    createDatabase,
-    getDatabaseInfo,
-    updateDatabaseInfo,
-    deleteDatabase,
+    loadKnowledgeBases,
+    createKnowledgeBase,
+    getKnowledgeBaseInfo,
+    updateKnowledgeBaseInfo,
+    deleteKnowledgeBase,
     deleteFile,
     handleDeleteFile,
     handleBatchDelete,
@@ -811,6 +811,6 @@ export const useDatabaseStore = defineStore('database', () => {
     stopAutoRefresh,
     toggleAutoRefresh,
     selectAllFailedFiles,
-    getDatabaseNameById
+    getKnowledgeBaseNameById
   }
 })

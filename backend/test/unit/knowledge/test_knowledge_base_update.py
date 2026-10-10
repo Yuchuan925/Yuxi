@@ -143,7 +143,7 @@ def make_file_records(files: dict[str, dict]) -> dict[str, types.SimpleNamespace
     return {file_id: make_file_record(file_id, meta) for file_id, meta in files.items()}
 
 
-async def test_create_database_persists_allowed_record_fields(tmp_path, monkeypatch):
+async def test_create_knowledge_base_persists_allowed_record_fields(tmp_path, monkeypatch):
     created_payloads = []
 
     class FakeKnowledgeBaseRepository:
@@ -155,7 +155,7 @@ async def test_create_database_persists_allowed_record_fields(tmp_path, monkeypa
             return types.SimpleNamespace(**payload)
 
         async def update(self, kb_id, data):
-            raise AssertionError("create_database should insert new database metadata")
+            raise AssertionError("create_knowledge_base should insert new knowledge_base metadata")
 
     monkeypatch.setattr(
         "yuxi.modules.knowledge.repositories.bases.KnowledgeBaseRepository",
@@ -170,10 +170,10 @@ async def test_create_database_persists_allowed_record_fields(tmp_path, monkeypa
         "manage_scope": None,
     }
 
-    async def database_name_available(_database_name: str) -> bool:
+    async def knowledge_base_name_available(_name: str) -> bool:
         return False
 
-    monkeypatch.setattr(manager, "database_name_exists", database_name_available)
+    monkeypatch.setattr(manager, "knowledge_base_name_exists", knowledge_base_name_available)
     monkeypatch.setattr(manager, "_get_or_create_kb_instance", AsyncMock(return_value=kb))
     monkeypatch.setattr(
         "yuxi.modules.knowledge.manager.KnowledgeBaseFactory.is_type_supported",
@@ -184,10 +184,10 @@ async def test_create_database_persists_allowed_record_fields(tmp_path, monkeypa
         lambda _spec: types.SimpleNamespace(model_type="embedding"),
     )
 
-    async def get_database_info(kb_id: str):
+    async def get_knowledge_base_info(kb_id: str):
         return KnowledgeBaseDetail(
             kb_id=kb_id,
-            name="New database",
+            name="New knowledge_base",
             description="New description",
             kb_type="fake",
             embedding_model_spec="provider:embedding",
@@ -199,10 +199,10 @@ async def test_create_database_persists_allowed_record_fields(tmp_path, monkeypa
             created_at=None,
         )
 
-    monkeypatch.setattr(manager, "get_database_info", get_database_info)
+    monkeypatch.setattr(manager, "get_knowledge_base_info", get_knowledge_base_info)
 
-    result = await manager.create_database(
-        "New database",
+    result = await manager.create_knowledge_base(
+        "New knowledge_base",
         "New description",
         kb_type="fake",
         embedding_model_spec="provider:embedding",
@@ -221,7 +221,7 @@ async def test_create_database_persists_allowed_record_fields(tmp_path, monkeypa
     assert not hasattr(kb, "_runtime_configs")
 
 
-async def test_manager_refresh_database_stats_persists_metadata(tmp_path, monkeypatch):
+async def test_manager_refresh_knowledge_base_stats_persists_metadata(tmp_path, monkeypatch):
     manager = KnowledgeBaseManager(str(tmp_path))
     records = make_file_records(
         {
@@ -247,7 +247,7 @@ async def test_manager_refresh_database_stats_persists_metadata(tmp_path, monkey
         lambda: kb_repo,
     )
 
-    stats = await manager._refresh_database_stats("db")
+    stats = await manager._refresh_knowledge_base_stats("db")
 
     assert stats["file_count"] == 1
     assert stats["chunk_count"] == 2

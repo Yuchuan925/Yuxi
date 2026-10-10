@@ -43,7 +43,7 @@ async def test_knowledge_tools_reject_access_after_http_revocation(test_client, 
 
         share_config["read_scope"]["user_uids"] = [owner_uid]
         changed = await test_client.put(
-            f"/api/knowledge/databases/{kb_id}",
+            f"/api/knowledge/knowledge-bases/{kb_id}",
             headers=admin_headers,
             json={"name": kb_id, "description": "", "share_config": share_config},
         )

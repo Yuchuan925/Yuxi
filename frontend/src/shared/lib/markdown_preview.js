@@ -311,7 +311,7 @@ export const resolveMarkdownImageUrl = (src, resourceBaseUrl, origin) => {
     const url = new URL(src, base)
     if (url.origin !== origin) return null
     const allowed =
-      /^\/api\/knowledge\/databases\/[^/]+\/images\//.test(url.pathname) ||
+      /^\/api\/knowledge\/knowledge-bases\/[^/]+\/images\//.test(url.pathname) ||
       /^\/api\/v1\/agents\/sessions\/[^/]+\/artifacts\//.test(url.pathname)
     return allowed ? url.pathname + url.search : null
   } catch {

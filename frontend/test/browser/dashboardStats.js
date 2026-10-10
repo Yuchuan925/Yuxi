@@ -5,7 +5,7 @@ async (page) => {
   const distribution = { '文本文件': 3000, 'PDF文档': 590, 'Word文档': 33, 'HTML网页': 15, 'CSV表格': 4, 'JSON数据': 3, 'Markdown': 2, 'Excel表格': 1 }
   let empty = false
   await page.route('**/api/dashboard/stats/knowledge', (route) => route.fulfill({ json: {
-    total_databases: 2, total_files: 3648, total_storage_size: 4096,
+    total_knowledge_bases: 2, total_files: 3648, total_storage_size: 4096,
     file_type_distribution: empty ? {} : distribution
   }}))
   await page.route('**/api/dashboard/stats/tools', (route) => route.fulfill({ json: {

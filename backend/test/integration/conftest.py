@@ -252,7 +252,7 @@ async def standard_user(test_client: httpx.AsyncClient, admin_headers: dict[str,
 
 
 @pytest_asyncio.fixture(scope="function")
-async def knowledge_database(
+async def knowledge_base_resource(
     test_client: httpx.AsyncClient,
     admin_headers: dict[str, str],
 ) -> AsyncGenerator[dict, None]:
@@ -265,9 +265,9 @@ async def knowledge_database(
 
     try:
         create_response = await test_client.post(
-            "/api/knowledge/databases",
+            "/api/knowledge/knowledge-bases",
             json={
-                "database_name": db_name,
+                "name": db_name,
                 "description": "Pytest managed knowledge base",
                 "embedding_model_spec": "siliconflow-cn:Pro/BAAI/bge-m3",
                 "kb_type": "milvus",
@@ -290,7 +290,7 @@ async def knowledge_database(
     finally:
         if kb_id:
             try:
-                delete_response = await test_client.delete(f"/api/knowledge/databases/{kb_id}", headers=admin_headers)
+                delete_response = await test_client.delete(f"/api/knowledge/knowledge-bases/{kb_id}", headers=admin_headers)
                 if delete_response.status_code != 200:
                     print(f"Warning: Failed to cleanup knowledge database {kb_id}: {delete_response.text}")
             except Exception as exc:

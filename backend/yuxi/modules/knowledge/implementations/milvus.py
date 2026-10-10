@@ -369,7 +369,7 @@ class MilvusKB(KnowledgeBase):
         logger.info(f"Creating Milvus collection for {kb_id}")
 
         if not embedding_model_spec:
-            raise ValueError(f"Embedding model spec not found for database {kb_id}")
+            raise ValueError(f"Embedding model spec not found for knowledge_base {kb_id}")
 
         embedding_info = model_cache.get_model_info(embedding_model_spec)
         if not embedding_info or embedding_info.model_type != "embedding":
@@ -717,7 +717,7 @@ class MilvusKB(KnowledgeBase):
         Index parsed file (Status: INDEXING -> INDEXED/ERROR_INDEXING)
 
         Args:
-            kb_id: Database ID
+            kb_id: Knowledge base ID
             file_id: File ID
             operator_id: ID of the user performing the operation
             params: Override processing params to apply during indexing (merged on top of stored params)
@@ -910,7 +910,7 @@ class MilvusKB(KnowledgeBase):
         collection = await self._get_existing_milvus_collection(kb_id)
         if not collection:
             if await KnowledgeChunkRepository().count_by_kb_id(kb_id):
-                raise ValueError(f"Database {kb_id} has no vector projection; reindex is required")
+                raise ValueError(f"Knowledge base {kb_id} has no vector projection; reindex is required")
             return []
 
         # 合并查询参数：kwargs（临时参数）优先级高于 query_params（持久化参数）
@@ -1410,7 +1410,7 @@ class MilvusKB(KnowledgeBase):
         content_info = await self._get_file_content_from_meta(file_id, file_meta)
         return {"meta": file_meta, **content_info}
 
-    async def cleanup_database_resources(self, kb_id: str) -> dict:
+    async def cleanup_knowledge_base_resources(self, kb_id: str) -> dict:
         """清理知识库资源，同时删除 Milvus 集合。"""
 
         def delete_milvus_collections() -> None:
@@ -1430,7 +1430,7 @@ class MilvusKB(KnowledgeBase):
 
         await await_io(asyncio.to_thread(delete_milvus_collections))
 
-        return await super().cleanup_database_resources(kb_id)
+        return await super().cleanup_knowledge_base_resources(kb_id)
 
     async def detect_data_inconsistencies(
         self,
@@ -1472,7 +1472,7 @@ class MilvusKB(KnowledgeBase):
                             }
                         )
                 except Exception as exc:
-                    logger.debug(f"检查数据库 {kb_id} 的文件一致性时出错: {exc}")
+                    logger.debug(f"检查知识库 {kb_id} 的文件一致性时出错: {exc}")
         except Exception as exc:
             logger.error(f"检测 Milvus 数据不一致时出错: {exc}")
 

@@ -27,7 +27,7 @@
 <script setup>
 import { ref } from 'vue'
 import { message } from 'ant-design-vue'
-import { databaseApi } from '@/apis/knowledge_api'
+import { knowledgeBaseApi } from '@/apis/knowledge_api'
 import { WandSparkles } from '@lucide/vue'
 
 const props = defineProps({
@@ -73,7 +73,7 @@ const generateDescription = async () => {
 
   loading.value = true
   try {
-    const result = await databaseApi.generateDescription(props.name, props.modelValue, props.files)
+    const result = await knowledgeBaseApi.generateDescription(props.name, props.modelValue, props.files)
     if (result.status === 'success' && result.description) {
       emit('update:modelValue', result.description)
       message.success('描述生成成功')

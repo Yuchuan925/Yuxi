@@ -9,7 +9,7 @@ from yuxi.modules.knowledge.read_models import KnowledgeBaseSummary
 
 
 def test_serialize_knowledge_base_redacts_credentials_from_compatibility_fields():
-    database = KnowledgeBaseSummary(
+    knowledge_base = KnowledgeBaseSummary(
         kb_id="kb-1",
         name="知识库",
         description=None,
@@ -23,7 +23,7 @@ def test_serialize_knowledge_base_redacts_credentials_from_compatibility_fields(
         created_at=None,
     )
 
-    response = serialize_knowledge_base(database, redact_secrets=True)
+    response = serialize_knowledge_base(knowledge_base, redact_secrets=True)
 
     assert response["additional_params"]["chunk_size"] == 100
     assert response["metadata"]["chunk_size"] == 100
@@ -34,7 +34,7 @@ def test_serialize_knowledge_base_redacts_credentials_from_compatibility_fields(
 @pytest.mark.parametrize(("uid", "role", "can_read"), [("admin-1", "admin", True), ("other-user", "user", False)])
 @pytest.mark.asyncio
 async def test_non_manager_cannot_manage_global_read_knowledge_base(monkeypatch, uid, role, can_read):
-    database = {
+    knowledge_base = {
         "created_by": "owner",
         "share_config": {
             "version": 2,
@@ -43,10 +43,10 @@ async def test_non_manager_cannot_manage_global_read_knowledge_base(monkeypatch,
         },
     }
 
-    async def fake_get_database_info(_kb_id):
-        return database
+    async def fake_get_knowledge_base_info(_kb_id):
+        return knowledge_base
 
-    monkeypatch.setattr(knowledge_router.knowledge_base, "get_database_info", fake_get_database_info)
+    monkeypatch.setattr(knowledge_router.knowledge_base_manager, "get_knowledge_base_info", fake_get_knowledge_base_info)
     user = SimpleNamespace(uid=uid, role=role, department_id=2)
 
     if can_read:
@@ -59,7 +59,7 @@ async def test_non_manager_cannot_manage_global_read_knowledge_base(monkeypatch,
 
 @pytest.mark.asyncio
 async def test_query_parameter_routes_apply_knowledge_base_acl(monkeypatch):
-    database = {
+    knowledge_base = {
         "created_by": "owner",
         "share_config": {
             "version": 2,
@@ -68,10 +68,10 @@ async def test_query_parameter_routes_apply_knowledge_base_acl(monkeypatch):
         },
     }
 
-    async def fake_get_database_info(_kb_id):
-        return database
+    async def fake_get_knowledge_base_info(_kb_id):
+        return knowledge_base
 
-    monkeypatch.setattr(knowledge_router.knowledge_base, "get_database_info", fake_get_database_info)
+    monkeypatch.setattr(knowledge_router.knowledge_base_manager, "get_knowledge_base_info", fake_get_knowledge_base_info)
     readonly_admin = SimpleNamespace(uid="admin-1", role="admin", department_id=2)
 
     assert await knowledge_router.require_knowledge_base_read("kb-1", readonly_admin) is readonly_admin

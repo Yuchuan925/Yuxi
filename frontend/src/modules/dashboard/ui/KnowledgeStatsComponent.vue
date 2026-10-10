@@ -4,7 +4,7 @@
     <div class="dashboard-card-metric-grid">
       <DashboardMetricCard
         :icon="Database"
-        :value="formatNumber(knowledgeStats?.total_databases)"
+        :value="formatNumber(knowledgeStats?.total_knowledge_bases)"
         label="知识库总数"
         tone="info"
         compact

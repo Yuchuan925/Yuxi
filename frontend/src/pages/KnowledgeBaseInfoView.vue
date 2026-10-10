@@ -1,22 +1,22 @@
 <template>
-  <div class="database-info-container">
+  <div class="knowledge-base-info-container">
     <ExtensionDetailLayout
       :active-key="activeTab"
       :tabs="visibleTabs"
       @update:active-key="handleActiveTabChange"
       :loading="detailLoading"
-      :ready="isCurrentDatabaseLoaded && !isConnector"
+      :ready="isCurrentKnowledgeBaseLoaded && !isConnector"
       empty-description="未找到知识库"
       class="knowledge-detail-layout"
     >
       <template #breadcrumb>
         <nav class="extension-detail-breadcrumb" aria-label="知识库详情导航">
-          <button type="button" class="extension-detail-back" @click="backToDatabase">
+          <button type="button" class="extension-detail-back" @click="backToKnowledgeBase">
             知识库
           </button>
           <ChevronRight :size="15" aria-hidden="true" />
-          <span class="extension-detail-current" :title="database.name || kbId">
-            {{ database.name || kbId }}
+          <span class="extension-detail-current" :title="knowledgeBase.name || kbId">
+            {{ knowledgeBase.name || kbId }}
           </span>
         </nav>
       </template>
@@ -29,13 +29,13 @@
               aria-label="复制知识库 ID"
               title="复制知识库 ID"
               class="lucide-icon-btn extension-detail-action"
-              @click="copyDatabaseId"
+              @click="copyKnowledgeBaseId"
             >
               <Copy :size="14" />
               <span>复制 ID</span>
             </a-button>
             <a-button
-              v-if="canManageDatabase"
+              v-if="canManageKnowledgeBase"
               type="text"
               aria-label="配置知识库"
               title="配置知识库"
@@ -55,7 +55,7 @@
             <div class="file-info-title">
               <div class="file-info-title-row">
                 <div
-                  v-if="canManageDatabase"
+                  v-if="canManageKnowledgeBase"
                   ref="uploadActionMenuRef"
                   class="file-action-dropdown"
                 >
@@ -101,7 +101,7 @@
             </div>
             <div class="file-panel-status">
               <button
-                v-if="canManageDatabase && pendingParseCount > 0"
+                v-if="canManageKnowledgeBase && pendingParseCount > 0"
                 type="button"
                 class="lucide-icon-btn extension-panel-action extension-panel-action-secondary file-stat-card file-stat-warning file-stat-summary"
                 :disabled="store.state.chunkLoading"
@@ -114,7 +114,7 @@
                 </div>
               </button>
               <button
-                v-if="canManageDatabase && pendingIndexCount > 0"
+                v-if="canManageKnowledgeBase && pendingIndexCount > 0"
                 type="button"
                 class="lucide-icon-btn extension-panel-action extension-panel-action-secondary file-stat-card file-stat-warning file-stat-summary"
                 :disabled="store.state.chunkLoading"
@@ -161,7 +161,7 @@
           </div>
           <FileTable
             ref="fileTableRef"
-            :readonly="!canManageDatabase"
+            :readonly="!canManageKnowledgeBase"
             @search="fileSearchModalVisible = true"
           />
         </div>
@@ -182,7 +182,7 @@
           <KnowledgeGraphSection
             :visible="true"
             :active="activeTab === 'graph'"
-            :readonly="!canManageDatabase"
+            :readonly="!canManageKnowledgeBase"
             @toggle-visible="() => {}"
           />
         </div>
@@ -190,7 +190,7 @@
 
       <template #panel-evaluation>
         <div v-if="isMilvus && activeTab === 'evaluation'" class="tab-panel evaluation-panel">
-          <KnowledgeEvaluationWorkspace v-if="kbId" :kb-id="kbId" :can-manage="canManageDatabase" />
+          <KnowledgeEvaluationWorkspace v-if="kbId" :kb-id="kbId" :can-manage="canManageKnowledgeBase" />
         </div>
       </template>
     </ExtensionDetailLayout>
@@ -222,7 +222,7 @@
       title="配置知识库"
       width="720px"
       :mask-closable="false"
-      wrap-class-name="database-edit-modal"
+      wrap-class-name="knowledge-base-edit-modal"
       @after-close="handleEditModalAfterClose"
     >
       <template #footer>
@@ -232,9 +232,9 @@
         </a-button>
       </template>
       <a-form :model="editForm" :rules="rules" ref="editFormRef" layout="vertical">
-        <a-tabs v-model:active-key="editModalTab" class="database-edit-tabs">
+        <a-tabs v-model:active-key="editModalTab" class="knowledge-base-edit-tabs">
           <a-tab-pane key="basic" tab="基础信息">
-            <div class="database-edit-tab-content">
+            <div class="knowledge-base-edit-tab-content">
               <a-form-item label="知识库名称" name="name" required>
                 <a-input v-model:value="editForm.name" placeholder="请输入知识库名称" />
               </a-form-item>
@@ -249,10 +249,10 @@
                 />
               </a-form-item>
 
-              <a-form-item v-if="database?.embedding_model_spec" label="Embedding 模型">
+              <a-form-item v-if="knowledgeBase?.embedding_model_spec" label="Embedding 模型">
                 <div class="readonly-model-field">
-                  <span class="readonly-model-value" :title="database.embedding_model_spec">
-                    {{ database.embedding_model_spec }}
+                  <span class="readonly-model-value" :title="knowledgeBase.embedding_model_spec">
+                    {{ knowledgeBase.embedding_model_spec }}
                   </span>
                   <span class="readonly-model-hint">创建后不可修改</span>
                 </div>
@@ -315,7 +315,7 @@
           </a-tab-pane>
 
           <a-tab-pane key="permission" tab="权限配置">
-            <div class="database-edit-tab-content">
+            <div class="knowledge-base-edit-tab-content">
               <a-form-item v-if="canEditShareConfig" name="share_config">
                 <a-form-item-rest>
                   <ShareConfigForm
@@ -326,7 +326,7 @@
                   />
                 </a-form-item-rest>
               </a-form-item>
-              <div v-else-if="database.share_config" class="share-config-readonly">
+              <div v-else-if="knowledgeBase.share_config" class="share-config-readonly">
                 <a-tag :color="shareConfigDisplay.color">{{ shareConfigDisplay.label }}</a-tag>
                 <span class="access-names">{{ shareConfigDisplay.detail }}</span>
               </div>
@@ -334,8 +334,8 @@
           </a-tab-pane>
 
           <a-tab-pane key="retrieval" tab="检索配置" force-render>
-            <div class="database-edit-tab-content retrieval-config-content">
-              <p class="database-edit-tab-description">
+            <div class="knowledge-base-edit-tab-content retrieval-config-content">
+              <p class="knowledge-base-edit-tab-description">
                 调整当前知识库在检索测试和 Agent 使用时采用的参数。
               </p>
               <SearchConfigPanel v-if="editModalVisible" ref="searchConfigPanelRef" :kb-id="kbId" />
@@ -350,7 +350,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { useDatabaseStore } from '@/modules/knowledge/model/database'
+import { useKnowledgeBaseStore } from '@/modules/knowledge/model/knowledgeBase'
 import { useBackgroundJobsStore } from '@/modules/background-jobs/model/jobs'
 import {
   BarChart3,
@@ -394,7 +394,7 @@ const KnowledgeEvaluationWorkspace = createAsyncPanel(
 
 const route = useRoute()
 const router = useRouter()
-const store = useDatabaseStore()
+const store = useKnowledgeBaseStore()
 const jobsStore = useBackgroundJobsStore()
 const {
   chunkPresetSelectOptions: chunkPresetOptions,
@@ -404,17 +404,17 @@ const {
 } = useChunkPresetOptions()
 
 const kbId = computed(() => store.kbId)
-const database = computed(() => store.database)
-const canManageDatabase = computed(() => database.value?.can_manage === true)
-const isCurrentDatabaseLoaded = computed(() => database.value?.kb_id === kbId.value)
+const knowledgeBase = computed(() => store.knowledgeBase)
+const canManageKnowledgeBase = computed(() => knowledgeBase.value?.can_manage === true)
+const isCurrentKnowledgeBaseLoaded = computed(() => knowledgeBase.value?.kb_id === kbId.value)
 const kbType = computed(() =>
-  isCurrentDatabaseLoaded.value ? database.value.kb_type?.toLowerCase() || 'milvus' : ''
+  isCurrentKnowledgeBaseLoaded.value ? knowledgeBase.value.kb_type?.toLowerCase() || 'milvus' : ''
 )
 const isMilvus = computed(() => kbType.value === 'milvus')
 const isDifyKb = computed(() => kbType.value === 'dify')
 const isNotionKb = computed(() => kbType.value === 'notion')
 const isConnector = computed(
-  () => isCurrentDatabaseLoaded.value && kbUtils.isReadOnlyDatabase(database.value)
+  () => isCurrentKnowledgeBaseLoaded.value && kbUtils.isReadOnlyKnowledgeBase(knowledgeBase.value)
 )
 const tabs = computed(() => {
   if (isMilvus.value) {
@@ -430,16 +430,16 @@ const tabs = computed(() => {
 })
 
 const visibleTabs = computed(() =>
-  canManageDatabase.value
+  canManageKnowledgeBase.value
     ? tabs.value
     : tabs.value.filter((tab) => ['filetable', 'query', 'graph'].includes(tab.key))
 )
 const activeTab = ref('filetable')
 
 watch(
-  () => [kbId.value, route.query.section, visibleTabs.value, isCurrentDatabaseLoaded.value],
-  ([newDbId, requestedTab, availableTabs, loaded]) => {
-    if (!newDbId) return
+  () => [kbId.value, route.query.section, visibleTabs.value, isCurrentKnowledgeBaseLoaded.value],
+  ([newKbId, requestedTab, availableTabs, loaded]) => {
+    if (!newKbId) return
     const fallbackTab = availableTabs[0]?.key || 'query'
     activeTab.value = availableTabs.some((tab) => tab.key === requestedTab)
       ? requestedTab
@@ -461,7 +461,7 @@ const handleActiveTabChange = (tab) => {
 }
 
 const pendingParseCount = computed(() => {
-  return Number(store.database.stats?.pending_parse_count || 0)
+  return Number(store.knowledgeBase.stats?.pending_parse_count || 0)
 })
 
 const formatStatNumber = (value) => {
@@ -495,7 +495,7 @@ const formatTokenStatNumber = (value) => {
 }
 
 const fileStats = computed(() => {
-  const stats = store.database.stats || {}
+  const stats = store.knowledgeBase.stats || {}
   const statsFileCount = Number(stats.file_count)
   const totalSize = Number(stats.total_size || 0)
 
@@ -508,7 +508,7 @@ const fileStats = computed(() => {
 })
 
 const pendingIndexCount = computed(() => {
-  return Number(store.database.stats?.pending_index_count || 0)
+  return Number(store.knowledgeBase.stats?.pending_index_count || 0)
 })
 
 const confirmBatchParse = () => {
@@ -629,9 +629,9 @@ watch(
     resetFileSelectionState()
     store.stopAutoRefresh()
     try {
-      await store.getDatabaseInfo(nextKbId, false)
-      if (store.database?.kb_id === nextKbId && kbUtils.isReadOnlyDatabase(store.database)) {
-        if (route.query.action === 'edit' && canManageDatabase.value) {
+      await store.getKnowledgeBaseInfo(nextKbId, false)
+      if (store.knowledgeBase?.kb_id === nextKbId && kbUtils.isReadOnlyKnowledgeBase(store.knowledgeBase)) {
+        if (route.query.action === 'edit' && canManageKnowledgeBase.value) {
           showEditModal()
           return
         }
@@ -649,7 +649,7 @@ watch(
 const previousFileCount = ref(0)
 
 watch(
-  () => database.value?.stats?.file_count,
+  () => knowledgeBase.value?.stats?.file_count,
   (newFileCountValue) => {
     const newFileCount = Number(newFileCountValue || 0)
     const oldFileCount = previousFileCount.value
@@ -661,17 +661,17 @@ watch(
     }
 
     if (newFileCount !== oldFileCount) {
-      if (newFileCount > 0 && canManageDatabase.value) {
+      if (newFileCount > 0 && canManageKnowledgeBase.value) {
         setTimeout(async () => {
           if (querySectionRef.value) {
-            if (database.value.additional_params?.auto_generate_questions) {
+            if (knowledgeBase.value.additional_params?.auto_generate_questions) {
               await querySectionRef.value.generateSampleQuestions(true)
             }
           } else {
             setTimeout(async () => {
               if (
                 querySectionRef.value &&
-                database.value.additional_params?.auto_generate_questions
+                knowledgeBase.value.additional_params?.auto_generate_questions
               ) {
                 await querySectionRef.value.generateSampleQuestions(true)
               }
@@ -690,22 +690,22 @@ watch(
   { deep: false }
 )
 
-const backToDatabase = () => {
+const backToKnowledgeBase = () => {
   router.push({ path: '/extensions', query: { tab: 'knowledge' } })
 }
 
-const copyDatabaseId = async () => {
-  if (!database.value.kb_id) {
+const copyKnowledgeBaseId = async () => {
+  if (!knowledgeBase.value.kb_id) {
     message.warning('知识库ID为空')
     return
   }
 
   try {
-    await navigator.clipboard.writeText(database.value.kb_id)
+    await navigator.clipboard.writeText(knowledgeBase.value.kb_id)
     message.success('知识库ID已复制到剪贴板')
   } catch {
     const textArea = document.createElement('textarea')
-    textArea.value = database.value.kb_id
+    textArea.value = knowledgeBase.value.kb_id
     document.body.appendChild(textArea)
     textArea.select()
     document.execCommand('copy')
@@ -747,10 +747,10 @@ const fileList = computed(() => {
   return (store.documentFiles || []).map((f) => f.filename).filter(Boolean)
 })
 
-const canEditShareConfig = computed(() => canManageDatabase.value)
+const canEditShareConfig = computed(() => canManageKnowledgeBase.value)
 
 const shareConfigDisplay = computed(() => {
-  const shareConfig = database.value?.share_config || {}
+  const shareConfig = knowledgeBase.value?.share_config || {}
   const readScope = shareConfig.version === 2 ? shareConfig.read_scope : shareConfig
   const manageScope = shareConfig.manage_scope
   const describeScope = (scope) => {
@@ -806,22 +806,22 @@ const loadUsers = async () => {
 }
 
 const handleEditModalAfterClose = () => {
-  if (isConnector.value) backToDatabase()
+  if (isConnector.value) backToKnowledgeBase()
 }
 
 const showEditModal = () => {
   editModalTab.value = 'basic'
-  editForm.name = database.value.name || ''
-  editForm.description = database.value.description || ''
+  editForm.name = knowledgeBase.value.name || ''
+  editForm.description = knowledgeBase.value.description || ''
   editForm.chunk_preset_id =
-    database.value.additional_params?.chunk_preset_id || DEFAULT_CHUNK_PRESET_ID
-  editForm.dify_api_url = database.value.additional_params?.dify_api_url || ''
-  editForm.dify_token = database.value.additional_params?.dify_token || ''
-  editForm.dify_dataset_id = database.value.additional_params?.dify_dataset_id || ''
+    knowledgeBase.value.additional_params?.chunk_preset_id || DEFAULT_CHUNK_PRESET_ID
+  editForm.dify_api_url = knowledgeBase.value.additional_params?.dify_api_url || ''
+  editForm.dify_token = knowledgeBase.value.additional_params?.dify_token || ''
+  editForm.dify_dataset_id = knowledgeBase.value.additional_params?.dify_dataset_id || ''
   editForm.notion_token = ''
-  editForm.notion_data_source_id = database.value.additional_params?.notion_data_source_id || ''
-  editForm.notion_version = database.value.additional_params?.notion_version || '2026-03-11'
-  editShareConfig.value = database.value.share_config || {
+  editForm.notion_data_source_id = knowledgeBase.value.additional_params?.notion_data_source_id || ''
+  editForm.notion_version = knowledgeBase.value.additional_params?.notion_version || '2026-03-11'
+  editShareConfig.value = knowledgeBase.value.share_config || {
     version: 2,
     read_scope: { access_level: 'global', department_ids: [], user_uids: [] },
     manage_scope: null
@@ -830,9 +830,9 @@ const showEditModal = () => {
 }
 
 watch(
-  () => [route.query.action, detailLoading.value, isCurrentDatabaseLoaded.value],
+  () => [route.query.action, detailLoading.value, isCurrentKnowledgeBaseLoaded.value],
   ([action, loading, loaded]) => {
-    if (action !== 'edit' || loading || !loaded || !canManageDatabase.value) return
+    if (action !== 'edit' || loading || !loaded || !canManageKnowledgeBase.value) return
     showEditModal()
     router.replace({ path: route.path, query: { ...route.query, action: undefined } })
   },
@@ -907,7 +907,7 @@ const handleEditSubmit = async () => {
       }
     }
 
-    await store.updateDatabaseInfo(updateData)
+    await store.updateKnowledgeBaseInfo(updateData)
   } catch (err) {
     editModalTab.value = 'basic'
     console.error('表单验证失败:', err)
@@ -931,7 +931,7 @@ onUnmounted(() => {
 
 <style lang="less" scoped>
 
-.database-info-container,
+.knowledge-base-info-container,
 .knowledge-detail-layout {
   width: 100%;
   height: 100%;
@@ -1203,15 +1203,15 @@ onUnmounted(() => {
   }
 }
 
-.database-edit-tabs :deep(.ant-tabs-nav) {
+.knowledge-base-edit-tabs :deep(.ant-tabs-nav) {
   margin-bottom: 20px;
 }
 
-.database-edit-tab-content {
+.knowledge-base-edit-tab-content {
   min-height: 360px;
 }
 
-.database-edit-tab-description {
+.knowledge-base-edit-tab-description {
   margin: 0 0 16px;
   color: var(--gray-500);
   font-size: 13px;
@@ -1224,7 +1224,7 @@ onUnmounted(() => {
   overflow-x: hidden;
 }
 
-:global(.database-edit-modal .ant-modal-body) {
+:global(.knowledge-base-edit-modal .ant-modal-body) {
   max-height: min(680px, 70vh);
   overflow-y: auto;
 }
@@ -1287,7 +1287,7 @@ onUnmounted(() => {
 }
 
 @media (max-width: 1024px) {
-  .database-edit-tab-content {
+  .knowledge-base-edit-tab-content {
     min-height: 320px;
   }
 }
@@ -1311,7 +1311,7 @@ onUnmounted(() => {
 
 <style lang="less">
 @media (max-width: 767px) {
-  .app-layout:has(.database-info-container) {
+  .app-layout:has(.knowledge-base-info-container) {
     min-width: 0;
   }
 }

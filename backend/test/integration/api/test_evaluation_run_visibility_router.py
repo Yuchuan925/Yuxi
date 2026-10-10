@@ -21,7 +21,7 @@ async def close_postgres_pool():
 
 
 @pytest.mark.parametrize("foreign_run", [False, True], ids=["missing", "foreign"])
-async def test_evaluation_results_reject_job_fallback(test_client, admin_headers, knowledge_database, foreign_run):
+async def test_evaluation_results_reject_job_fallback(test_client, admin_headers, knowledge_base_resource, foreign_run):
     """缺失或跨库运行返回 404，同名作业不能代替评估结果。"""
     run_id = f"run_{uuid4().hex[:8]}"
     foreign_kb_id = f"pytest_visibility_{uuid4().hex}"
@@ -43,7 +43,7 @@ async def test_evaluation_results_reject_job_fallback(test_client, admin_headers
                 session.add(EvaluationRun(run_id=run_id, kb_id=foreign_kb_id, name="private run", status="completed"))
 
         response = await test_client.get(
-            f"/api/evaluation/databases/{knowledge_database['kb_id']}/runs/{run_id}",
+            f"/api/evaluation/knowledge-bases/{knowledge_base_resource['kb_id']}/runs/{run_id}",
             headers=admin_headers,
         )
         assert response.status_code == 404, response.text

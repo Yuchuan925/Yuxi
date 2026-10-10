@@ -131,10 +131,10 @@
       </div>
       <aside v-if="selectedChunk" class="query-document-preview" aria-label="命中片段原文">
         <FileDetailModal
-          :key="`${store.database.kb_id}:${selectedChunk.metadata.file_id}`"
+          :key="`${store.knowledgeBase.kb_id}:${selectedChunk.metadata.file_id}`"
           embedded
           :open="true"
-          :kb-id="store.database.kb_id"
+          :kb-id="store.knowledgeBase.kb_id"
           :file-id="selectedChunk.metadata.file_id"
           :chunk-id="selectedChunk.metadata.chunk_id || ''"
           :start-line="selectedChunk.metadata.start_line"
@@ -148,14 +148,14 @@
 
 <script setup>
 import { ref, computed, onMounted, watch, h } from 'vue'
-import { useDatabaseStore } from '@/modules/knowledge/model/database'
+import { useKnowledgeBaseStore } from '@/modules/knowledge/model/knowledgeBase'
 import { message } from 'ant-design-vue'
 import { queryApi } from '@/apis/knowledge_api'
 import { Braces, RefreshCw, Search as SearchOutlined } from '@lucide/vue'
 import QueryResultChunk from '@/modules/knowledge/ui/QueryResultChunk.vue'
 import FileDetailModal from '@/modules/knowledge/ui/FileDetailModal.vue'
 
-const store = useDatabaseStore()
+const store = useKnowledgeBaseStore()
 const MAX_VISIBLE_EXAMPLES = 10
 
 defineProps({
@@ -185,7 +185,7 @@ const showRawData = ref(false)
 const showQuerySuggestions = computed(() => !searchLoading.value && !queryResult.value)
 
 // 示例问题生成属于写操作，仅对拥有管理权限（非只读权限）的知识库开放
-const canGenerateQuestions = computed(() => store.database?.can_manage === true)
+const canGenerateQuestions = computed(() => store.knowledgeBase?.can_manage === true)
 
 // 查询测试
 const queryText = ref('')
@@ -210,11 +210,11 @@ const updateQueryExamples = (questions = []) => {
 
 // 加载示例问题
 const loadSampleQuestions = async () => {
-  if (!store.database?.kb_id) return
+  if (!store.knowledgeBase?.kb_id) return
 
   try {
     loadingQuestions.value = true
-    const data = await queryApi.getSampleQuestions(store.database.kb_id)
+    const data = await queryApi.getSampleQuestions(store.knowledgeBase.kb_id)
     if (data.questions && data.questions.length > 0) {
       updateQueryExamples(data.questions)
     } else {
@@ -244,11 +244,11 @@ const clearQuestions = () => {
 
 // 生成示例问题
 const generateSampleQuestions = async (silent = false) => {
-  if (!store.database?.kb_id) return
+  if (!store.knowledgeBase?.kb_id) return
 
   try {
     generatingQuestions.value = true
-    const data = await queryApi.generateSampleQuestions(store.database.kb_id, 10)
+    const data = await queryApi.generateSampleQuestions(store.knowledgeBase.kb_id, 10)
     if (data.questions && data.questions.length > 0) {
       updateQueryExamples(data.questions)
       if (!silent) {
@@ -293,7 +293,7 @@ const clearQueryResult = () => {
 
 // 监听知识库ID变化，切换知识库时重新加载问题
 watch(
-  () => store.database?.kb_id,
+  () => store.knowledgeBase?.kb_id,
   async (newKbId, oldKbId) => {
     // 如果知识库ID发生变化
     if (newKbId && newKbId !== oldKbId) {
@@ -321,7 +321,7 @@ const onQuery = async () => {
   const queryMeta = { ...store.meta }
 
   try {
-    const data = await queryApi.queryTest(store.database.kb_id, queryText.value.trim(), queryMeta)
+    const data = await queryApi.queryTest(store.knowledgeBase.kb_id, queryText.value.trim(), queryMeta)
     if (requestId !== queryRequest) return
     queryResult.value = data
   } catch (error) {
@@ -341,7 +341,7 @@ onMounted(async () => {
 
   // 加载示例问题
   await loadSampleQuestions()
-  // 不自动生成，只在创建知识库和添加文件时由 DataBaseInfoView 触发生成
+  // 不自动生成，只在创建知识库和添加文件时由 KnowledgeBaseInfoView 触发生成
 })
 
 // 检查是否已有问题

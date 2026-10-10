@@ -36,7 +36,7 @@ async def test_dataset_manage_route_rejects_admin_without_manage_permission(monk
     async def fake_get_dataset(_repository, _dataset_id):
         return SimpleNamespace(kb_id="kb-1")
 
-    async def fake_get_database_info(_kb_id):
+    async def fake_get_knowledge_base_info(_kb_id):
         return {
             "created_by": "owner",
             "share_config": {
@@ -47,7 +47,7 @@ async def test_dataset_manage_route_rejects_admin_without_manage_permission(monk
         }
 
     monkeypatch.setattr(knowledge_eval_router.EvaluationRepository, "get_dataset", fake_get_dataset)
-    monkeypatch.setattr(knowledge_permissions.knowledge_base, "get_database_info", fake_get_database_info)
+    monkeypatch.setattr(knowledge_permissions.knowledge_base, "get_knowledge_base_info", fake_get_knowledge_base_info)
     admin = SimpleNamespace(uid="other-admin", role="admin", department_id=1)
 
     with pytest.raises(HTTPException) as exc_info:
@@ -65,7 +65,7 @@ def test_evaluation_routes_require_admin_role():
 
     app.dependency_overrides[get_required_user] = fake_required_user
 
-    response = TestClient(app).get("/evaluation/databases/kb-1/datasets")
+    response = TestClient(app).get("/evaluation/knowledge-bases/kb-1/datasets")
 
     assert response.status_code == 403
     assert response.json()["detail"] == "需要管理员权限"

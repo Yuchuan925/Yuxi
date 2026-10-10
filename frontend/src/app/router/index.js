@@ -121,9 +121,9 @@ const router = createRouter({
           },
           children: [
             {
-              path: 'knowledgebase/:kbId',
+              path: 'knowledge-bases/:kbId',
               name: 'ExtensionKnowledgeBaseDetail',
-              component: () => import('../../pages/DataBaseInfoView.vue'),
+              component: () => import('../../pages/KnowledgeBaseInfoView.vue'),
               meta: {
                 keepAlive: false,
                 requiresAuth: true,
@@ -131,7 +131,7 @@ const router = createRouter({
               }
             },
             {
-              path: 'knowledgebase/:kbId/evaluation/:datasetId',
+              path: 'knowledge-bases/:kbId/evaluation/:datasetId',
               name: 'ExtensionEvaluationBenchmarkDetail',
               component: () => import('../../pages/EvaluationBenchmarkDetailView.vue'),
               meta: {
