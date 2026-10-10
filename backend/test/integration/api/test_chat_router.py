@@ -313,20 +313,18 @@ async def test_thread_message_audits_return_persisted_facts_without_leaking_into
         },
     ]
     assert len(timeline) == 500
-    assert [audit["operation_id"] for audit in timeline[:2]] == ["call-1", "operation-2"]
-    assert [audit["type"] for audit in timeline[:2]] == ["tool", "ai"]
-    assert timeline[0]["tool_name"] == "search"
-    assert timeline[0]["tool_input"] == {"q": "Yuxi"}
-    assert timeline[0]["content"] == "查询结果"
-    assert timeline[0]["duration_ms"] == 400
-    assert timeline[1]["sequence"] == 7
-    assert timeline[1]["duration_ms"] == 1000
-    assert timeline[1]["started_at"] == "2026-08-30T01:00:02Z"
-    assert timeline[1]["finished_at"] == "2026-08-30T01:00:03Z"
-    assert timeline[1]["usage"]["total_tokens"] == 10
-    assert timeline[1]["content_blocks"] == [{"type": "text", "text": "第二次模型输出"}]
-    assert timeline[-1]["operation_id"] == "bounded-507"
-    assert timeline[-1]["sequence"] == 507
+    assert timeline[0]["operation_id"] == "operation-2"
+    assert timeline[0]["sequence"] == 7
+    assert timeline[0]["duration_ms"] == 1000
+    assert timeline[0]["started_at"] == "2026-08-30T01:00:02Z"
+    assert timeline[0]["finished_at"] == "2026-08-30T01:00:03Z"
+    assert timeline[0]["usage"]["total_tokens"] == 10
+    assert timeline[0]["content_blocks"] == [{"type": "text", "text": "第二次模型输出"}]
+    assert timeline[-2]["operation_id"] == "bounded-507"
+    assert timeline[-2]["sequence"] == 507
+    assert timeline[-1]["type"] == "human"
+    assert timeline[-1]["content"] == "会在审计前失败"
+    assert timeline[-1]["delivery_status"] == "failed"
     assert "private_internal_field" not in timeline_response.text
 
     retired_response = await test_client.get(

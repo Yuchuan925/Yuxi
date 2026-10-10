@@ -30,7 +30,7 @@ AGENT_RUN_TRACE_LIMIT = 500
 
 
 async def get_thread_audits(*, db: AsyncSession, scope: ActorScope, thread_id: str) -> dict:
-    """只允许无 API Key 的超级管理员读取模型和工具审计。"""
+    """只允许无 API Key 的超级管理员读取持久调试消息。"""
     if not scope.is_superadmin or scope.api_key_id is not None or scope.app_id is not None:
         raise HTTPException(status_code=403, detail="无权读取模型与工具审计")
     agent_session = await require_thread(db=db, scope=scope, thread_id=thread_id)
@@ -59,10 +59,18 @@ def _serialize_tool_call(tool_call: Any) -> dict[str, Any]:
 
 
 def _serialize_message_audit(message: Any) -> dict[str, Any]:
-    """将 Message 审计事实分派到显式 Model/Tool DTO。"""
+    """按真实角色序列化持久消息，模型和工具保留专有字段。"""
     if message.role == "tool":
         return _serialize_tool_audit(message)
-    return _serialize_model_audit(message)
+    if message.role == "assistant":
+        return _serialize_model_audit(message)
+    metadata = message.extra_metadata if isinstance(message.extra_metadata, dict) else {}
+    return {
+        **_serialize_audit_base(message, metadata),
+        "type": "human" if message.role == "user" else message.role,
+        "input_id": metadata.get("input_id"),
+        "delivery_status": message.delivery_status,
+    }
 
 
 def _serialize_run_trace(run: AgentRun) -> dict[str, Any]:
@@ -93,6 +101,8 @@ def _serialize_model_audit(message: Any) -> dict[str, Any]:
         "usage": dict(message.usage) if isinstance(message.usage, dict) else None,
         "model_run_id": model_run_id if isinstance(model_run_id, str) else None,
         "content_blocks": content_blocks if isinstance(content_blocks, list) else [],
+        "error_type": metadata.get("error_type"),
+        "error_message": metadata.get("error_message"),
         "tool_calls": [_serialize_tool_call(tool_call) for tool_call in message.tool_calls],
     }
 

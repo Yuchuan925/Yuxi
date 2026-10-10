@@ -223,8 +223,6 @@
         class="message-debug-section"
       >
         <MessageDebugPanel
-          :messages="messages"
-          :runs="runs"
           :thread-id="threadId"
           :active="visible && activeSectionKey === 'message-debug'"
           :active-run-id="activeRunId"
@@ -303,7 +301,6 @@ import { parseDownloadFilename } from '@/shared/lib/file_utils'
 import { threadApi } from '@/apis/agent_api'
 
 const props = defineProps({
-  runs: { type: Array, default: () => [] },
   agentState: {
     type: Object,
     default: () => ({})
@@ -353,8 +350,7 @@ const props = defineProps({
   activeSectionKey: { type: String, default: 'file-tree' },
   filesystemVisible: { type: Boolean, default: false },
   filesystemPollingActive: { type: Boolean, default: false },
-  filesystemRefreshVersion: { type: Number, default: 0 },
-  messages: { type: Array, default: () => [] }
+  filesystemRefreshVersion: { type: Number, default: 0 }
 })
 
 const emit = defineEmits([

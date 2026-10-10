@@ -772,8 +772,6 @@
           :active-run-id="currentThreadState?.activeRunId || null"
           :run-active="Boolean(currentThreadState?.activeRunId && currentThreadState?.isStreaming)"
           :visible="isFilePanelOpen && cooperationObservationEnabled"
-          :messages="currentDebugMessages"
-          :runs="currentThreadRuns"
           :panel-ratio="panelRatio"
           :preview-tabs="agentPanelPreviewTabs"
           :preview-cache="agentPanelPreviewCache"
@@ -918,8 +916,7 @@ import { useUserStore } from '@/modules/identity/model/user'
 import { storeToRefs } from 'pinia'
 import {
   getMessageInputId,
-  getMessageRunId,
-  mergeMessageDebugMessages
+  getMessageRunId
 } from '@/modules/session/model/messageDebug'
 import { MessageProcessor } from '@/modules/session/model/messageProcessor'
 import { itemsToMessages, mergeItemSnapshot } from '@/modules/session/model/agentItems'
@@ -2086,14 +2083,6 @@ const getThreadOngoingMessages = (threadId) => {
 }
 
 const ongoingRunMessages = computed(() => getThreadOngoingMessages(currentChatId.value))
-const currentDebugMessages = computed(() =>
-  mergeMessageDebugMessages(
-    currentThreadMessages.value,
-    ongoingRunMessages.value,
-    currentThreadState.value?.queuedInputs || []
-  )
-)
-
 provide('getThreadOngoingMessages', getThreadOngoingMessages)
 
 const historyRunGroups = computed(() => {
