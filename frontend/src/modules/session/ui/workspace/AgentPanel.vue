@@ -14,8 +14,12 @@
             class="section-tab-main"
             role="tab"
             :aria-selected="section.key === activeSectionKey"
-            :aria-label="section.title"
-            :title="section.title"
+            :aria-label="
+              section.attentionLabel ? `${section.title}，${section.attentionLabel}` : section.title
+            "
+            :title="
+              section.attentionLabel ? `${section.title}，${section.attentionLabel}` : section.title
+            "
             @click="emit('activate-section', section.key)"
           >
             <Folders v-if="section.type === 'file-tree'" :size="15" />
@@ -32,6 +36,9 @@
               shape="rounded"
             />
             <span>{{ section.title }}</span>
+            <span v-if="section.attentionLabel" class="section-attention">{{
+              section.attentionLabel
+            }}</span>
           </button>
           <button
             v-if="section.type !== 'file-tree' && section.type !== 'main-session'"
@@ -1461,6 +1468,19 @@ watch(
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+}
+
+.section-tab:has(.section-attention) {
+  max-width: 200px;
+}
+.section-tab-main > .section-attention {
+  flex: 0 0 auto;
+  padding: 2px 5px;
+  border-radius: 999px;
+  background: var(--color-warning-50);
+  color: var(--color-warning-900);
+  font-size: 11px;
+  font-weight: 500;
 }
 
 .section-tab-close {

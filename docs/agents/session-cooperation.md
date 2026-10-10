@@ -38,6 +38,8 @@
 
 用户在状态面板选择会话即可进入其普通消息页，直接输入、steer、回答问题或审批。直接干预成员会话会通知父会话。父轮次结束或失败保留后代工作；“停止全部”明确停止整树在途工作和队列消费，“继续整树队列”重新消费待处理输入，已取消轮次保留终态。
 
+主会话输入框上方汇总其他协作成员的待回答和待审批请求。单项点击直接打开对应侧栏标签并聚焦人工操作卡片，多项点击展开待办列表；已打开的成员标签显示待办徽标。查看或关闭标签保留待办，处理完成或请求结束后随协作摘要刷新移除。状态查询失败时显示更新失败与重试入口，并保留最近已知待办；实际回答和审批始终在对应成员会话中提交。
+
 ## 执行、等待与环境
 
 根与所有后代共用四个执行名额，由 PostgreSQL 树锁原子领取。排队、等待用户以及等待协作更新不占名额；协作等待保存 Input 目标或成员与事件游标，以及截止时间后退出当前 worker 执行，恢复时在同一 Turn 创建下一 Run 并重新领取名额。
@@ -56,4 +58,4 @@
 
 [协作服务](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/services/cooperation.py)拥有创建、输入、通知与等待恢复，[协作 repository](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/repositories/cooperation.py)拥有树范围与并发领取，[leases](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/services/leases.py)拥有执行续租与空闲释放。持久结构由 Session、CooperationEvent 和 CooperationRuntime 的 Schema 约束。
 
-真实 PostgreSQL 测试覆盖幂等、递归并发、跨树拒绝、等待恢复及取消竞态；[确定性 E2E](https://github.com/xerrors/Yuxi/blob/main/backend/test/e2e/test_session_cooperation_e2e.py)回读公开 Turn、会话树与共享目录文件。取舍见[统一 Session 决策](../develop-guides/decisions/implemented/2026-10-03-session-cooperation.md)。
+真实 PostgreSQL 测试覆盖幂等、递归并发、跨树拒绝、等待恢复及取消竞态；[确定性 E2E](https://github.com/xerrors/Yuxi/blob/main/backend/test/e2e/test_session_cooperation_e2e.py)回读公开 Turn、会话树与共享目录文件。取舍见[统一 Session 决策](../develop-guides/decisions/implemented/2026-10-03-session-cooperation.md)与[人工待办入口决策](../develop-guides/decisions/implemented/2026-10-10-cooperation-attention.md)。

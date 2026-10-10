@@ -250,7 +250,17 @@
                   </div>
                 </section>
 
+                <CooperationAttention
+                  v-if="!embedded"
+                  :key="currentChatId"
+                  :actions="cooperationPendingActions"
+                  :error="cooperationError"
+                  @open="openCooperationAttention"
+                  @refresh="refreshCooperation"
+                />
+
                 <div
+                  ref="messageInputStageRef"
                   class="message-input-stage"
                   :class="{ 'has-tool-approval': currentToolApprovalVisible }"
                 >
@@ -819,6 +829,7 @@
               class="panel-session-chat"
             >
               <SessionWorkspace
+                :ref="(workspace) => setCooperationWorkspaceRef(section.sessionId, workspace)"
                 :embedded="true"
                 :visible="
                   workspaceActive && isFilePanelOpen && agentPanelActiveSectionKey === section.key
@@ -863,6 +874,11 @@ import {
 } from '@lucide/vue'
 import FileTypeIcon from '@/shared/ui/FileTypeIcon.vue'
 import AgentInputArea from '@/modules/session/ui/AgentInputArea.vue'
+import CooperationAttention from '@/modules/session/ui/CooperationAttention.vue'
+import {
+  getCooperationPendingActions,
+  getSessionAttentionLabel
+} from '@/modules/session/model/cooperationAttention'
 import ContextUsageRing from '@/modules/session/ui/ContextUsageRing.vue'
 import ToolApprovalModeSelector from '@/modules/session/ui/ToolApprovalModeSelector.vue'
 import ModelSelectorComponent from '@/modules/agents/ui/ModelSelectorComponent.vue'
@@ -983,6 +999,10 @@ const threadDraftSession = createThreadDraftSession(threadDraftStore, currentThr
 const userInput = ref(threadDraftStore.read(currentThreadId.value || DRAFT_THREAD_ID))
 watch(userInput, (text) => threadDraftSession.saveInput(text))
 const agentInputAreaRef = ref(null)
+const messageInputStageRef = ref(null)
+const cooperationWorkspaceRefs = new Map()
+let workspaceReady = Promise.resolve()
+const pendingActionFocusTurnId = ref(null)
 const sendCooldownActive = ref(false)
 const cancellingInputIds = reactive(new Set())
 let sendCooldownTimer = null
@@ -1835,8 +1855,19 @@ const toggleMessageDebugPanel = () => {
   isFilePanelOpen.value = true
   statePanelOpen.value = false
 }
-const visibleAgentPanelSections = computed(() =>
-  isAgentPanelMaximized.value
+const cooperationPendingActions = computed(() =>
+  getCooperationPendingActions(cooperationSessions.value, currentChatId.value)
+)
+const visibleAgentPanelSections = computed(() => {
+  const sessions = new Map(
+    cooperationSessions.value.map((session) => [session.session_id, session])
+  )
+  const sections = agentPanelSections.value.map((section) => ({
+    ...section,
+    attentionLabel:
+      section.type === 'session' ? getSessionAttentionLabel(sessions.get(section.sessionId)) : ''
+  }))
+  return isAgentPanelMaximized.value
     ? [
         {
           key: 'main-session',
@@ -1844,10 +1875,29 @@ const visibleAgentPanelSections = computed(() =>
           title: '当前对话',
           avatarSeed: currentChatId.value
         },
-        ...agentPanelSections.value
+        ...sections
       ]
-    : agentPanelSections.value
-)
+    : sections
+})
+
+/** 保存成员视图引用，关闭标签时释放引用。 */
+function setCooperationWorkspaceRef(sessionId, workspace) {
+  if (workspace) cooperationWorkspaceRefs.set(sessionId, workspace)
+  else cooperationWorkspaceRefs.delete(sessionId)
+}
+
+/** 待办入口复用标签，并在成员读取当前等待点后定位人工卡片。 */
+async function openCooperationAttention(sessionId) {
+  openCooperationSession(sessionId)
+  await nextTick()
+  try {
+    await cooperationWorkspaceRefs.get(sessionId)?.focusPendingAction()
+  } catch (error) {
+    handleChatError(error, 'load')
+  } finally {
+    void refreshCooperation()
+  }
+}
 
 /** 在现有侧栏标签中打开协作列表，重复点击复用同一标签。 */
 const openCooperationTree = () => {
@@ -3479,8 +3529,46 @@ const buildExportPayload = () => {
 
 defineExpose({
   getExportPayload: buildExportPayload,
-  selectThreadFromRoute
+  selectThreadFromRoute,
+  focusPendingAction
 })
+
+/** 重新读取目标会话，为当前人工等待登记一次聚焦意图。 */
+async function focusPendingAction() {
+  await workspaceReady
+  await resumeCurrentRunForVisiblePage()
+  if (workspaceActive.value && currentThreadState.value?.turnStatus === 'requires_action') {
+    pendingActionFocusTurnId.value = currentThreadState.value.currentTurnId
+  }
+}
+
+// 等待点在历史恢复后异步到达；离开视图或轮次变化时撤销导航聚焦。
+watch(
+  [
+    currentApprovalModalVisible,
+    workspaceActive,
+    pendingActionFocusTurnId,
+    () => currentThreadState.value?.currentTurnId,
+    () => currentThreadState.value?.turnStatus
+  ],
+  async ([visible, active, requestedTurnId, turnId, turnStatus]) => {
+    if (!requestedTurnId) return
+    if (!active || requestedTurnId !== turnId || turnStatus !== 'requires_action') {
+      pendingActionFocusTurnId.value = null
+      return
+    }
+    if (!visible) return
+    await nextTick()
+    if (
+      workspaceActive.value &&
+      currentApprovalModalVisible.value &&
+      pendingActionFocusTurnId.value === currentThreadState.value?.currentTurnId
+    ) {
+      messageInputStageRef.value?.querySelector('[role="dialog"]')?.focus()
+      pendingActionFocusTurnId.value = null
+    }
+  }
+)
 
 const handleAgentStateRefresh = async (threadId = null) => {
   if (!currentAgentId.value) return
@@ -3668,13 +3756,18 @@ const initAll = async () => {
   }
 }
 
-onMounted(async () => {
+/** 初始化视图，待办导航等待成员首次装载完成后再聚焦。 */
+async function initializeWorkspace() {
   await initAll()
   if (props.embeddedThreadId) {
     await selectThreadFromRoute(props.embeddedThreadId)
     closeFilePanel()
   }
   scrollController.enableAutoScroll()
+}
+
+onMounted(() => {
+  workspaceReady = initializeWorkspace()
 })
 
 watch(showStateEntry, (visible) => {

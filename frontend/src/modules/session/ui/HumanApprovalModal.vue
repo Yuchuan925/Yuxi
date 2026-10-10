@@ -5,6 +5,7 @@
       class="approval-modal"
       :class="{ 'is-tool-approval': isToolApproval, 'is-question-dialog': !isToolApproval }"
       role="dialog"
+      tabindex="-1"
       :aria-labelledby="isToolApproval ? 'tool-approval-question' : 'question-dialog-title'"
       :aria-describedby="isToolApproval ? 'tool-approval-summary' : undefined"
     >
@@ -745,12 +746,12 @@ const formattedToolArgs = computed(() => formatToolApprovalArgs(activeToolReques
   margin: 0 0 10px;
   color: var(--color-text);
   font-size: 16px;
-  font-weight: 600;
+  font-weight: 400;
   line-height: 1.55;
   overflow-wrap: anywhere;
 
   span {
-    font-weight: 600;
+    color: var(--color-text-secondary);
   }
 }
 
