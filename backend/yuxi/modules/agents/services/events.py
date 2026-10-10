@@ -12,6 +12,7 @@ from fastapi import HTTPException
 
 from yuxi.infrastructure.observability.logging import logger
 from yuxi.infrastructure.postgres.manager import pg_manager
+from yuxi.modules.agents.repositories.input import AgentInputRepository
 from yuxi.modules.agents.repositories.input_receipt import AgentInputReceiptRepository
 from yuxi.modules.agents.repositories.runs import TERMINAL_RUN_STATUSES, AgentRunRepository
 from yuxi.modules.agents.repositories.turn import AgentTurnRepository
@@ -89,6 +90,7 @@ async def stream_thread_events(
             repo = AgentTurnRepository(db)
             turns = await repo.list_for_scope(turn_ids=turn_ids, thread_id=thread_id, uid=scope.uid, app_id=scope.app_id)
             facts = [(run, turns.get(run.turn_id)) for run in runs]
+            input_ids = await AgentInputRepository(db).input_ids_for_runs([run.id for run in runs])
             start_times = await repo.get_start_times(turn_ids=turn_ids, uid=scope.uid, app_id=scope.app_id)
         emitted = False
         for receipt in receipts:
@@ -118,13 +120,13 @@ async def stream_thread_events(
                 cursor.run_phase = 1
                 yield (
                     cursor.encode(),
-                    adapter.extension("run.created", "created", input_id=run.input_id, created_by_run_id=run.created_by_run_id),
+                    adapter.extension("run.created", "created", input_ids=input_ids[run.id], created_by_run_id=run.created_by_run_id),
                 )
                 emitted = True
             if cursor.run_phase == 1:
                 cursor.run_phase = 2
                 if run.resume_from_run_id is None:
-                    yield cursor.encode(), _turn_event(adapter, run, turn, "created", "queued", start_times[turn.id])
+                    yield cursor.encode(), _turn_event(adapter, run, turn, "created", "queued", start_times[turn.id], input_ids[run.id])
                     emitted = True
             if cursor.run_phase == 2:
                 if run.started_at is None and run.status not in TERMINAL_RUN_STATUSES:
@@ -133,7 +135,7 @@ async def stream_thread_events(
                 if run.started_at is not None:
                     yield (
                         cursor.encode(),
-                        _turn_event(adapter, run, turn, "in_progress", "in_progress", start_times[turn.id]),
+                        _turn_event(adapter, run, turn, "in_progress", "in_progress", start_times[turn.id], input_ids[run.id]),
                     )
                     emitted = True
             if cursor.run_phase == 3:
@@ -199,7 +201,7 @@ async def stream_thread_events(
                     cursor.run_phase = 6
                     yield (
                         cursor.encode(),
-                        _turn_event(adapter, run, turn, turn.status, turn.status, start_times[turn.id]),
+                        _turn_event(adapter, run, turn, turn.status, turn.status, start_times[turn.id], input_ids[run.id]),
                     )
                     emitted = True
                 else:
@@ -220,7 +222,7 @@ async def stream_thread_events(
         await asyncio.sleep(0.2)
 
 
-def _turn_event(adapter: OpenAIEventAdapter, run, turn, name: str, status: str, started_at) -> dict:
+def _turn_event(adapter: OpenAIEventAdapter, run, turn, name: str, status: str, started_at, input_ids: list[str]) -> dict:
     """标准 Turn 字段使用官方类型，业务错误分类留在扩展中。"""
 
     return {
@@ -231,7 +233,7 @@ def _turn_event(adapter: OpenAIEventAdapter, run, turn, name: str, status: str, 
         "turn": turn_core(turn, run, started_at=started_at, status=status),
         "yuxi": {
             "run_id": run.id,
-            "input_id": run.input_id,
+            "input_ids": input_ids,
             "result_run_id": turn.result_run_id,
             "current_run_id": turn.current_run_id,
             "created_by_run_id": run.created_by_run_id,

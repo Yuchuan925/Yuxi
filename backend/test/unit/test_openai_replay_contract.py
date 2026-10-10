@@ -5,6 +5,65 @@ import pytest
 from test.support.openai_replay_server import validate_request
 
 
+@pytest.mark.parametrize("mutation", ["none", "drop_input", "reorder", "move_image"])
+def test_replay_requires_whole_ordered_multimodal_batch(mutation):
+    """缺失整组输入、顺序改变或图片错位必须被模型 oracle 拒绝。"""
+    users = []
+    for input_index in range(2):
+        for position in range(2):
+            content = [
+                {
+                    "type": "text",
+                    "text": (f"DETERMINISTIC_AGENT_E2E_OK DETERMINISTIC_ATTACHMENT_BATCH BATCH_INPUT_{input_index}_MESSAGE_{position}"),
+                }
+            ]
+            if position == 0:
+                content.append({"type": "image_url", "image_url": {"url": "data:image/png;base64,test"}})
+            users.append({"role": "user", "content": content})
+    if mutation == "drop_input":
+        users = users[2:]
+    elif mutation == "reorder":
+        users = users[2:] + users[:2]
+    elif mutation == "move_image":
+        users[1]["content"].append(users[0]["content"].pop())
+    body = {
+        "model": "deterministic-chat",
+        "stream": True,
+        "messages": [{"role": "system", "content": "# 图片生成技能"}, *users],
+        "tools": [{"type": "function", "function": {"name": "present_artifacts"}}],
+    }
+    expected = {
+        "none": None,
+        "drop_input": "attachment_batch_messages_missing_or_reordered",
+        "reorder": "attachment_batch_messages_missing_or_reordered",
+        "move_image": "attachment_batch_image_position_mismatch",
+    }
+    assert validate_request("Bearer ci-replay-key", body) == expected[mutation]
+
+
+@pytest.mark.parametrize(
+    ("marker", "context", "error"),
+    [
+        ("none", "<attachment_context>batch-0.txt</attachment_context>", "attachment_on_non_anchor_message"),
+        ("batch-0.txt", "", "attachment_anchor_missing"),
+        ("batch-0.txt", "<attachment_context>batch-0.txt batch-1.txt</attachment_context>", "attachment_cross_input_anchor"),
+        ("batch-0.txt", "<attachment_context>batch-0.txt</attachment_context>", None),
+    ],
+)
+def test_replay_checks_each_input_attachment_anchor(marker, context, error):
+    """独立模型 oracle 拒绝附件错挂到首条或其他 Input 的消息。"""
+    body = {
+        "model": "deterministic-chat",
+        "stream": True,
+        "messages": [
+            {"role": "system", "content": "# 图片生成技能"},
+            {"role": "user", "content": f"DETERMINISTIC_AGENT_E2E_OK DETERMINISTIC_ATTACHMENT_ANCHOR:{marker} {context}"},
+        ],
+        "tools": [{"type": "function", "function": {"name": "present_artifacts"}}],
+    }
+    assert validate_request("Bearer ci-replay-key", body) == error
+
+
 @pytest.mark.parametrize(
     ("authorization", "change", "expected_error"),
     [

@@ -51,6 +51,22 @@ class Message(Base):
             sqlite_where=text("operation_id IS NOT NULL"),
         ),
         UniqueConstraint("id", "run_id", "turn_id", "session_record_id", name="uq_messages_id_run_turn_thread"),
+        UniqueConstraint("source_input_id", "input_position", name="uq_messages_input_position"),
+        UniqueConstraint("id", "source_input_id", name="uq_messages_input_origin"),
+        CheckConstraint(
+            "(source_input_id IS NULL AND input_position IS NULL AND received_at IS NULL) OR "
+            "(source_input_id IS NOT NULL AND input_position IS NOT NULL AND input_position >= 0 AND received_at IS NOT NULL "
+            "AND run_id IS NOT NULL AND turn_id IS NOT NULL AND role = 'user')",
+            name="ck_messages_input_origin",
+        ),
+        ForeignKeyConstraint(
+            ["source_input_id", "run_id", "turn_id"],
+            ["agent_inputs.id", "agent_inputs.consumed_run_id", "agent_inputs.turn_id"],
+            name="fk_messages_consumed_input",
+            use_alter=True,
+            deferrable=True,
+            initially="DEFERRED",
+        ),
         CheckConstraint("(run_id IS NULL) = (turn_id IS NULL)", name="ck_messages_execution_scope"),
         ForeignKeyConstraint(
             ["run_id", "turn_id", "session_record_id"],
@@ -75,6 +91,9 @@ class Message(Base):
     content = Column(Text, nullable=False, comment="Message content")
     message_type = Column(String(30), default="text", comment="Message type: text/tool_call/tool_result")
     created_at = Column(DateTime(timezone=True), default=utc_now, comment="Creation time")
+    source_input_id = Column(String(64), nullable=True, index=True)
+    input_position = Column(Integer, nullable=True)
+    received_at = Column(DateTime(timezone=True), nullable=True)
     extra_metadata = Column(JSON, nullable=True, comment="Additional metadata (complete message dump)")
     image_content = Column(Text, nullable=True, comment="Base64 encoded image content for multimodal messages")
     run_id = Column(String(64), nullable=True, index=True, comment="Agent run ID")
@@ -100,6 +119,9 @@ class Message(Base):
             "content": self.content,
             "message_type": self.message_type,
             "created_at": format_utc_datetime(self.created_at),
+            "source_input_id": self.source_input_id,
+            "input_position": self.input_position,
+            "received_at": format_utc_datetime(self.received_at),
             "metadata": self.extra_metadata or {},
             "image_content": self.image_content,
             "run_id": self.run_id,

@@ -193,7 +193,6 @@ async def get_queue_snapshot(*, db: AsyncSession, scope: ActorScope, thread_id: 
     agent_session = await require_thread(db=db, scope=scope, thread_id=thread_id)
     input_repo = AgentInputRepository(db)
     items = await input_repo.list_pending_inputs(thread_id=thread_id, uid=scope.uid, app_id=scope.app_id)
-    messages_by_input = await input_repo.list_messages_for_inputs([item.id for item in items])
     preparation = await AttachmentRepository(db).statuses_for_inputs([item.id for item in items])
     active = await AgentTurnRepository(db).get_active_for_thread(thread_id=thread_id, uid=scope.uid, app_id=scope.app_id)
     return {
@@ -209,7 +208,7 @@ async def get_queue_snapshot(*, db: AsyncSession, scope: ActorScope, thread_id: 
                 "run_id": item.consumed_run_id,
                 "received_seq": item.received_seq,
                 **preparation[item.id],
-                "content": "\n".join(message.content for message in messages_by_input[item.id]),
+                "content": "\n".join(part["text"] for message in item.messages for part in message["content"] if part["type"] == "text"),
             }
             for item in items
         ],
@@ -289,9 +288,64 @@ async def cancel_input(*, db: AsyncSession, scope: ActorScope, thread_id: str, i
         event_type=event_type,
         intent_hash=intent_hash,
         input_id=input_id,
-        turn_id=input_item.turn_id,
     )
     await db.commit()
+    return control_accepted(receipt)
+
+
+async def promote_input(*, db: AsyncSession, scope: ActorScope, thread_id: str, input_id: str, idempotency_key: str) -> dict:
+    """在 Session 锁内提升未消费输入，暂停状态保持不变。"""
+    check_control_key(idempotency_key)
+    event_type = "yuxi.session.input.promote"
+    intent_hash = hash_control_intent(event_type, input_id)
+    agent_session = await require_thread(db=db, scope=scope, thread_id=thread_id, lock=True)
+    receipt_repo = AgentInputReceiptRepository(db)
+    existing = await receipt_repo.get_for_scope(
+        uid=scope.uid,
+        app_id=scope.app_id,
+        thread_id=thread_id,
+        idempotency_key=idempotency_key,
+    )
+    if existing is not None:
+        require_control_replay(existing, event_type, intent_hash)
+        return control_accepted(existing)
+    item = await AgentInputRepository(db).get_for_scope(
+        input_id=input_id,
+        thread_id=thread_id,
+        uid=scope.uid,
+        app_id=scope.app_id,
+        for_update=True,
+    )
+    if item is None:
+        raise HTTPException(status_code=404, detail="Input 不存在")
+    if item.status != "pending" or agent_session.status != "active":
+        raise HTTPException(status_code=409, detail="Input 已被领取、取消或会话已归档")
+    active = await AgentTurnRepository(db).lock_active_for_thread(thread_id=thread_id, uid=scope.uid, app_id=scope.app_id)
+    if active is not None and active.status in {"waiting", "cancelling"}:
+        raise HTTPException(status_code=409, detail="当前任务正在等待或取消清理，不能转为引导")
+    if await AttachmentRepository(db).has_unready(input_id):
+        raise HTTPException(status_code=409, detail="附件尚未就绪")
+    changed = item.kind != "steer"
+    item.kind = "steer"
+    receipt = await receipt_repo.create(
+        receipt_id=str(uuid.uuid4()),
+        idempotency_key=idempotency_key,
+        uid=scope.uid,
+        app_id=scope.app_id,
+        thread_id=thread_id,
+        event_type=event_type,
+        intent_hash=intent_hash,
+        input_id=input_id,
+    )
+    if changed:
+        from yuxi.modules.agents.services.cooperation import notify_user_intervention
+
+        await notify_user_intervention(db, agent_session, key=receipt.id, action="steer")
+    await db.commit()
+    if changed:
+        from yuxi.modules.agents.services.scheduler import dispatch_next_input
+
+        await dispatch_next_input(uid=scope.uid, agent_slug=agent_session.agent_id, thread_id=thread_id)
     return control_accepted(receipt)
 
 

@@ -109,11 +109,18 @@ def test_replay_selects_agent_id_from_directory_result():
     """选择过程消费真实工具结果，不能把会话名称当成 Agent 身份。"""
     calls = CooperationReplayHandler.shared_sandbox_calls(
         None,
-        "SELECT_AGENT COOPERATION_ROOT:/fixture.txt COOP_RUNTIME:/tmp/fixture",
+        "SELECT_AGENT:target-slug COOPERATION_ROOT:/fixture.txt COOP_RUNTIME:/tmp/fixture",
         False,
         {
             "root-prepare": "prepared",
-            "agent-directory": json.dumps({"agents": [{"id": "target-slug", "description": "COOP_TARGET_ROLE"}]}),
+            "agent-directory": json.dumps(
+                {
+                    "agents": [
+                        {"id": "stale-target", "description": "COOP_TARGET_ROLE"},
+                        {"id": "target-slug", "description": "COOP_TARGET_ROLE"},
+                    ]
+                }
+            ),
         },
     )
     assert calls[0][1] == "create_session"

@@ -224,7 +224,7 @@ const handleAttachmentRemoved = (attachment) => {
   emit('remove-attachment', attachment.raw)
 }
 
-const handleSend = () => {
+const handleSend = (mode = 'follow_up') => {
   if (currentImages.value.some((image) => image.status === 'uploading')) {
     // 占位中的图还没有 base64，此时发送等于丢图；等上传完再发。
     message.warning('图片还在上传中，请稍候再发送')
@@ -237,7 +237,7 @@ const handleSend = () => {
     return
   }
 
-  emit('send', { images: [...currentImages.value] })
+  emit('send', { images: [...currentImages.value], mode: typeof mode === 'string' ? mode : 'follow_up' })
   currentImages.value = []
 }
 
@@ -260,6 +260,8 @@ const handleKeyDown = (e) => {
 }
 
 defineExpose({
+  submit: handleSend,
+  hasImages: computed(() => currentImages.value.length > 0),
   focus: () => inputRef.value?.focus(),
   closeOptions: () => inputRef.value?.closeOptions(),
   restoreImages

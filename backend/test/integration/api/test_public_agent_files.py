@@ -13,6 +13,81 @@ from yuxi.infrastructure.minio import get_minio_client
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
 
+async def test_submission_files_snapshot_idempotency_cancel_and_delete(test_client, standard_user):
+    """真实 HTTP 回读提交级文件、原始引用和不可变取消回执。"""
+    from test.integration.api.test_public_agents_key_boundary import delete_created_threads
+
+    headers = standard_user["headers"]
+    conn = await asyncpg.connect(os.environ["POSTGRES_URL"].replace("+asyncpg", ""))
+    thread_id = None
+    files = []
+    try:
+        for name in ("first.txt", "second.txt"):
+            response = await test_client.post("/api/v1/agents/files", headers=headers, files={"file": (name, name.encode(), "text/plain")})
+            assert response.status_code == 201, response.text
+            files.append(response.json()["id"])
+        invalid = await test_client.post(
+            "/api/v1/agents/sessions",
+            headers={**headers, "Idempotency-Key": uuid.uuid4().hex},
+            json={"agent_id": "default-chatbot", "yuxi": {"attachment_file_ids": files}},
+        )
+        assert invalid.status_code == 422, invalid.text
+        assert await conn.fetchval("SELECT count(*) FROM agent_attachments WHERE id=ANY($1::text[]) AND input_id IS NOT NULL", files) == 0
+        created = await test_client.post(
+            "/api/v1/agents/sessions", headers={**headers, "Idempotency-Key": uuid.uuid4().hex}, json={"agent_id": "default-chatbot"}
+        )
+        assert created.status_code == 201, created.text
+        thread_id = created.json()["id"]
+        await conn.execute("UPDATE sessions SET queue_paused=true WHERE thread_id=$1", thread_id)
+        url = f"/api/v1/agents/sessions/{thread_id}/events"
+        key_headers = {**headers, "Idempotency-Key": uuid.uuid4().hex}
+        messages = [{"role": "user", "content": [{"type": "input_text", "text": text}]} for text in ("one", "two")]
+        event = {"type": "agent.session.input.message", "input": messages, "yuxi": {"mode": "follow_up", "attachment_file_ids": files}}
+        old = await test_client.post(
+            url, headers=key_headers, json={"events": [{**event, "input": [{**messages[0], "yuxi": {"attachment_file_ids": files}}]}]}
+        )
+        assert old.status_code == 422, old.text
+        response = await test_client.post(url, headers=key_headers, json={"events": [event]})
+        assert response.status_code == 202, response.text
+        receipt = response.json()
+        assert receipt["turn_id"] is None and receipt["run_id"] is None
+        repeated = await test_client.post(url, headers=key_headers, json={"events": [event]})
+        assert repeated.json() == receipt
+        changed = await test_client.post(
+            url, headers=key_headers, json={"events": [{**event, "yuxi": {"mode": "follow_up", "attachment_file_ids": files[::-1]}}]}
+        )
+        assert changed.status_code == 409, changed.text
+        input_url = f"/api/v1/agents/sessions/{thread_id}/inputs/{receipt['input_id']}"
+        pending = (await test_client.get(input_url, headers=headers)).json()
+        assert pending["items"] == [] and pending["status"] == "pending"
+        assert pending["attachment_file_ids"] == files and len(pending["messages"]) == 2
+        assert {item["file_id"] for item in pending["attachments"]} == set(files)
+        assert all(item["message_id"] is None and "input_position" not in item for item in pending["attachments"])
+        cancelled = await test_client.post(
+            url,
+            headers={**headers, "Idempotency-Key": uuid.uuid4().hex},
+            json={"events": [{"type": "yuxi.session.input.cancel_input", "input_id": receipt["input_id"]}]},
+        )
+        assert cancelled.status_code == 202, cancelled.text
+        for file_id in files:
+            deleted = await test_client.delete(f"/api/v1/agents/sessions/{thread_id}/attachments/{file_id}", headers=headers)
+            assert deleted.status_code == 200, deleted.text
+        snapshot = (await test_client.get(input_url, headers=headers)).json()
+        assert snapshot["status"] == "cancelled" and snapshot["items"] == [] and snapshot["attachments"] == []
+        assert snapshot["attachment_file_ids"] == files and snapshot["messages"] == pending["messages"]
+        recovered = await test_client.get(
+            f"/api/v1/agents/sessions/{thread_id}/receipt", headers=headers, params={"idempotency_key": key_headers["Idempotency-Key"]}
+        )
+        assert recovered.json() == receipt
+        assert await conn.fetchval("SELECT count(*) FROM messages WHERE source_input_id=$1", receipt["input_id"]) == 0
+    finally:
+        if thread_id:
+            await delete_created_threads(thread_id)
+        for file_id in files:
+            await test_client.delete(f"/api/v1/agents/files/{file_id}", headers=headers)
+        await conn.close()
+
+
 async def test_draft_upload_does_not_create_session_and_deletes_original(test_client, standard_user, admin_headers):
     """上传无会话副作用，服务端引用守住所有用户读写入口。"""
     headers = standard_user["headers"]
@@ -35,7 +110,8 @@ async def test_draft_upload_does_not_create_session_and_deletes_original(test_cl
         assert await conn.fetchval("SELECT count(*) FROM sessions WHERE uid=$1", uid) == before
         record = await conn.fetchrow("SELECT * FROM agent_attachments WHERE id=$1", file_id)
         assert record["uid"] == uid and record["status"] == "draft"
-        assert record["input_id"] is None and record["receipt_id"] is None
+        assert record["input_id"] is None and record["message_id"] is None
+        assert "input_position" not in record
         assert await storage.adownload_file(bucket, record["object_name"]) == b"draft bytes"
         assert {item["object_name"] for item in await storage.alist_object_metadata(bucket, f"tmp/chat_attachments/{uid}/{file_id}/")} == {
             record["object_name"]

@@ -17,7 +17,6 @@ from yuxi.infrastructure.postgres.checkpointer import setup_langgraph_checkpoint
 from yuxi.infrastructure.postgres.manager import pg_manager
 from yuxi.infrastructure.postgres.schema import BUSINESS_SCHEMA_VERSION, KNOWLEDGE_SCHEMA_VERSION, get_schema_versions
 from yuxi.migrations.schema import (
-    add_attachment_table,
     create_business_tables,
     create_knowledge_tables,
     create_schema_version_table,
@@ -39,6 +38,7 @@ async def _require_empty_database() -> None:
         | {
             "tasks",  # 已退役的后台作业表仍属于旧库。
             "conversations",  # 已退役的业务表仍属于旧库，禁止被当作空库。
+            "agent_input_messages",
             "checkpoint_writes",
             "checkpoint_blobs",
             "checkpoints",
@@ -64,9 +64,6 @@ async def main() -> None:
                 await drop_fresh_schema(pg_manager)
                 versions = {}
             if versions == current:
-                return
-            if versions == {"business": 5, "knowledge": KNOWLEDGE_SCHEMA_VERSION}:
-                await add_attachment_table(pg_manager)
                 return
             if versions:
                 raise RuntimeError(f"Unsupported Yuxi schema versions: {versions}; required {current}")

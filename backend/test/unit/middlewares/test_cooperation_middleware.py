@@ -37,6 +37,9 @@ async def test_identity_prompt_uses_persisted_member_and_refreshes_for_new_run(m
         parent_thread_id="root-id",
         tree_root_thread_id="root-id",
     )
+    from yuxi.modules.agents.repositories.input import AgentInputRepository
+
+    monkeypatch.setattr(AgentInputRepository, "input_ids_for_runs", AsyncMock(side_effect=[{"run-1": ["input-1"]}, {"run-2": ["input-2", "input-3"]}]))
     caller = AsyncMock(
         side_effect=[
             (SimpleNamespace(id="run-1", turn_id="turn-1", input_id="input-1"), root),
@@ -70,6 +73,7 @@ async def test_identity_prompt_uses_persisted_member_and_refreshes_for_new_run(m
     assert '"name": "researcher"' in second and '"path": "/root/researcher"' in second
     assert '"parent_session_id": "root-id"' in second and '"run_id": "run-2"' in second
     assert '"run_id": "run-1"' not in second
+    assert '"input_ids": ["input-2", "input-3"]' in second
 
 
 @pytest.mark.asyncio

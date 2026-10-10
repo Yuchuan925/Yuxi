@@ -42,7 +42,7 @@ Thread → Turn → Run 主链和本提案的服务收拢已经落到当前工�
 
 | 原验收事项 | 当前情况及补充 |
 |---|---|
-| 输入持久接收且幂等 | （已完成，Receipt/Message/Input 同事务写入；已有真实 HTTP 并发与同键冲突测试。） |
+| 输入持久接收且幂等 | （已完成；当前接收事务只写 Receipt/Input，Message 延迟到消费事务，见[输入投影分离](../implemented/2026-10-10-input-message-projection.md)。） |
 | 执行配置在接收时冻结 | （已完成，Input 保存模型和审批模式快照，领取与幂等重放不重新读取默认值。） |
 | follow-up 领取时才创建 Turn | （已完成，真实 PG 竞争测试核对 FIFO 队头与 Turn/Run 创建。） |
 | 多 steer 聚合并保持消息顺序 | （部分完成，聚合、顺序及 pending 唯一约束已有测试；“领取同时追加”的独立并发 oracle 未确认。） |
@@ -74,7 +74,7 @@ Thread → Turn → Run 主链和本提案的服务收拢已经落到当前工�
 
 ### 边界与发布点
 
-接收事务提交 Input、Receipt 和 Message 后才投递 ARQ；FIFO 领取事务创建 Turn 与 Run。worker 取得有效 lease 后准备 Context/manifest，执行器返回结构化增量与最终 checkpoint 信息，worker 校验 owner 并收敛业务结果。Redis 的增量和取消信号不能替代 PostgreSQL 的结果与事件归属。SSE 订阅以持久 Run 顺序跨段恢复，终态从明确的 Turn/Run 关系投影；Run.end 不等于 Turn.completed。
+接收事务提交 Input、Receipt 及附件来源；领取事务创建 Turn、Run 和正式 Message，绑定附件后提交，再投递 ARQ。Receipt 不随消费回填执行归属。worker 取得有效 lease 后准备 Context/manifest，执行器返回结构化增量与最终 checkpoint 信息，worker 校验 owner 并收敛业务结果。Redis 的增量和取消信号不能替代 PostgreSQL 的结果与事件归属。SSE 订阅以持久 Run 顺序跨段恢复，终态从明确的 Turn/Run 关系投影；Run.end 不等于 Turn.completed。
 
 ## 替代方案
 

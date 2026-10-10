@@ -561,18 +561,17 @@ async def _delete_test_session_rows(conn: asyncpg.Connection, thread_ids_list: l
     )
     await conn.execute("DELETE FROM session_cooperation_runtimes WHERE tree_root_thread_id = ANY($1::text[])", thread_ids_list)
     await conn.execute("UPDATE sessions SET created_by_run_id = NULL WHERE id = ANY($1::int[])", session_record_ids)
-    await conn.execute("DELETE FROM agent_input_messages WHERE input_id = ANY($1::text[])", input_ids)
     await conn.execute(
         "DELETE FROM agent_input_receipts WHERE thread_id = ANY($1::text[])",
         thread_ids_list,
     )
     await conn.execute("DELETE FROM tool_calls WHERE message_id = ANY($1::int[])", message_ids)
+    await conn.execute("DELETE FROM agent_attachments WHERE input_id = ANY($1::text[])", input_ids)
     await conn.execute("DELETE FROM messages WHERE id = ANY($1::int[])", message_ids)
     await conn.execute(
         "UPDATE agent_turns SET current_run_id = NULL, result_run_id = NULL WHERE id = ANY($1::text[])",
         turn_ids,
     )
-    await conn.execute("UPDATE agent_runs SET input_id = NULL WHERE id = ANY($1::text[])", run_ids)
     await conn.execute("DELETE FROM agent_inputs WHERE id = ANY($1::text[])", input_ids)
     await conn.execute("DELETE FROM agent_runs WHERE id = ANY($1::text[])", run_ids)
     await conn.execute("DELETE FROM agent_turns WHERE id = ANY($1::text[])", turn_ids)

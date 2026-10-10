@@ -17,6 +17,7 @@ from e2e_helpers import (
     iter_public_thread_events,
     postgres_dsn,
     skip_if_external_quota,
+    wait_for_consumed_input,
 )
 from test.live_api_cleanup import (
     make_test_session_title,
@@ -127,8 +128,8 @@ async def test_main_agent_reads_personal_skill_directly_from_user_workspace(
             },
         )
         assert run_response.status_code == 202, run_response.text
-        run_id = str(run_response.json()["run_id"])
-        turn_id = str(run_response.json()["turn_id"])
+        consumed = await wait_for_consumed_input(e2e_client, e2e_headers, run_response.json())
+        run_id, turn_id = consumed["run_id"], consumed["turn_id"]
 
         async def consume_output() -> int:
             """观察本 Run 的模型增量直到同一 Turn 终态。"""

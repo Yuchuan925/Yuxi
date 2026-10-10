@@ -851,7 +851,8 @@ async def test_tree_stop_cancels_released_retry_without_lease_failure(tree, monk
         assert (await db.get(AgentTurn, old_turn_id)).status == "cancelled"
         following = await db.get(AgentInput, queued["input_id"])
         assert following.status == "consumed"
-        next_run = await db.scalar(select(AgentRun).where(AgentRun.input_id == following.id))
+        await db.refresh(following)
+        next_run = await db.get(AgentRun, following.consumed_run_id)
         assert next_run is not None and next_run.turn_id != old_turn_id
         delivery.assert_awaited_once()
         assert isinstance(delivery.await_args.args[0], Dispatch)

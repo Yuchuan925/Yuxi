@@ -325,7 +325,7 @@ jobs:
       - name: Verify knowledge statistics projection
         run: docker compose exec -T api uv run --no-sync --no-dev pytest test/integration/services/test_knowledge_stats_refresh.py -q
       - name: Verify Input FIFO transaction and recovery
-        run: docker compose exec -T api uv run --no-sync --no-dev pytest test/integration/services/test_agent_input_concurrency.py -q
+        run: docker compose exec -T api uv run --no-sync --no-dev pytest test/integration/services/test_agent_input_concurrency.py test/integration/services/test_thread_priority_inputs.py test/integration/services/test_input_attachments.py -q
       - name: Verify Run lease ownership
         run: docker compose exec -T api uv run --no-sync --no-dev pytest test/integration/services/test_agent_run_lease.py -q
       - name: Verify Turn result causality
@@ -359,10 +359,10 @@ jobs:
         run: docker compose exec -T -e TEST_USERNAME="$E2E_USERNAME" -e TEST_PASSWORD="$E2E_PASSWORD" api uv run --no-sync --no-dev pytest test/integration/services/test_session_cooperation.py -q
       - name: Verify attachment HTTP and object contract
         timeout-minutes: 3
-        run: docker compose exec -T -e TEST_USERNAME="$E2E_USERNAME" -e TEST_PASSWORD="$E2E_PASSWORD" api uv run --no-sync --no-dev pytest test/integration/api/test_chat_router.py::test_thread_artifact_uses_image_signature_for_content_type -q
+        run: docker compose exec -T -e TEST_USERNAME="$E2E_USERNAME" -e TEST_PASSWORD="$E2E_PASSWORD" api uv run --no-sync --no-dev pytest test/integration/api/test_chat_router.py::test_thread_artifact_uses_image_signature_for_content_type test/integration/api/test_public_agent_files.py -q
       - name: Verify Input, Turn and Run lifecycle through worker
         timeout-minutes: 20
-        run: docker compose exec -T -e E2E_USERNAME -e E2E_PASSWORD api uv run --no-sync --no-dev pytest test/e2e/test_agent_lifecycle_e2e.py -q --durations=10
+        run: docker compose exec -T -e E2E_USERNAME -e E2E_PASSWORD api uv run --no-sync --no-dev pytest test/e2e/test_agent_lifecycle_e2e.py test/e2e/test_input_projection_recovery_e2e.py test/e2e/test_draft_attachments_e2e.py -q --durations=10
       - name: Verify scheduled, model and tool lifecycle paths
         timeout-minutes: 12
         run: docker compose exec -T -e E2E_USERNAME -e E2E_PASSWORD api uv run --no-sync --no-dev pytest test/e2e/test_agent_lifecycle_extended_e2e.py -q --durations=10

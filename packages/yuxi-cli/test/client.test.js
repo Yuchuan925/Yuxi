@@ -99,6 +99,7 @@ test("uploads binary draft once and sends its id with the original PNG data URL"
   await client.send("thread", "read", "send-key", [file.id], [png]);
   const event = JSON.parse(requests[1].options.body).events[0];
   assert.deepEqual(event.yuxi.attachment_file_ids, [file.id]);
+  assert.equal("yuxi" in event.input[0], false);
   assert.deepEqual(event.input[0].content[1], { type: "input_image", image_url: png });
   assert.equal(requests[1].options.headers.get("Idempotency-Key"), "send-key");
   assert.equal(requests.length, 2);

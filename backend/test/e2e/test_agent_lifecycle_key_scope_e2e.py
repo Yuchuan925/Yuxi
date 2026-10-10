@@ -9,6 +9,7 @@ import pytest
 
 from e2e_helpers import delete_agent, postgres_dsn
 from test.e2e.test_agent_lifecycle_e2e import output_text
+from test.e2e.e2e_helpers import wait_for_consumed_input
 from test.live_api_cleanup import (
     delete_test_session_resources,
     make_test_session_title,
@@ -102,7 +103,7 @@ async def test_private_agent_key_run_uses_end_user_workspace_and_app_scope(e2e_c
         accepted = await e2e_client.post("/api/v1/agents/sessions", headers=public_headers, json=body)
         assert accepted.status_code == 201, accepted.text
         assert accepted.headers["X-App-Id"] == app_id
-        receipt = accepted.json()["yuxi"]["receipt"]
+        receipt = await wait_for_consumed_input(e2e_client, public_headers, accepted.json()["yuxi"]["receipt"])
         thread_id = receipt["session_id"]
         replay = await e2e_client.post("/api/v1/agents/sessions", headers=public_headers, json=body)
         assert replay.status_code == 201, replay.text

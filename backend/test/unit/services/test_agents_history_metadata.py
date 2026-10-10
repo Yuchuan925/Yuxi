@@ -36,10 +36,11 @@ def test_user_history_keeps_input_identity_and_hides_internal_metadata():
         run_id=None,
         turn_id=None,
         content="hello",
-        delivery_status="queued",
+        delivery_status="dispatched",
+        source_input_id="input-1", input_position=0, received_at=datetime(2026, 9, 29),
         created_at=datetime(2026, 9, 30),
         message_type="text",
-        extra_metadata={"input_id": "input-1", "source": "web", "private": "secret"},
+        extra_metadata={ "source": "web", "private": "secret"},
     )
     (item,) = serialize_public_items(message, None, None)
     assert item["yuxi"]["input_id"] == "input-1"

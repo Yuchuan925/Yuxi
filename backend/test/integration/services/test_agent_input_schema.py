@@ -12,8 +12,9 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from yuxi.infrastructure.postgres.manager import PostgresManager
 from yuxi.migrations.schema import create_business_tables
-from yuxi.modules.agents.models.inputs import AgentInput
+from yuxi.modules.agents.models.inputs import AgentInput, AgentInputReceipt
 from yuxi.modules.agents.models.messages import Message
+from yuxi.modules.agents.services.input_messages import build_chat_input_message, serialize_input_message
 from yuxi.modules.agents.models.sessions import Session
 from yuxi.modules.agents.models.turns import AgentTurn
 from yuxi.modules.agents.repositories.input import AgentInputRepository
@@ -60,7 +61,8 @@ async def _create_schema():
     async with engine.begin() as connection:
         await connection.execute(
             text(
-                "INSERT INTO users (username, uid, password_hash, role, login_failed_count, is_deleted) VALUES ('input-user', 'input-user', 'hash', 'user', 0, 0)"
+                "INSERT INTO users (username, uid, password_hash, role, login_failed_count, is_deleted) VALUES "
+                "('input-user', 'input-user', 'hash', 'user', 0, 0)"
             )
         )
         await connection.execute(
@@ -89,79 +91,37 @@ async def _drop_schema(schema: str, admin_engine, engine) -> None:
 
 
 async def test_follow_up_claim_fixes_order_and_turn_only_once() -> None:
-    """排队消息无 Turn，领取后多消息及回执按接收顺序固定到同一 Run。"""
+    """接收不生成消息；消费原子生成有序投影，重投不会重复生成。"""
     schema, admin_engine, engine = await _create_schema()
     try:
         sessions = async_sessionmaker(engine, expire_on_commit=False)
         async with sessions() as db:
-            session_record_id = await db.scalar(select(text("id")).select_from(text("sessions")))
-            input_repo = AgentInputRepository(db)
-            receipt_repo = AgentInputReceiptRepository(db)
-            input_item = await input_repo.create(
+            item = await AgentInputRepository(db).create(
                 input_id="input-one",
                 thread_id="input-thread",
                 uid="input-user",
                 app_id=None,
                 agent_slug="main",
                 kind="follow_up",
-                input_payload={"model_spec": "test"},
+                messages=[serialize_input_message(build_chat_input_message(text)) for text in ("first", "second")],
             )
-            for number, contents in enumerate((("first", "second"), ("third",)), start=1):
-                receipt = await receipt_repo.create(
-                    receipt_id=f"receipt-{number}",
-                    idempotency_key=f"key-{number}",
-                    uid="input-user",
-                    app_id=None,
-                    thread_id="input-thread",
-                    event_type="message",
-                    intent_hash=f"hash-{number}",
-                    input_id=input_item.id,
-                )
-                messages = [
-                    Message(session_record_id=session_record_id, role="user", content=content, delivery_status="queued")
-                    for content in contents
-                ]
-                db.add_all(messages)
-                await db.flush()
-                await input_repo.add_messages(
-                    input_id=input_item.id, receipt_id=receipt.id, message_ids=[message.id for message in messages]
-                )
-            second_input = await input_repo.create(
-                input_id="input-two",
-                thread_id="input-thread",
-                uid="input-user",
-                app_id=None,
-                agent_slug="main",
-                kind="follow_up",
-                input_payload={},
-            )
-            second_receipt = await receipt_repo.create(
-                receipt_id="receipt-three",
-                idempotency_key="key-three",
+            await AgentInputReceiptRepository(db).create(
+                receipt_id="receipt-one",
+                idempotency_key="key-one",
                 uid="input-user",
                 app_id=None,
                 thread_id="input-thread",
                 event_type="message",
-                intent_hash="hash-three",
-                input_id=second_input.id,
+                intent_hash="hash",
+                input_id=item.id,
             )
-            second_message = Message(session_record_id=session_record_id, role="user", content="next input", delivery_status="queued")
-            db.add(second_message)
-            await db.flush()
-            await input_repo.add_messages(input_id=second_input.id, receipt_id=second_receipt.id, message_ids=[second_message.id])
             await db.commit()
-
         async with sessions() as db:
-            input_repo = AgentInputRepository(db)
+            assert await db.scalar(select(Message.id)) is None
             assert await db.scalar(select(AgentTurn.id)) is None
-            head = await input_repo.get_queue_head(thread_id="input-thread", uid="input-user", app_id=None)
-            assert head is not None and head.id == "input-one" and head.turn_id is None
-            cutoff = await input_repo.get_latest_receive_seq(head.id)
-            assert [message.content for message in await input_repo.list_messages(head.id)] == [
-                "first",
-                "second",
-                "third",
-            ]
+            repo = AgentInputRepository(db)
+            batch = await repo.ready_batch(thread_id="input-thread", uid="input-user", app_id=None)
+            assert [item.id for item in batch] == ["input-one"]
             turn = await AgentTurnRepository(db).create(turn_id="turn-one", thread_id="input-thread", uid="input-user", app_id=None)
             run = await AgentRunRepository(db).create_run(
                 run_id="run-one",
@@ -169,42 +129,75 @@ async def test_follow_up_claim_fixes_order_and_turn_only_once() -> None:
                 agent_slug="main",
                 uid="input-user",
                 turn_id=turn.id,
-                input_id=head.id,
                 input_payload={},
-                session_record_id=session_record_id,
+                session_record_id=await db.scalar(select(Session.id).where(Session.thread_id == "input-thread")),
             )
             await AgentTurnRepository(db).set_current(turn, run_id=run.id)
-            await input_repo.consume(input_id=head.id, turn_id=turn.id, run_id=run.id, cutoff_seq=cutoff)
+            projected = await repo.consume(inputs=batch, turn_id=turn.id, run_id=run.id)
+            assert [message.content for message in projected] == ["first", "second"]
             await db.commit()
-
         async with sessions() as db:
-            input_item = await db.get(AgentInput, "input-one")
-            assert (input_item.status, input_item.turn_id, input_item.consumed_run_id, input_item.cutoff_seq) == (
-                "consumed",
-                "turn-one",
-                "run-one",
-                cutoff,
-            )
-            messages = await AgentInputRepository(db).list_messages("input-one", through_seq=cutoff)
-            assert [(message.content, message.turn_id, message.delivery_status) for message in messages] == [
-                ("first", "turn-one", "dispatched"),
-                ("second", "turn-one", "dispatched"),
-                ("third", "turn-one", "dispatched"),
-            ]
-            grouped = await AgentInputRepository(db).list_messages_for_inputs(["input-two", "input-one", "missing"])
-            assert {input_id: [message.content for message in items] for input_id, items in grouped.items()} == {
-                "input-two": ["next input"],
-                "input-one": ["first", "second", "third"],
-                "missing": [],
-            }
+            item = await db.get(AgentInput, "input-one")
+            assert (item.status, item.turn_id, item.consumed_run_id) == ("consumed", "turn-one", "run-one")
+            messages = await AgentInputRepository(db).list_messages(item.id)
+            assert [(m.source_input_id, m.input_position) for m in messages] == [("input-one", 0), ("input-one", 1)]
+            assert all(m.received_at == item.created_at and m.created_at >= m.received_at for m in messages)
+            assert [raw["content"][0]["text"] for raw in item.messages] == ["first", "second"]
+            receipt = await db.get(AgentInputReceipt, "receipt-one")
+            assert receipt.turn_id is None and receipt.run_id is None
+            with pytest.raises(IntegrityError, match="ck_agent_input_receipts_target"):
+                async with db.begin_nested():
+                    receipt.turn_id = "turn-one"
+                    receipt.run_id = "run-one"
+                    await db.flush()
             with pytest.raises(ValueError, match="已领取"):
-                await AgentInputRepository(db).consume(input_id="input-one", turn_id="turn-one", run_id="run-one", cutoff_seq=cutoff)
+                await AgentInputRepository(db).consume(inputs=[item], turn_id="turn-one", run_id="run-one")
+            with pytest.raises(IntegrityError, match="uq_messages_input_position"):
+                async with db.begin_nested():
+                    db.add(
+                        Message(
+                            session_record_id=messages[0].session_record_id,
+                            role="user",
+                            content="duplicate",
+                            source_input_id=item.id,
+                            input_position=0,
+                            received_at=item.created_at,
+                            turn_id="turn-one",
+                            run_id="run-one",
+                        )
+                    )
+                    await db.flush()
+            pending = await AgentInputRepository(db).create(
+                input_id="pending-origin",
+                thread_id="input-thread",
+                uid="input-user",
+                app_id=None,
+                agent_slug="main",
+                kind="follow_up",
+                messages=[serialize_input_message(build_chat_input_message("later"))],
+            )
+            with pytest.raises(IntegrityError, match="fk_messages_consumed_input"):
+                async with db.begin_nested():
+                    db.add(
+                        Message(
+                            session_record_id=messages[0].session_record_id,
+                            role="user",
+                            content="wrong origin",
+                            source_input_id=pending.id,
+                            input_position=0,
+                            received_at=pending.created_at,
+                            turn_id="turn-one",
+                            run_id="run-one",
+                        )
+                    )
+                    await db.flush()
+                    await db.execute(text("SET CONSTRAINTS fk_messages_consumed_input IMMEDIATE"))
     finally:
         await _drop_schema(schema, admin_engine, engine)
 
 
-async def test_product_key_active_turn_and_steer_uniqueness_are_enforced() -> None:
-    """NULL APP 幂等、活跃 Turn 与待消费 steer 的重复行均由 PostgreSQL 拒绝。"""
+async def test_product_key_active_turn_unique_and_steers_independent() -> None:
+    """NULL APP 幂等和活跃 Turn 唯一，引导提交保持独立身份。"""
     schema, admin_engine, engine = await _create_schema()
     try:
         sessions = async_sessionmaker(engine, expire_on_commit=False)
@@ -226,6 +219,7 @@ async def test_product_key_active_turn_and_steer_uniqueness_are_enforced() -> No
                 app_id=None,
                 agent_slug="main",
                 kind="steer",
+                messages=[serialize_input_message(build_chat_input_message("steer"))],
             )
             await db.commit()
 
@@ -246,16 +240,16 @@ async def test_product_key_active_turn_and_steer_uniqueness_are_enforced() -> No
                 await AgentTurnRepository(db).create(turn_id="turn-overlap", thread_id="input-thread", uid="input-user", app_id=None)
             await db.rollback()
 
-            with pytest.raises(IntegrityError):
-                await AgentInputRepository(db).create(
-                    input_id="steer-overlap",
-                    thread_id="input-thread",
-                    uid="input-user",
-                    app_id=None,
-                    agent_slug="main",
-                    kind="steer",
-                )
-            await db.rollback()
+            await AgentInputRepository(db).create(
+                input_id="steer-overlap",
+                thread_id="input-thread",
+                uid="input-user",
+                app_id=None,
+                agent_slug="main",
+                kind="steer",
+                messages=[serialize_input_message(build_chat_input_message("steer"))],
+            )
+            await db.commit()
 
             with pytest.raises(IntegrityError, match="ck_agent_inputs_delivery"):
                 await db.execute(text("UPDATE agent_inputs SET turn_id = 'turn-active' WHERE id = 'steer-one'"))
@@ -565,58 +559,24 @@ async def test_reused_tool_call_id_never_reuses_another_message_declaration():
         await _drop_schema(schema, admin_engine, engine)
 
 
-async def test_attachment_schema_upgrade_is_idempotent_and_preserves_inputs():
-    """显式 v5 升级只补附件表，重跑保留输入并拒绝无效准备状态。"""
-    from datetime import timedelta
-    from yuxi.modules.agents.models.attachments import AgentAttachment
-    from yuxi.migrations.schema import add_attachment_table, create_schema_version_table, record_schema_version
-    from yuxi.shared.datetime import utc_now
+async def test_old_schema_is_rejected_without_changing_data():
+    """旧版本只读拒绝；版本号和原始内容保持不变。"""
+    from yuxi.infrastructure.postgres.schema import require_current_schema
+    from yuxi.migrations.schema import create_schema_version_table, record_schema_version
 
     schema, admin, engine = await _create_schema()
     manager = object.__new__(PostgresManager)
     PostgresManager.__init__(manager)
     manager.async_engine = engine
     manager._initialized = True
-    factory = async_sessionmaker(engine, expire_on_commit=False)
     try:
-        async with factory() as db:
-            db.add(
-                AgentInput(
-                    id="upgrade-input",
-                    thread_id="input-thread",
-                    uid="input-user",
-                    agent_slug="main",
-                    kind="follow_up",
-                    status="pending",
-                    input_payload={"context_snapshot": {"model": "test:chat", "tool_approval_mode": "default"}},
-                )
-            )
-            await db.commit()
-        async with engine.begin() as connection:
-            await connection.run_sync(lambda sync: AgentAttachment.__table__.drop(sync))
         await create_schema_version_table(manager)
-        await record_schema_version(manager, "business", 5)
-        await add_attachment_table(manager)
-        await add_attachment_table(manager)
-        async with factory() as db:
-            assert (await db.get(AgentInput, "upgrade-input")).status == "pending"
-            assert await db.scalar(text("SELECT version FROM yuxi_schema_migrations WHERE domain='business'")) == 6
-            with pytest.raises(IntegrityError, match="ck_agent_attachments_preparation"):
-                async with db.begin_nested():
-                    db.add(
-                        AgentAttachment(
-                            id="invalid-ready",
-                            uid="input-user",
-                            filename="file.txt",
-                            mime_type="text/plain",
-                            size_bytes=1,
-                            created_at=utc_now(),
-                            expires_at=utc_now() + timedelta(days=1),
-                            status="ready",
-                            object_name="temporary",
-                        )
-                    )
-                    await db.flush()
-            assert await db.get(AgentAttachment, "invalid-ready") is None
+        await record_schema_version(manager, "business", 7)
+        await record_schema_version(manager, "knowledge", 3)
+        with pytest.raises(RuntimeError, match="incompatible"):
+            await require_current_schema(manager)
+        async with engine.connect() as connection:
+            assert await connection.scalar(text("SELECT version FROM yuxi_schema_migrations WHERE domain='business'")) == 7
+            assert await connection.scalar(text("SELECT count(*) FROM sessions")) == 1
     finally:
         await _drop_schema(schema, admin, engine)

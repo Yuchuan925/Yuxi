@@ -25,10 +25,11 @@ from test.live_api_cleanup import (
 )
 from yuxi.modules.agents.repositories.runs import AgentRunRepository
 from yuxi.modules.agents.repositories.input import AgentInputRepository
+from yuxi.modules.agents.services.input_messages import build_chat_input_message, serialize_input_message
 from yuxi.modules.agents.repositories.input_receipt import AgentInputReceiptRepository
 from yuxi.modules.agents.repositories.turn import AgentTurnRepository
 import yuxi.modules.workspace.services.projects as project_service
-from yuxi.modules.agents.models.inputs import AgentInput, AgentInputMessage, AgentInputReceipt
+from yuxi.modules.agents.models.inputs import AgentInput, AgentInputReceipt
 from yuxi.modules.agents.models.runs import AgentRun, AgentRunAttempt
 from yuxi.modules.agents.models.turns import AgentTurn
 from yuxi.modules.agents.models.sessions import Session
@@ -96,16 +97,17 @@ async def _seed_thread(session_factory, *, thread_prefix: str) -> dict:
         input_repo = AgentInputRepository(db)
         receipt_repo = AgentInputReceiptRepository(db)
         turn_repo = AgentTurnRepository(db)
-        await input_repo.create(
+        input_item = await input_repo.create(
             input_id=input_id,
             thread_id=thread_id,
             uid=uid,
             app_id=None,
             agent_slug="main",
             kind="follow_up",
+            messages=[serialize_input_message(build_chat_input_message("input"))],
             input_payload={},
         )
-        receipt = await receipt_repo.create(
+        await receipt_repo.create(
             receipt_id=receipt_id,
             idempotency_key=f"YUXI_TEST_cleanup-{uuid.uuid4()}",
             uid=uid,
@@ -115,10 +117,6 @@ async def _seed_thread(session_factory, *, thread_prefix: str) -> dict:
             intent_hash="test",
             input_id=input_id,
         )
-        input_message = Message(session_record_id=agent_session.id, role="user", content="input", delivery_status="queued")
-        db.add(input_message)
-        await db.flush()
-        await input_repo.add_messages(input_id=input_id, receipt_id=receipt_id, message_ids=[input_message.id])
         turn = await turn_repo.create(turn_id=turn_id, thread_id=thread_id, uid=uid, app_id=None)
         run = await AgentRunRepository(db).create_run(
             run_id=run_id,
@@ -126,13 +124,12 @@ async def _seed_thread(session_factory, *, thread_prefix: str) -> dict:
             agent_slug="main",
             uid=uid,
             turn_id=turn_id,
-            input_id=input_id,
             input_payload={},
             session_record_id=agent_session.id,
-            input_message_id=input_message.id,
         )
         await turn_repo.set_current(turn, run_id=run.id)
-        await input_repo.consume(input_id=input_id, turn_id=turn_id, run_id=run.id, cutoff_seq=receipt.receive_seq)
+        [input_message] = await input_repo.consume(inputs=[input_item], turn_id=turn_id, run_id=run.id)
+        run.input_message_id = input_message.id
         run.status = "completed"
         await db.flush()
         await turn_repo.set_terminal(turn, status="completed", result_run_id=run_id)
@@ -201,8 +198,8 @@ async def test_delete_test_session_rows_removes_history_and_preserves_neighbor(c
             ):
                 assert await db.get(model, target[key]) is None
                 assert await db.get(model, neighbor[key]) is not None
-            assert await db.scalar(select(AgentInputMessage.id).where(AgentInputMessage.input_id == target["input_id"])) is None
-            assert await db.scalar(select(AgentInputMessage.id).where(AgentInputMessage.input_id == neighbor["input_id"])) is not None
+            assert await db.scalar(select(Message.id).where(Message.source_input_id == target["input_id"])) is None
+            assert await db.scalar(select(Message.id).where(Message.source_input_id == neighbor["input_id"])) is not None
             assert await db.scalar(select(ToolCall.id).where(ToolCall.message_id == target["output_message_id"])) is None
     finally:
         await _cleanup_seed(cleanup_database, [target, neighbor])

@@ -7,6 +7,7 @@ import uuid
 
 import asyncpg
 import pytest
+from test.e2e.e2e_helpers import wait_for_consumed_input
 from langchain_core.messages import ToolMessage
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
@@ -81,7 +82,7 @@ async def test_sessions_use_public_state_and_shared_sandbox(e2e_client, e2e_head
         path = f"/home/gem/user-data/{workdir}/cooperation.txt"
         runtime_probe = f"/tmp/cooperation-shared-{uuid.uuid4().hex}"
         question_marker = " PARALLEL_QUESTION" if parallel_question else ""
-        selection_marker = " SELECT_AGENT" if select_agent else ""
+        selection_marker = f" SELECT_AGENT:{target_slug}" if select_agent else ""
         accepted = await e2e_client.post(
             f"/api/v1/agents/sessions/{thread_id}/events",
             headers={**e2e_headers, "Idempotency-Key": str(uuid.uuid4())},
@@ -91,7 +92,8 @@ async def test_sessions_use_public_state_and_shared_sandbox(e2e_client, e2e_head
                         "type": "agent.session.input.message",
                         "input": [
                             _message(
-                                f"{OUTPUT} PRIVATE_ROOT_HISTORY COOPERATION_ROOT:{path} COOP_RUNTIME:{runtime_probe}{question_marker}{selection_marker}"
+                                f"{OUTPUT} PRIVATE_ROOT_HISTORY COOPERATION_ROOT:{path} "
+                                f"COOP_RUNTIME:{runtime_probe}{question_marker}{selection_marker}"
                             )
                         ],
                         "yuxi": {"mode": "follow_up", "tool_approval_mode": "always_trust"},
@@ -100,7 +102,7 @@ async def test_sessions_use_public_state_and_shared_sandbox(e2e_client, e2e_head
             },
         )
         assert accepted.status_code == 202, accepted.text
-        turn_id = accepted.json()["turn_id"]
+        turn_id = (await wait_for_consumed_input(e2e_client, e2e_headers, accepted.json()))["turn_id"]
         # 包含父子执行与周期协作恢复，恢复相位可额外等待一分钟。
         async with asyncio.timeout(180):
             while True:
@@ -296,7 +298,7 @@ async def test_full_tree_capacity_control_and_sibling_tools(e2e_client, e2e_head
                 "yuxi": {"mode": "follow_up", "tool_approval_mode": "always_trust"},
             },
         )
-        root_turn = accepted["turn_id"]
+        root_turn = (await wait_for_consumed_input(e2e_client, e2e_headers, accepted))["turn_id"]
         async with asyncio.timeout(90):
             while True:
                 observed = await conn.fetchrow(
@@ -346,7 +348,8 @@ async def test_full_tree_capacity_control_and_sibling_tools(e2e_client, e2e_head
         async with asyncio.timeout(90):
             while True:
                 active = await conn.fetchval(
-                    "SELECT count(*) FROM agent_runs WHERE runtime_scope_id=$1 AND status IN ('running','cancel_requested') AND worker_id IS NOT NULL",
+                    "SELECT count(*) FROM agent_runs WHERE runtime_scope_id=$1 "
+                    "AND status IN ('running','cancel_requested') AND worker_id IS NOT NULL",
                     root_id,
                 )
                 assert active <= 4
@@ -382,7 +385,8 @@ async def test_full_tree_capacity_control_and_sibling_tools(e2e_client, e2e_head
             assert next(t for t in turns if t["thread_id"] == victim["thread_id"])["status"] == "cancelled"
             assert (
                 await conn.fetchval(
-                    "SELECT count(*) FROM session_cooperation_events WHERE recipient_thread_id=$1 AND kind='message' AND content='SIBLING_INFORMATION'",
+                    "SELECT count(*) FROM session_cooperation_events WHERE recipient_thread_id=$1 "
+                    "AND kind='message' AND content='SIBLING_INFORMATION'",
                     recipient["thread_id"],
                 )
                 == 1

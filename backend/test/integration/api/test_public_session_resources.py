@@ -109,7 +109,7 @@ async def test_merged_steer_receipts_advance_session_activity(test_client, stand
             )
             assert response.status_code == 202, response.text
             receipts.append(response.json())
-        assert receipts[0]["input_id"] == receipts[1]["input_id"]
+        assert receipts[0]["input_id"] != receipts[1]["input_id"]
         assert receipts[0]["event_id"] != receipts[1]["event_id"]
         first_at = datetime.now(UTC) + timedelta(seconds=10)
         second_at = first_at + timedelta(seconds=2)

@@ -13,6 +13,7 @@ import pytest
 
 from e2e_helpers import delete_agent, postgres_dsn, skip_if_external_quota
 from test.e2e.test_agent_lifecycle_e2e import output_text
+from test.e2e.e2e_helpers import wait_for_consumed_input
 from test.live_api_cleanup import make_test_session_title
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.e2e, pytest.mark.slow]
@@ -137,7 +138,7 @@ async def test_public_thread_evaluation_sample_uses_one_input_turn_run_flow(
             headers={**e2e_headers, "Idempotency-Key": f"eval-{uuid.uuid4().hex}"},
         )
         assert create_response.status_code == 201, create_response.text
-        accepted = create_response.json()["yuxi"]["receipt"]
+        accepted = await wait_for_consumed_input(e2e_client, e2e_headers, create_response.json()["yuxi"]["receipt"])
         thread_id = accepted["session_id"]
         assert accepted["input_id"] and accepted["turn_id"] and accepted["run_id"], accepted
 

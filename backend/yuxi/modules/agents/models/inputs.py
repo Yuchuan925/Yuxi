@@ -34,8 +34,9 @@ class AgentInput(Base):
     kind = Column(String(16), nullable=False)
     status = Column(String(16), nullable=False, default="pending")
     turn_id = Column(String(64), nullable=True, index=True)
-    consumed_run_id = Column(String(64), ForeignKey("agent_runs.id"), nullable=True, unique=True)
-    cutoff_seq = Column(BigInteger, nullable=True)
+    consumed_run_id = Column(String(64), ForeignKey("agent_runs.id"), nullable=True, index=True)
+    messages = Column(JSON_VALUE, nullable=False)
+    attachment_file_ids = Column(JSON_VALUE, nullable=False, default=list)
     input_payload = Column(JSON_VALUE, nullable=False, default=dict)
     source = Column(String(32), nullable=False, default="chat")
     channel = Column(String(32), nullable=False, default="web")
@@ -47,6 +48,7 @@ class AgentInput(Base):
 
     __table_args__ = (
         UniqueConstraint("id", "thread_id", name="uq_agent_inputs_id_thread"),
+        UniqueConstraint("id", "consumed_run_id", "turn_id", name="uq_agent_inputs_execution"),
         ForeignKeyConstraint(
             ["turn_id", "thread_id"],
             ["agent_turns.id", "agent_turns.thread_id"],
@@ -59,19 +61,14 @@ class AgentInput(Base):
             "received_seq",
             postgresql_where=status == "pending",
         ).ddl_if(dialect="postgresql"),
-        Index(
-            "uq_agent_inputs_pending_steer",
-            "thread_id",
-            unique=True,
-            postgresql_where=(kind == "steer") & (status == "pending"),
-        ).ddl_if(dialect="postgresql"),
         CheckConstraint("kind IN ('follow_up', 'steer')", name="ck_agent_inputs_kind"),
         CheckConstraint(
-            "(status = 'pending' AND consumed_run_id IS NULL AND cutoff_seq IS NULL AND consumed_at IS NULL "
+            "(status = 'pending' AND consumed_run_id IS NULL AND consumed_at IS NULL "
             "AND turn_id IS NULL) "
             "OR (status = 'consumed' AND turn_id IS NOT NULL AND consumed_run_id IS NOT NULL "
-            "AND cutoff_seq IS NOT NULL AND consumed_at IS NOT NULL) "
-            "OR (status = 'cancelled' AND consumed_run_id IS NULL AND cancelled_at IS NOT NULL)",
+            "AND consumed_at IS NOT NULL) "
+            "OR (status = 'cancelled' AND consumed_run_id IS NULL AND turn_id IS NULL "
+            "AND consumed_at IS NULL AND cancelled_at IS NOT NULL)",
             name="ck_agent_inputs_delivery",
         ),
         ForeignKeyConstraint(
@@ -118,7 +115,7 @@ class AgentInputReceipt(Base):
             name="fk_agent_input_receipts_run_turn",
         ),
         CheckConstraint("run_id IS NULL OR turn_id IS NOT NULL", name="ck_agent_input_receipts_run_turn"),
-        UniqueConstraint("id", "input_id", name="uq_agent_input_receipts_id_input"),
+        CheckConstraint("input_id IS NULL OR (turn_id IS NULL AND run_id IS NULL)", name="ck_agent_input_receipts_target"),
         Index("ix_agent_input_receipts_input_seq", "input_id", receive_seq.desc()),
         Index(
             "uq_agent_input_receipts_scope_key",
@@ -129,27 +126,4 @@ class AgentInputReceipt(Base):
             unique=True,
             postgresql_nulls_not_distinct=True,
         ).ddl_if(dialect="postgresql"),
-    )
-
-
-class AgentInputMessage(Base):
-    """保存每次接收事件中的原始消息及顺序。"""
-
-    __tablename__ = "agent_input_messages"
-
-    id = Column(BigInteger, Identity(), primary_key=True)
-    input_id = Column(String(64), nullable=False)
-    receipt_id = Column(String(64), nullable=False)
-    message_id = Column(Integer, ForeignKey("messages.id"), nullable=False, unique=True)
-    position = Column(Integer, nullable=False)
-
-    __table_args__ = (
-        ForeignKeyConstraint(
-            ["receipt_id", "input_id"],
-            ["agent_input_receipts.id", "agent_input_receipts.input_id"],
-            name="fk_agent_input_messages_receipt_input",
-        ),
-        UniqueConstraint("receipt_id", "position", name="uq_agent_input_messages_receipt_position"),
-        Index("ix_agent_input_messages_input", "input_id", "receipt_id", "position"),
-        CheckConstraint("position >= 0", name="ck_agent_input_messages_position"),
     )

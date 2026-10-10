@@ -261,6 +261,7 @@ export const useSessionRuntimeStore = defineStore('sessionRuntime', () => {
     resumeQueuedInputs,
     startInputMonitor: queue.startInputMonitor,
     cancelInput: queue.cancelInput,
+    promoteInput: queue.promoteInput,
     continueQueue: queue.continueQueue
   }
 })

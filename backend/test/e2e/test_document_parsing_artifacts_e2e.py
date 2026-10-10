@@ -126,7 +126,12 @@ async def test_private_draft_parse_send_and_delete_preserve_complete_local_direc
                 "events": [
                     {
                         "type": "agent.session.input.message",
-                        "input": [{"role": "user", "content": [{"type": "input_text", "text": "保留完整文档资源"}]}],
+                        "input": [
+                            {
+                                "role": "user",
+                                "content": [{"type": "input_text", "text": "保留完整文档资源"}],
+                            }
+                        ],
                         "yuxi": {"mode": "follow_up", "attachment_file_ids": [uploaded["id"]]},
                     }
                 ]

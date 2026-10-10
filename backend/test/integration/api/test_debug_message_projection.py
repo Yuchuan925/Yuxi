@@ -48,6 +48,21 @@ async def test_debug_messages_follow_database_sequence_and_include_unassigned_in
             session["id"],
             start,
         )
+        input_id = str(uuid.uuid4())
+        await conn.execute(
+            "INSERT INTO agent_inputs "
+            "(id,thread_id,uid,agent_slug,kind,status,turn_id,consumed_run_id,messages,input_payload,"
+            "source,channel,origin_metadata,created_at,consumed_at,attachment_file_ids) "
+            "VALUES ($1,$2,$3,$4,'follow_up','consumed',$5,$6,$7::json,'{}','chat','web','{}',$8,$8,'[]')",
+            input_id,
+            thread_id,
+            session["uid"],
+            session["agent_id"],
+            turn_id,
+            run_id,
+            json.dumps([{"content": [{"type": "text", "text": "持久用户输入"}]}]),
+            start,
+        )
         ids = {}
         for role, content, sequence, operation in [
             ("assistant", "最终模型输出", 9, "model-final"),
@@ -69,6 +84,13 @@ async def test_debug_messages_follow_database_sequence_and_include_unassigned_in
                 start + timedelta(seconds=20 - (sequence or 0)),
                 json.dumps({"input_id": "input-test"} if role == "user" else {"tool_name": "search"}),
             )
+            if role == "user":
+                await conn.execute(
+                    "UPDATE messages SET source_input_id=$2,input_position=0,received_at=$3 WHERE id=$1",
+                    ids[content],
+                    input_id,
+                    start,
+                )
         for role, content in [("system", "系统记录"), ("user", "未关联输入")]:
             ids[content] = await conn.fetchval(
                 "INSERT INTO messages (session_record_id,role,content,created_at,delivery_status,extra_metadata) "
@@ -98,7 +120,8 @@ async def test_debug_messages_follow_database_sequence_and_include_unassigned_in
             *[ids[content] for content in expected[4:]],
         ]
         assert [row["type"] for row in payload["audits"]] == ["human", "ai", "tool", "ai", "ai", "system", "human"]
-        assert payload["audits"][0]["input_id"] == "input-test"
+        assert payload["audits"][0]["input_id"] == input_id
+        assert payload["audits"][0]["input_position"] == 0
         assert payload["audits"][4]["error_type"] == "provider_error"
         assert payload["audits"][4]["error_message"] == "模型服务不可用"
         assert payload["audits"][4]["execution_status"] is None

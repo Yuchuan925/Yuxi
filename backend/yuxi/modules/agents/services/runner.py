@@ -678,7 +678,7 @@ async def process_agent_run(ctx, run_id: str):
                     restore_chat_input_message(
                         content=message.content,
                         image_content=message.image_content,
-                        metadata=message.extra_metadata,
+                        metadata={**message.extra_metadata, "message_id": message.id},
                     )
                     for message in input_messages
                 ]
@@ -734,7 +734,7 @@ async def process_agent_run(ctx, run_id: str):
         meta = {
             "run_id": run_id,
             "turn_id": turn_id,
-            "input_id": run.input_id,
+            "input_ids": list(dict.fromkeys(message.source_input_id for message in input_messages if message.source_input_id)),
             "agent_slug": agent_slug,
             "thread_id": thread_id,
             "uid": user.uid,
@@ -932,9 +932,6 @@ async def process_agent_run(ctx, run_id: str):
 async def _load_run_input_messages(run: AgentRun) -> list[Message]:
     """按已消费 Input 顺序恢复本段消息；控制和子执行使用单条输入。"""
     async with pg_manager.get_async_session_context() as db:
-        if run.input_id:
-            return await AgentInputRepository(db).list_messages(run.input_id)
-        if run.input_message_id is None:
-            return []
-        message = await db.get(Message, run.input_message_id)
-        return [message] if message is not None else []
+        return list(await db.scalars(
+            select(Message).where(Message.run_id == run.id, Message.role == "user").order_by(Message.id)
+        ))

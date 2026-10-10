@@ -92,6 +92,148 @@ async def files_env(sessions, tmp_path, monkeypatch):  # noqa: F811
                 pass
 
 
+async def test_multi_message_files_bind_last_projection_and_receipt_stays_unchanged(files_env):
+    """提交级附件只挂末条消息，消费不修改接收回执。"""
+    from sqlalchemy.exc import IntegrityError
+    from yuxi.modules.agents.models.messages import Message
+
+    factory, upload, submit, workdir = files_env
+    first, second = await upload("first.txt"), await upload("second.txt")
+    async with factory() as db:
+        accepted = await inputs.accept_message(
+            db=db,
+            scope=SCOPE,
+            thread_id="input-thread",
+            idempotency_key="two-messages",
+            mode="follow_up",
+            messages=[
+                build_chat_input_message("first"),
+                build_chat_input_message("second"),
+            ],
+            attachment_file_ids=[first["id"], second["id"]],
+        )
+        assert await db.scalar(select(func.count()).select_from(Message)) == 0
+        records = [await db.get(AgentAttachment, file["id"]) for file in (first, second)]
+        assert [(item.input_id, item.message_id) for item in records] == [(accepted["input_id"], None)] * 2
+        before = dict(
+            (await db.execute(select(AgentInputReceipt.__table__).where(AgentInputReceipt.id == accepted["event_id"]))).mappings().one()
+        )
+        await threads.continue_queue(db=db, scope=SCOPE, thread_id="input-thread", idempotency_key="consume-files")
+    async with factory() as db:
+        projected = await AgentInputRepository(db).list_messages(accepted["input_id"])
+        assert [item.content for item in projected] == ["first", "second"]
+        by_message = await AttachmentRepository(db).for_messages([item.id for item in projected])
+        assert by_message[projected[0].id] == []
+        assert {a.id for a in by_message[projected[1].id]} == {first["id"], second["id"]}
+        after = dict(
+            (await db.execute(select(AgentInputReceipt.__table__).where(AgentInputReceipt.id == accepted["event_id"]))).mappings().one()
+        )
+        assert after == before
+        assert await inputs.get_receipt_snapshot(db=db, scope=SCOPE, thread_id="input-thread", idempotency_key="two-messages") == accepted
+        with pytest.raises(IntegrityError, match="fk_agent_attachments_message_origin"):
+            async with db.begin_nested():
+                attachment = await db.get(AgentAttachment, first["id"])
+                other = await AgentInputRepository(db).create(
+                    input_id="another-input",
+                    messages=[{"role": "user", "content": [], "metadata": {}}],
+                    kind="follow_up",
+                    thread_id="input-thread",
+                    uid=SCOPE.uid,
+                    app_id=None,
+                    agent_slug="main",
+                )
+                attachment.input_id = other.id
+                await db.flush()
+    draft = await upload("duplicate.txt")
+    async with factory() as db:
+        with pytest.raises(HTTPException) as failure:
+            await inputs.accept_message(
+                db=db,
+                scope=SCOPE,
+                thread_id="input-thread",
+                idempotency_key="duplicate-file",
+                mode="follow_up",
+                messages=[build_chat_input_message(text) for text in ("A", "B")],
+                attachment_file_ids=[draft["id"], draft["id"]],
+            )
+        assert failure.value.status_code == 422
+        await db.rollback()
+        assert (await db.get(AgentAttachment, draft["id"])).input_id is None
+
+
+async def test_unready_steer_head_blocks_later_ready_inputs(files_env, monkeypatch):
+    """优先队头未就绪时，不跳过领取后来的引导或普通输入。"""
+    factory, upload, submit, workdir = files_env
+    current = await _start(factory)
+    file = await upload()
+    write = attachments._write_workdir_file
+
+    async def fail(*args, **kwargs):
+        """模拟队头文件准备失败。"""
+        raise OSError("unavailable")
+
+    monkeypatch.setattr(attachments, "_write_workdir_file", fail)
+    head = await submit(file, "blocked-head", mode="steer")
+    from test.integration.services.test_thread_priority_inputs import _send
+
+    later = await _send(factory, "ready-later")
+    await _send(factory, "ordinary", "follow_up")
+    async with factory() as db:
+        assert await AgentInputRepository(db).ready_batch(thread_id="input-thread", uid=SCOPE.uid, app_id=None) == []
+    assert not await runs.should_yield_for_steer(current.id)
+    monkeypatch.setattr(attachments, "_write_workdir_file", write)
+    await scheduler.recover_pending_dispatches()
+    async with factory() as db:
+        batch = await AgentInputRepository(db).ready_batch(thread_id="input-thread", uid=SCOPE.uid, app_id=None)
+        assert [item.id for item in batch] == [head["input_id"], later["input_id"]]
+
+
+async def test_steer_batch_anchors_each_input_and_rolls_back_all_projections(files_env):
+    """合批仍逐 Input 锚定；回滚后所有消息和附件关联都未消费。"""
+    from yuxi.modules.agents.models.messages import Message
+
+    factory, upload, _, _ = files_env
+    files = [await upload("A.txt"), await upload("C.txt")]
+    receipts = []
+    async with factory() as db:
+        for label, file in zip(("A", "C"), files, strict=True):
+            receipts.append(
+                await inputs.accept_message(
+                    db=db,
+                    scope=SCOPE,
+                    thread_id="input-thread",
+                    idempotency_key=label,
+                    mode="steer",
+                    messages=[build_chat_input_message(f"{label}{position}") for position in (1, 2)],
+                    attachment_file_ids=[file["id"]],
+                )
+            )
+        session = await SessionRepository(db).lock_session_by_thread_id("input-thread")
+        session.queue_paused = False
+        await scheduler.claim_next_input(db=db, agent_session=session)
+        assert await db.scalar(select(func.count()).select_from(Message)) == 4
+        await db.rollback()
+    async with factory() as db:
+        assert await db.scalar(select(func.count()).select_from(Message)) == 0
+        assert await db.scalar(select(func.count()).select_from(AgentRun)) == 0
+        for file, receipt in zip(files, receipts, strict=True):
+            assert (await db.get(AgentAttachment, file["id"])).message_id is None
+            assert (await db.get(AgentInput, receipt["input_id"])).status == "pending"
+        await threads.continue_queue(db=db, scope=SCOPE, thread_id="input-thread", idempotency_key="consume-batch")
+    async with factory() as db:
+        run_ids = set()
+        for file, receipt in zip(files, receipts, strict=True):
+            projected = await AgentInputRepository(db).list_messages(receipt["input_id"])
+            assert len(projected) == 2
+            run_ids.add(projected[-1].run_id)
+            assert (await db.get(AgentAttachment, file["id"])).message_id == projected[-1].id
+            assert (
+                await inputs.get_receipt_snapshot(db=db, scope=SCOPE, thread_id="input-thread", idempotency_key=projected[0].content[0])
+                == receipt
+            )
+        assert len(run_ids) == 1
+
+
 async def test_draft_send_and_replay_have_one_durable_submission(files_env):
     """上传没有线程引用，发送与响应丢失重试只有一份 Input 和目标文件。"""
     factory, upload, submit, workdir = files_env
@@ -111,8 +253,9 @@ async def test_draft_send_and_replay_have_one_durable_submission(files_env):
         [record] = await AttachmentRepository(db).list_for_thread("input-thread", SCOPE.uid, SCOPE.app_id)
         assert record.input_id == item.id
         messages = await AgentInputRepository(db).list_messages(item.id)
-        assert "attachments" not in messages[0].extra_metadata
-        assert (await AttachmentRepository(db).for_messages([messages[0].id]))[messages[0].id][0].id == record.id
+        assert messages == []
+        assert record.message_id is None
+        assert item.attachment_file_ids == [file["id"]]
     assert workdir.read_file(f"/uploads/{file['id']}_source.txt", 1024) == b"original"
     assert await submit(file, "one-submission") == receipt
     async with factory() as db:
@@ -148,8 +291,10 @@ async def test_failed_preparation_blocks_dispatch_and_cancel_keeps_submission(fi
         assert "附件准备失败" in error
         assert "private-host-path" not in error
         assert await db.scalar(select(func.count()).select_from(AgentRun)) == 0
-        with pytest.raises(ValueError, match="附件尚未就绪"):
-            await AgentInputRepository(db).consume(input_id=item.id, turn_id="absent", run_id="absent", cutoff_seq=1)
+        assert await AgentInputRepository(db).ready_batch(thread_id="input-thread", uid=SCOPE.uid, app_id=None) == []
+        with pytest.raises(HTTPException) as blocked:
+            await threads.promote_input(db=db, scope=SCOPE, thread_id="input-thread", input_id=item.id, idempotency_key="not-ready")
+        assert blocked.value.status_code == 409
         await AgentInputRepository(db).cancel(item)
         await db.commit()
     if archive_via:
@@ -240,7 +385,8 @@ async def test_expiration_cannot_remove_received_source_and_steer_waits_for_read
     assert workdir.read_file(f"/uploads/{file['id']}_source.txt", 1024) == b"original"
 
 
-async def test_same_draft_cannot_be_received_by_two_threads(files_env):
+@pytest.mark.parametrize("reverse_files", [False, True])
+async def test_same_draft_cannot_be_received_by_two_threads(files_env, monkeypatch, reverse_files):
     """跨线程并发提交在真实 PG 文件锁下只产生一个归属。"""
     factory, upload, submit, workdir = files_env
     file = await upload()
@@ -253,7 +399,36 @@ async def test_same_draft_cannot_be_received_by_two_threads(files_env):
             config_snapshot={"model": "test:chat", "tool_approval_mode": "default"},
         )
         await db.commit()
-    results = await asyncio.gather(submit(file, "thread-one"), submit(file, "thread-two", "second-thread"), return_exceptions=True)
+    if reverse_files:
+        second = await upload("second.txt")
+        stage = inputs.stage_input_attachments
+
+        async def yield_after_stage(**kwargs):
+            """放大文件反向锁竞争，未统一锁顺序时产生数据库死锁。"""
+            result = await stage(**kwargs)
+            await asyncio.sleep(0.05)
+            return result
+
+        monkeypatch.setattr(inputs, "stage_input_attachments", yield_after_stage)
+
+        async def submit_messages(thread_id, files):
+            """同一组文件以相反引用顺序提交到不同 Session。"""
+            async with factory() as db:
+                return await inputs.accept_message(
+                    db=db,
+                    scope=SCOPE,
+                    thread_id=thread_id,
+                    idempotency_key=thread_id,
+                    mode="follow_up",
+                    messages=[build_chat_input_message(item["filename"]) for item in files],
+                    attachment_file_ids=[item["id"] for item in files],
+                )
+
+        requests = [submit_messages("input-thread", [file, second]), submit_messages("second-thread", [second, file])]
+    else:
+        requests = [submit(file, "thread-one"), submit(file, "thread-two", "second-thread")]
+    async with asyncio.timeout(10):
+        results = await asyncio.gather(*requests, return_exceptions=True)
     assert sum(isinstance(item, dict) for item in results) == 1
     [failure] = [item for item in results if isinstance(item, Exception)]
     assert isinstance(failure, HTTPException) and failure.status_code == 409
@@ -296,14 +471,15 @@ async def test_ready_steer_append_preserves_expired_source_and_committed_files(f
 
     monkeypatch.setattr(attachments, "_write_workdir_file", fail)
     appended = await submit(second, "second-ready-steer", mode="steer")
-    assert appended["input_id"] == receipt["input_id"]
-    assert await runs.should_yield_for_steer(current.id) is False
+    assert appended["input_id"] != receipt["input_id"]
+    assert await runs.should_yield_for_steer(current.id) is True
     assert workdir.read_file(original_path, 1024) == b"user modified original"
     assert workdir.read_file(f"{parsed_path}/document.md", 1024) == b"user modified markdown"
     assert workdir.read_file(f"{parsed_path}/images/page.png", 1024) == b"parsed image"
     async with factory() as db:
         assert len(await AttachmentRepository(db).list_for_thread("input-thread", SCOPE.uid, SCOPE.app_id)) == 2
-        assert await AttachmentRepository(db).has_unready(receipt["input_id"])
+        assert not await AttachmentRepository(db).has_unready(receipt["input_id"])
+        assert await AttachmentRepository(db).has_unready(appended["input_id"])
     monkeypatch.setattr(attachments, "_write_workdir_file", write)
     assert await submit(second, "second-ready-steer", mode="steer") == appended
     await scheduler.recover_pending_dispatches()
@@ -357,5 +533,6 @@ async def test_attachment_delete_guards_and_failed_commit_preserve_formal_bytes(
         workdir.read_file(path, 1024)
     async with factory() as db:
         assert await db.get(AgentAttachment, file["id"]) is None
+        assert (await db.get(AgentInput, receipt["input_id"])).attachment_file_ids == [file["id"]]
         messages = await AgentInputRepository(db).list_messages(receipt["input_id"])
-        assert (await AttachmentRepository(db).for_messages([messages[0].id]))[messages[0].id] == []
+        assert messages == []

@@ -68,6 +68,7 @@ async def test_delete_agent_rejects_pending_input_after_prior_turn(session):
     user, agent, _ = await _seed_agent(session)
     session.add(
         AgentInput(
+            messages=[{"role": "user", "content": [{"type": "text", "text": "pending"}], "metadata": {}, "yuxi": {"attachment_file_ids": []}}],
             id="pending-input",
             received_seq=1,
             thread_id="agent-thread",

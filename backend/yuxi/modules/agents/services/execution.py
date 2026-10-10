@@ -486,10 +486,19 @@ async def _stream_agent_execution(
                 thread_id,
                 agent_session.uid,
                 agent_session.app_id,
-                model_input_id=meta["input_id"],
+                for_model=True,
             )
             authorized_attachments = [serialize_attachment(item, thread_id=thread_id) for item in attachments]
-            graph_input[-1] = _with_attachment_context(graph_input[-1], authorized_attachments)
+            if authorized_attachments:
+                message_ids = {message.extra_metadata["message_id"] for message in input_messages}
+                for position, message in enumerate(input_messages):
+                    own_id = message.extra_metadata["message_id"]
+                    visible = [
+                        attachment for attachment in authorized_attachments
+                        if attachment["message_id"] == own_id
+                        or (position == len(input_messages) - 1 and attachment["message_id"] not in message_ids)
+                    ]
+                    graph_input[position] = _with_attachment_context(graph_input[position], visible)
         langfuse_run = _build_langfuse_run_context(
             current_user=current_user,
             thread_id=thread_id,

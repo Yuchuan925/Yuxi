@@ -19,6 +19,7 @@ from yuxi.modules.agents.models.sessions import Session
 from yuxi.modules.agents.models.turns import AgentTurn
 from yuxi.modules.agents.repositories.cooperation import CooperationRepository
 from yuxi.modules.agents.repositories.definitions import AgentRepository
+from yuxi.modules.agents.repositories.input import AgentInputRepository
 from yuxi.modules.agents.repositories.runs import AgentRunRepository
 from yuxi.modules.agents.repositories.sessions import SessionRepository
 from yuxi.modules.agents.repositories.turn import AgentTurnRepository
@@ -267,13 +268,7 @@ class SessionCooperationService:
         existing = await self.repo.lock_tool_receipt(run, target, key)
         if existing is not None:
             require_input_replay(existing, "agent.session.input.message", intent)
-            return {
-                "session_id": target.thread_id,
-                "input_id": existing.input_id,
-                "turn_id": existing.turn_id,
-                "run_id": existing.run_id,
-                "status": "started" if existing.turn_id else "queued",
-            }
+            return await self._input_result(target, existing.input_id)
         frozen = {"runtime": {"tool_call_id": call_id}}
         receipt = await accept_locked(
             db=self.db,
@@ -286,7 +281,6 @@ class SessionCooperationService:
             messages=[build_chat_input_message(description)],
             model_spec=None,
             tool_approval_mode=None,
-            attachment_file_ids=[],
             source="cooperation",
             channel="internal",
             external_id=None,
@@ -295,13 +289,21 @@ class SessionCooperationService:
         )
         await self.db.commit()
         await dispatch_next_input(uid=run.uid, agent_slug=target.agent_id, thread_id=target.thread_id)
-        await self.db.refresh(receipt)
+        return await self._input_result(target, receipt.input_id)
+
+    async def _input_result(self, target: Session, input_id: str) -> dict:
+        """从持久 Input 读取派发归属，回执仅提供稳定目标。"""
+        item = await AgentInputRepository(self.db).get_for_scope(
+            input_id=input_id, thread_id=target.thread_id, uid=target.uid, app_id=target.app_id
+        )
+        if item is None:
+            raise ValueError("协作回执缺少目标 Input")
         return {
             "session_id": target.thread_id,
-            "input_id": receipt.input_id,
-            "turn_id": receipt.turn_id,
-            "run_id": receipt.run_id,
-            "status": "started" if receipt.turn_id else "queued",
+            "input_id": item.id,
+            "turn_id": item.turn_id,
+            "run_id": item.consumed_run_id,
+            "status": "started" if item.turn_id else "queued",
         }
 
 

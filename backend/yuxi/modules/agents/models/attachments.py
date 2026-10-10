@@ -21,7 +21,7 @@ class AgentAttachment(BusinessBase):
     expires_at = Column(DateTime(timezone=True), nullable=False)
     status = Column(String(16), nullable=False, default="draft")
     input_id = Column(String(64), ForeignKey("agent_inputs.id", ondelete="CASCADE"), nullable=True, index=True)
-    receipt_id = Column(String(64), nullable=True, index=True)
+    message_id = Column(Integer, nullable=True, index=True)
     object_name = Column(Text, nullable=True)
     parsed_source = Column(Text, nullable=True)
     parse_method = Column(String(32), nullable=True)
@@ -31,16 +31,16 @@ class AgentAttachment(BusinessBase):
 
     __table_args__ = (
         ForeignKeyConstraint(
-            ["receipt_id", "input_id"],
-            ["agent_input_receipts.id", "agent_input_receipts.input_id"],
-            ondelete="CASCADE",
-            name="fk_agent_attachments_receipt_input",
+            ["message_id", "input_id"],
+            ["messages.id", "messages.source_input_id"],
+            name="fk_agent_attachments_message_origin",
         ),
         CheckConstraint("size_bytes >= 0", name="ck_agent_attachments_size"),
         CheckConstraint(
-            "(status = 'draft' AND input_id IS NULL AND receipt_id IS NULL AND object_name IS NOT NULL) "
-            "OR (status = 'preparing' AND input_id IS NOT NULL AND receipt_id IS NOT NULL AND object_name IS NOT NULL) "
-            "OR (status = 'ready' AND input_id IS NOT NULL AND receipt_id IS NOT NULL "
+            "(status = 'draft' AND input_id IS NULL AND message_id IS NULL AND object_name IS NOT NULL) "
+            "OR (status = 'preparing' AND input_id IS NOT NULL "
+            "AND message_id IS NULL AND object_name IS NOT NULL) "
+            "OR (status = 'ready' AND input_id IS NOT NULL "
             "AND path IS NOT NULL AND original_path IS NOT NULL)",
             name="ck_agent_attachments_preparation",
         ),

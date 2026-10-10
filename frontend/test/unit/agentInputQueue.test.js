@@ -37,6 +37,71 @@ after(async () => {
   delete globalThis.localStorage
 })
 
+test('转引导重试复用幂等键，成功和冲突都回读队列且不写正式历史', async () => {
+  const state = {
+    queuedInputs: [{ input_id: 'F1', kind: 'follow_up', status: 'pending' }],
+    inputMonitors: {}, ongoingRunGroup: { items: {}, optimisticMessages: {} }
+  }
+  const original = { ...agentApi }
+  const { ErrorHandler } = await server.ssrLoadModule('/src/shared/lib/errorHandler.js')
+  const originalHandleError = ErrorHandler.handleError
+  ErrorHandler.handleError = () => {}
+  const keys = []
+  let reads = 0
+  agentApi.getThreadInput = async () => ({ status: 'pending' })
+  agentApi.getThreadQueue = async () => {
+    reads++
+    return { inputs: reads === 1 ? [{ input_id: 'F1', kind: 'steer', status: 'pending' }] : [] }
+  }
+  agentApi.promoteThreadInput = async (_thread, _input, key) => {
+    keys.push(key)
+    if (keys.length === 1) throw new Error('response lost')
+    if (keys.length === 3) throw Object.assign(new Error('consumed'), { status: 409 })
+  }
+  const queue = useAgentInputQueue({ getThreadState: () => state })
+  try {
+    assert.equal(await queue.promoteInput('t', 'F1'), false)
+    assert.equal(await queue.promoteInput('t', 'F1'), true)
+    assert.equal(keys[0], keys[1])
+    assert.equal(state.queuedInputs[0].kind, 'steer')
+    assert.equal(await queue.promoteInput('t', 'F1'), false)
+    assert.notEqual(keys[1], keys[2])
+    assert.equal(reads, 2)
+    assert.deepEqual(state.queuedInputs, [])
+    assert.deepEqual(state.ongoingRunGroup.items, {})
+  } finally {
+    queue.stopAllInputMonitors('t')
+    Object.assign(agentApi, original)
+    ErrorHandler.handleError = originalHandleError
+  }
+})
+
+test('较早队列快照不能覆盖新快照，取消一条不移除其他引导', async () => {
+  const state = { queuedInputs: [], inputMonitors: {}, ongoingRunGroup: { items: {}, optimisticMessages: {} } }
+  const original = { ...agentApi }
+  let resolveOld
+  agentApi.getThreadQueue = () => new Promise((resolve) => { resolveOld = resolve })
+  agentApi.getThreadInput = async () => ({ status: 'pending' })
+  agentApi.cancelThreadInput = async () => ({ status: 'accepted' })
+  const queue = useAgentInputQueue({ getThreadState: () => state })
+  try {
+    const oldRead = queue.syncQueuedInputs('t')
+    const rows = ['S1', 'S2'].map((input_id) => ({ input_id, kind: 'steer', status: 'pending' }))
+    agentApi.getThreadQueue = async () => ({ inputs: rows })
+    await queue.syncQueuedInputs('t')
+    resolveOld({ inputs: [{ input_id: 'F1', kind: 'follow_up', status: 'pending' }] })
+    await oldRead
+    assert.deepEqual(state.queuedInputs.map((item) => item.input_id), ['S1', 'S2'])
+    agentApi.getThreadQueue = async () => ({ inputs: [rows[1]] })
+    assert.equal(await queue.cancelInput('t', 'S1'), true)
+    assert.deepEqual(state.queuedInputs.map((item) => item.input_id), ['S2'])
+    assert.deepEqual(state.ongoingRunGroup.items, {})
+  } finally {
+    queue.stopAllInputMonitors('t')
+    Object.assign(agentApi, original)
+  }
+})
+
 test('审批前后的工具和思考跨关联 Run 连续展示，正文仍独立', () => {
   const runs = [
     { id: 'first', turn_id: 'turn-1', status: 'interrupted', timing: { created_at: '2026-09-16T00:00:00Z' } },
@@ -170,7 +235,7 @@ test('同一消息的 thinking、正文和工具分段使用不同的稳定 key'
   assert.deepEqual(updated.map((item) => item.key), items.map((item) => item.key))
 })
 
-test('完整队列快照合并 steer 节点并遵循服务器优先顺序', async () => {
+test('完整队列快照保留独立 steer 节点并遵循服务器优先顺序', async () => {
   const state = {
     queuedInputs: [
       { input_id: 'F1', kind: 'follow_up', status: 'pending', content: '普通消息' },
@@ -186,13 +251,15 @@ test('完整队列快照合并 steer 节点并遵循服务器优先顺序', asyn
   const queue = useAgentInputQueue({ getThreadState: () => state })
   agentApi.getThreadInput = async () => ({ status: 'pending' })
   agentApi.getThreadQueue = async () => ({ inputs: [
-    { input_id: 'S1', kind: 'steer', status: 'pending', content: 'S1\nS2' },
+    { input_id: 'S1', kind: 'steer', status: 'pending', content: 'S1' },
+    { input_id: 'S2', kind: 'steer', status: 'pending', content: 'S2' },
     { input_id: 'F1', kind: 'follow_up', status: 'pending', content: '普通消息' }
   ] })
   try {
     await queue.syncQueuedInputs('thread-1')
-    assert.deepEqual(state.queuedInputs.map((input) => input.input_id), ['S1', 'F1', 'local'])
-    assert.equal(state.queuedInputs[0].content, 'S1\nS2')
+    assert.deepEqual(state.queuedInputs.map((input) => input.input_id), ['S1', 'S2', 'F1', 'local'])
+    assert.equal(state.queuedInputs[0].content, 'S1')
+    assert.deepEqual(state.ongoingRunGroup.items, {})
     assert.ok(state.inputQueueMonitor)
     assert.strictEqual(state.inputMonitors.S1.controller, state.inputMonitors.F1.controller)
     agentApi.getThreadQueue = async () => ({ inputs: [

@@ -243,9 +243,11 @@ async def get_turn_snapshot(*, db: AsyncSession, scope: ActorScope, thread_id: s
     turn = await turn_repo.get_for_scope(turn_id=turn_id, thread_id=thread_id, uid=scope.uid, app_id=scope.app_id)
     if turn is None:
         raise HTTPException(status_code=404, detail="Turn 不存在")
+    from yuxi.modules.agents.repositories.input import AgentInputRepository
     from yuxi.modules.agents.services.public_items import serialize_public_run
 
     runs = await turn_repo.list_runs(turn.id)
+    input_ids = await AgentInputRepository(db).input_ids_for_runs([run.id for run in runs])
     result_run = next((run for run in runs if run.id == turn.result_run_id), None)
     current_run = next((run for run in runs if run.id == turn.current_run_id), None)
     output = None
@@ -254,7 +256,7 @@ async def get_turn_snapshot(*, db: AsyncSession, scope: ActorScope, thread_id: s
         if output_message is None or output_message.run_id != result_run.id or output_message.turn_id != turn.id:
             raise ValueError("Turn 最终结果消息归属不一致")
         await db.refresh(output_message, attribute_names=["tool_calls"])
-        from yuxi.modules.agents.services.public_items import serialize_public_items, serialize_public_run
+        from yuxi.modules.agents.services.public_items import serialize_public_items
 
         output = serialize_public_items(output_message, result_run, turn.result_run_id)
     audits = await turn_repo.list_model_usage_audits(turn.id)
@@ -269,7 +271,7 @@ async def get_turn_snapshot(*, db: AsyncSession, scope: ActorScope, thread_id: s
         "current_run_id": turn.current_run_id,
         "result_run_id": turn.result_run_id,
         "waitpoint": turn.waitpoint,
-        "runs": [serialize_public_run(run) for run in runs],
+        "runs": [serialize_public_run(run, input_ids[run.id]) for run in runs],
         "output": output,
         "usage": _summarize_turn_usage(audits),
         "error": (

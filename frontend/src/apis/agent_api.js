@@ -113,13 +113,13 @@ export const agentApi = {
             input: [{ role: 'user', content }],
             yuxi: {
               mode: data.mode,
+              attachment_file_ids: data.attachment_file_ids || [],
               ...(data.mode !== 'steer'
                 ? {
                     model: data.model_spec,
                     tool_approval_mode: data.tool_approval_mode
                   }
-                : {}),
-              attachment_file_ids: data.attachment_file_ids || []
+                : {})
             }
           }
         ]
@@ -199,6 +199,13 @@ export const agentApi = {
   /**
    * 取消排队中的请求
    */
+  promoteThreadInput: (threadId, inputId, idempotencyKey) =>
+    postSessionEvents(
+      `/api/v1/agents/sessions/${threadId}/events`,
+      { events: [{ type: 'yuxi.session.input.promote', input_id: inputId }] },
+      idempotencyKey
+    ),
+
   cancelThreadInput: (threadId, inputId, idempotencyKey) =>
     apiPost(
       `/api/v1/agents/sessions/${threadId}/events`,

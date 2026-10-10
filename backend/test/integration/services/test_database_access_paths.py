@@ -65,10 +65,13 @@ async def test_queue_history_and_membership_indexes_remove_baseline_work():
                 "INSERT INTO users (uid,username,password_hash,role,is_deleted,login_failed_count) VALUES ('u','u','fixture','user',0,0)",
                 "INSERT INTO projects (id,uid,selection_status,workdir_path,directory_mode) VALUES ('p','u','implicit','projects/p','managed')",
                 "INSERT INTO sessions (thread_id,tree_root_thread_id,uid,agent_id,project_id,status,is_pinned,updated_at) SELECT 't'||i,'t'||i,'u','main','p','active',false,now() FROM generate_series(0,99) i",
-                "INSERT INTO agent_inputs (id,thread_id,uid,agent_slug,kind,status,input_payload,source,channel,origin_metadata,created_at,cancelled_at) SELECT 'i'||i,'t'||(i%100),'u','main','follow_up',CASE WHEN i%2=0 THEN 'pending' ELSE 'cancelled' END,'{}','chat','web','{}',now(),CASE WHEN i%2=1 THEN now() END FROM generate_series(1,20000) i",
+                "INSERT INTO agent_inputs (id,thread_id,uid,agent_slug,kind,status,messages,input_payload,source,channel,"
+                "origin_metadata,created_at,cancelled_at,attachment_file_ids) SELECT 'i'||i,'t'||(i%100),'u','main','follow_up',"
+                "CASE WHEN i%2=0 THEN 'pending' ELSE 'cancelled' END,'[]','{}','chat','web','{}',now(),"
+                "CASE WHEN i%2=1 THEN now() END,'[]' FROM generate_series(1,20000) i",
                 "INSERT INTO messages (session_record_id,role,content,delivery_status,created_at) SELECT c.id,'user','fixture','queued',now()+i*interval '1 microsecond' FROM generate_series(1,20000) i JOIN sessions c ON c.thread_id='t'||(i%100)",
                 "INSERT INTO agent_input_receipts (id,idempotency_key,uid,thread_id,event_type,intent_hash,input_id,created_at) SELECT 'r'||i,'key'||i,'u','t'||(i%100),'input','fixture','i'||i,now() FROM generate_series(1,20000) i",
-                "INSERT INTO agent_input_messages (input_id,receipt_id,message_id,position) SELECT 'i'||i,'r'||i,i,0 FROM generate_series(1,20000) i",
+
                 "INSERT INTO agent_turns (id,thread_id,uid,status,created_at) SELECT 'turn'||i,'t'||i,'u','completed',now() FROM generate_series(0,99) i",
                 "INSERT INTO agent_runs (id,thread_id,runtime_scope_id,turn_id,session_record_id,agent_slug,uid,status,source,channel,run_type,origin_metadata,input_payload,token_usage,runtime_cleanup_pending,created_at) SELECT 'run'||i,c.thread_id,c.thread_id,'turn'||(i%100),c.id,'main','u','completed','chat','web','chat','{}','{}','{}',false,now() FROM generate_series(1,20000) i JOIN sessions c ON c.thread_id='t'||(i%100)",
                 "UPDATE agent_runs SET status='running',worker_id='fixture',lease_expires_at=now()-interval '1 second' WHERE id IN (SELECT 'run'||i FROM generate_series(1,100) i)",
@@ -93,7 +96,6 @@ async def test_queue_history_and_membership_indexes_remove_baseline_work():
                 "ix_agent_input_receipts_input_seq",
                 "SELECT max(receive_seq) FROM agent_input_receipts WHERE input_id='i100'",
             ),
-            ("ix_agent_input_messages_input", "SELECT * FROM agent_input_messages WHERE input_id='i100'"),
         )
         for index, query in paths:
             async with engine.connect() as conn:

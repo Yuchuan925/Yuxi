@@ -12,6 +12,7 @@ import httpx
 import pytest
 
 from test.e2e.test_agent_lifecycle_e2e import output_text
+from test.e2e.e2e_helpers import wait_for_consumed_input
 from e2e_helpers import delete_agent, postgres_dsn, skip_if_external_quota
 from test.live_api_cleanup import make_test_session_title
 from test.support.public_events import read_events
@@ -95,7 +96,7 @@ async def _submit_input(client: httpx.AsyncClient, headers: dict[str, str], thre
         headers={**headers, "Idempotency-Key": f"async-input-{uuid.uuid4().hex}"},
     )
     assert response.status_code == 202, response.text
-    accepted = response.json()
+    accepted = await wait_for_consumed_input(client, headers, response.json())
     assert accepted["session_id"] == thread_id
     assert accepted["input_id"] and accepted["turn_id"] and accepted["run_id"], accepted
     return accepted

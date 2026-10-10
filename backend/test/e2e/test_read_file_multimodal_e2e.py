@@ -109,7 +109,12 @@ async def _run(
             "events": [
                 {
                     "type": "agent.session.input.message",
-                    "input": [{"role": "user", "content": [{"type": "input_text", "text": query}]}],
+                    "input": [
+                        {
+                            "role": "user",
+                            "content": [{"type": "input_text", "text": query}],
+                        }
+                    ],
                     "yuxi": {"mode": "follow_up", "attachment_file_ids": [attachment_file_id]},
                 }
             ],
@@ -117,7 +122,9 @@ async def _run(
         headers={**headers, "Idempotency-Key": f"read-file-input-{uuid.uuid4().hex}"},
     )
     assert response.status_code == 202, response.text
-    accepted = response.json()
+    from test.e2e.e2e_helpers import wait_for_consumed_input
+
+    accepted = await wait_for_consumed_input(client, headers, response.json())
     turn_id = str(accepted["turn_id"])
     run_id = str(accepted["run_id"])
 

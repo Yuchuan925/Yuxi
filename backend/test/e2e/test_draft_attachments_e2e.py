@@ -52,7 +52,7 @@ async def test_draft_initial_send_queue_cancel_and_model_attachment_isolation(e2
                 "agent_id": slug,
                 "title": make_test_session_title("draft-send"),
                 "input": [initial],
-                "attachment_file_ids": [first["id"]],
+                "yuxi": {"attachment_file_ids": [first["id"]]},
             }
             headers = {**e2e_headers, "Idempotency-Key": str(uuid.uuid4())}
             created = await e2e_client.post("/api/v1/agents/sessions", headers=headers, json=body)
@@ -60,11 +60,19 @@ async def test_draft_initial_send_queue_cancel_and_model_attachment_isolation(e2
             session = created.json()
             session_id = session["id"]
             receipt = session["yuxi"]["receipt"]
-            turn_id = receipt["turn_id"]
-            assert turn_id and receipt["run_id"]
+            from test.e2e.e2e_helpers import wait_for_consumed_input
+
+            consumed = await wait_for_consumed_input(e2e_client, e2e_headers, receipt)
+            turn_id = consumed["turn_id"]
             repeated = await e2e_client.post("/api/v1/agents/sessions", headers=headers, json=body)
             assert repeated.status_code == 201, repeated.text
             assert repeated.json()["yuxi"]["receipt"] == receipt
+            changed = await e2e_client.post(
+                "/api/v1/agents/sessions",
+                headers=headers,
+                json={**body, "yuxi": {"attachment_file_ids": []}},
+            )
+            assert changed.status_code == 409, changed.text
             async with asyncio.timeout(30):
                 while not (await replay.get("/blocking-started", params={"token": gate})).json()["started"]:
                     await asyncio.sleep(0.1)
@@ -118,19 +126,21 @@ async def test_draft_initial_send_queue_cancel_and_model_attachment_isolation(e2
                 content = await e2e_client.get(refs[file["id"]]["artifact_url"], headers=e2e_headers)
                 assert content.status_code == 200 and content.content == expected
             assert await conn.fetchval("SELECT status FROM agent_inputs WHERE id=$1", queued_id) == "cancelled"
-            assert await conn.fetchval("SELECT count(*) FROM agent_runs WHERE input_id=$1", queued_id) == 0
+            assert await conn.fetchval("SELECT consumed_run_id FROM agent_inputs WHERE id=$1", queued_id) is None
+            assert await conn.fetchval("SELECT count(*) FROM messages WHERE source_input_id=$1", queued_id) == 0
             assert (
                 await conn.fetchval("SELECT count(*) FROM agent_input_receipts WHERE idempotency_key=$1", headers["Idempotency-Key"]) == 1
             )
             payload = json.loads(await conn.fetchval("SELECT input_payload FROM agent_inputs WHERE id=$1", receipt["input_id"]))
             assert not {"attachments_ready", "attachment_drafts", "attachment_error"} & payload.keys()
             rows = await conn.fetch(
-                "SELECT status,object_name,parsed_source,input_id,receipt_id FROM agent_attachments WHERE id=ANY($1::varchar[])",
+                "SELECT status,object_name,parsed_source,input_id,message_id FROM agent_attachments WHERE id=ANY($1::varchar[])",
                 [first["id"], future["id"]],
             )
             assert len(rows) == 2 and all(row["status"] == "ready" for row in rows)
             assert all(row["object_name"] is None and row["parsed_source"] is None for row in rows)
             assert {row["input_id"] for row in rows} == {receipt["input_id"], queued_id}
+            assert all((row["message_id"] is None) == (row["input_id"] == queued_id) for row in rows)
             items = await e2e_client.get(f"/api/v1/agents/sessions/{session_id}/items", headers=e2e_headers, params={"order": "asc"})
             assert items.status_code == 200, items.text
             user_item = next(

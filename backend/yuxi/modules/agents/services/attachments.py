@@ -53,6 +53,7 @@ def serialize_attachment(attachment: AgentAttachment, *, thread_id: str) -> dict
         "original_path": attachment.original_path,
         "original_artifact_url": _artifact_url(thread_id, attachment.original_path) if attachment.original_path else None,
         "input_id": attachment.input_id,
+        "message_id": attachment.message_id,
     }
 
 
@@ -164,11 +165,13 @@ async def parse_draft_file(*, file_id: str, parse_method: str | None, scope: Act
     return {**_file_response(attachment), "parse_method": method}
 
 
-async def stage_input_attachments(*, db, scope: ActorScope, input_item, receipt_id: str, file_ids: list[str]) -> None:
-    """接收事务只绑定附件行、Input 与 Receipt，尚不准备文件。"""
+async def stage_input_attachments(*, db, scope: ActorScope, input_item, file_ids: list[str]) -> None:
+    """接收事务按固定锁顺序绑定提交级附件，尚不准备文件。"""
     if (input_item.uid, input_item.app_id) != (scope.uid, scope.app_id):
         raise ValueError("附件绑定目标与接收身份不一致")
     unique_ids = set(file_ids)
+    if len(unique_ids) != len(file_ids):
+        raise HTTPException(status_code=422, detail="同一文件不能重复绑定")
     attachments = await AttachmentRepository(db).lock_for_scope(unique_ids, scope.uid, scope.app_id)
     if len(attachments) != len(unique_ids):
         raise HTTPException(status_code=404, detail="文件草稿不存在或不可访问")
@@ -179,7 +182,6 @@ async def stage_input_attachments(*, db, scope: ActorScope, input_item, receipt_
         if size != attachment.size_bytes:
             raise HTTPException(status_code=422, detail="附件草稿内容不存在或已变化")
         attachment.input_id = input_item.id
-        attachment.receipt_id = receipt_id
         attachment.status = "preparing"
     await db.flush()
 

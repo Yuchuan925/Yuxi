@@ -7,7 +7,6 @@ from datetime import datetime, timedelta
 from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yuxi.modules.agents.models.inputs import AgentInputMessage
 from yuxi.modules.agents.models.messages import AUDIT_MESSAGE_TYPES, TOOL_AUDIT_MESSAGE_TYPE, Message, ToolCall
 from yuxi.modules.agents.models.runs import AGENT_RUN_TERMINAL_STATUSES, AgentRun, AgentRunAttempt
 from yuxi.modules.agents.models.turns import AgentTurn
@@ -183,7 +182,6 @@ class AgentRunRepository:
         uid: str,
         turn_id: str,
         input_payload: dict,
-        input_id: str | None = None,
         source: str = "chat",
         channel: str = "web",
         external_id: str | None = None,
@@ -210,7 +208,6 @@ class AgentRunRepository:
             agent_slug=agent_slug,
             uid=str(uid),
             turn_id=turn_id,
-            input_id=input_id,
             app_id=app_id,
             api_key_id=api_key_id,
             source=source,
@@ -751,11 +748,11 @@ class AgentRunRepository:
         delivery_status = RUN_STATUS_TO_DELIVERY_STATUS.get(run.status)
         if delivery_status is None:
             return
-        if run.input_id is not None:
-            message_ids = select(AgentInputMessage.message_id).where(AgentInputMessage.input_id == run.input_id)
-            await self.db.execute(update(Message).where(Message.id.in_(message_ids)).values(delivery_status=delivery_status))
-        elif run.input_message_id is not None:
-            await self.db.execute(update(Message).where(Message.id == run.input_message_id).values(delivery_status=delivery_status))
+        await self.db.execute(
+            update(Message)
+            .where(Message.run_id == run.id, Message.role == "user")
+            .values(delivery_status=delivery_status)
+        )
 
     async def record_run_manifest(
         self,

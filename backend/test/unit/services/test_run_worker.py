@@ -222,7 +222,6 @@ def _build_run() -> SimpleNamespace:
         id="run-1",
         status="pending",
         turn_id="turn-1",
-        input_id=None,
         app_id=None,
         input_payload={"model_spec": "provider:model"},
         input_message_id=10,
@@ -355,6 +354,7 @@ def _patch_common(monkeypatch: pytest.MonkeyPatch, run_obj: SimpleNamespace):
         assert run.input_message_id == 10
         return [
             SimpleNamespace(
+                id=10, source_input_id="input-1",
                 content="hello",
                 image_content=None,
                 extra_metadata={"raw_message": {"type": "human", "content": "hello"}},
@@ -459,6 +459,7 @@ async def test_process_agent_run_keeps_source_without_legacy_invocation_metadata
         assert run.input_message_id == 10
         return [
             SimpleNamespace(
+                id=10, source_input_id="input-1",
                 content="hello",
                 image_content=None,
                 extra_metadata={
@@ -1128,6 +1129,7 @@ async def test_process_agent_run_rejects_invalid_raw_input_message(monkeypatch: 
         assert run.input_message_id == 10
         return [
             SimpleNamespace(
+                id=10, source_input_id="input-1",
                 content="hello",
                 image_content=None,
                 extra_metadata={"raw_message": {"type": "human", "content": object()}},

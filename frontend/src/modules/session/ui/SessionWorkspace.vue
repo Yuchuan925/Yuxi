@@ -236,10 +236,21 @@
                       <span class="queued-request-content" :title="input.content || '排队输入'">
                         {{ input.content || '排队输入' }}
                       </span>
-                      <span v-if="input.attachment_status === 'preparing'" class="queued-request-notice">
-                        {{ input.attachment_error || '附件准备中' }}
+                      <span class="queued-request-status" :title="input.attachment_error || ''">
+                        {{ input.attachment_status === 'preparing' ? '附件准备中' : input.kind === 'steer' ? '等待引导' : '排队中' }}
                       </span>
                       <div class="queued-request-actions">
+                        <button
+                          v-if="canPromoteQueuedInput(input)"
+                          type="button"
+                          class="queued-request-delete lucide-icon-btn"
+                          :disabled="promotingInputIds.has(input.input_id) || cancellingInputIds.has(input.input_id)"
+                          :title="isStreaming ? '转为引导，将沿用当前任务的模型和审批配置' : '转为引导'"
+                          aria-label="转为引导"
+                          @click="handlePromoteQueuedInput(input.input_id)"
+                        >
+                          <CornerDownRight :size="16" />
+                        </button>
                         <button
                           v-if="canCancelQueuedInput(input)"
                           type="button"
@@ -1008,6 +1019,7 @@ let workspaceReady = Promise.resolve()
 const pendingActionFocusTurnId = ref(null)
 const sendCooldownActive = ref(false)
 const cancellingInputIds = reactive(new Set())
+const promotingInputIds = reactive(new Set())
 let sendCooldownTimer = null
 // 预设的打招呼文本
 const greetingMessages = [
@@ -1031,6 +1043,7 @@ const {
   resumeActiveRunForThread,
   resumeQueuedInputs,
   cancelInput,
+  promoteInput,
   continueQueue,
   startInputMonitor
 } = sessionRuntime
@@ -2307,11 +2320,16 @@ const canSubmitSteer = computed(
   () =>
     isStreaming.value &&
     currentThreadState.value?.activeRunSteerable === true &&
-    Boolean(String(userInput.value || '').trim()) &&
+    (Boolean(String(userInput.value || '').trim()) || agentInputAreaRef.value?.hasImages) &&
     !sendCooldownActive.value &&
     !isWaitingForUserAction.value
 )
 const canCancelQueuedInput = (input) => input?.status !== 'sending'
+const canPromoteQueuedInput = (input) =>
+  input?.status === 'pending' && input.kind === 'follow_up' &&
+  input.attachment_status !== 'preparing' && !isWaitingForUserAction.value &&
+  !currentThreadState.value?.cooperationWaiting &&
+  (!currentThreadState.value?.activeRunId || currentThreadState.value?.activeRunSteerable === true)
 const shouldRefreshStateWhileStreaming = computed(
   () =>
     workspaceActive.value &&
@@ -2986,6 +3004,17 @@ watch(
 )
 onUnmounted(() => releaseRuntimeView())
 
+const handlePromoteQueuedInput = async (inputId) => {
+  const threadId = currentChatId.value
+  if (!threadId || promotingInputIds.has(inputId)) return
+  promotingInputIds.add(inputId)
+  try {
+    if (await promoteInput(threadId, inputId)) message.success('已转为引导')
+  } finally {
+    promotingInputIds.delete(inputId)
+  }
+}
+
 const handleCancelQueuedInput = async (inputId) => {
   const threadId = currentChatId.value
   if (!threadId || !inputId || cancellingInputIds.has(inputId)) return
@@ -3294,7 +3323,7 @@ const handleSendMessage = async ({ images = [], mode = 'follow_up', retry = fals
     mergeItemSnapshot(threadState.ongoingRunGroup, inputSnapshot.items || [])
     delete threadState.ongoingRunGroup.optimisticMessages[clientKey]
     delete threadState.ongoingRunGroup.optimisticMessages[acceptedInputId]
-    const runId = accepted.run_id
+    const runId = inputSnapshot.run_id
     threadState.queuedInputs = threadState.queuedInputs.filter(
       (input) => input.input_id !== clientKey
     )
@@ -3334,7 +3363,7 @@ const handleSendMessage = async ({ images = [], mode = 'follow_up', retry = fals
       threadState.pendingInputId = acceptedInputId
       await startRunStream(threadId, runId, null, {
         inputId: acceptedInputId,
-        turnId: accepted.turn_id
+        turnId: inputSnapshot.turn_id
       })
     }
   } catch (error) {
@@ -3371,7 +3400,7 @@ const handleSendMessage = async ({ images = [], mode = 'follow_up', retry = fals
 
 const handleDirectSteer = async () => {
   if (!canSubmitSteer.value) return
-  await handleSendMessage({ mode: 'steer' })
+  agentInputAreaRef.value?.submit('steer')
 }
 
 const handleContextCompression = async () => {
@@ -4421,7 +4450,7 @@ watch(currentChatId, (threadId, oldThreadId) => {
     .queued-request-row {
       min-height: 28px;
       display: grid;
-      grid-template-columns: 18px minmax(0, 1fr) auto;
+      grid-template-columns: 18px minmax(0, 1fr) auto auto;
       gap: 10px;
       align-items: center;
       padding: 0 4px 0 6px;
@@ -4467,7 +4496,15 @@ watch(currentChatId, (threadId, oldThreadId) => {
     .queued-request-actions {
       display: inline-flex;
       align-items: center;
+      justify-content: flex-end;
+      min-width: 64px;
       gap: 4px;
+    }
+
+    .queued-request-status {
+      color: var(--color-text-tertiary);
+      font-size: 12px;
+      white-space: nowrap;
     }
 
     .queued-request-steer,

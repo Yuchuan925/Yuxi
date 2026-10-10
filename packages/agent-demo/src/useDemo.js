@@ -450,7 +450,7 @@ export function useDemo() {
         agent_id: state.agentId,
         title: text.slice(0, 40),
         input,
-        attachment_file_ids: fileIds,
+        yuxi: { attachment_file_ids: fileIds },
       };
     }
     return runCommand(command);

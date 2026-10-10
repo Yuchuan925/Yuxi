@@ -16,6 +16,7 @@ from e2e_helpers import (
     delete_agent,
     iter_public_thread_events,
     postgres_dsn,
+    wait_for_consumed_input,
 )
 from yuxi.modules.extensions.skills.projection import get_user_skills_root_dir
 
@@ -147,8 +148,8 @@ async def test_edited_shared_skill_is_loaded_by_next_run(e2e_client: httpx.Async
             },
         )
         assert run.status_code == 202, run.text
-        run_id = str(run.json()["run_id"])
-        turn_id = str(run.json()["turn_id"])
+        consumed = await wait_for_consumed_input(e2e_client, e2e_headers, run.json())
+        run_id, turn_id = consumed["run_id"], consumed["turn_id"]
         async with asyncio.timeout(RUN_TIMEOUT_SECONDS):
             async for event in iter_public_thread_events(e2e_client, e2e_headers, thread_id):
                 if event.get("turn_id") == turn_id and event["type"] in {

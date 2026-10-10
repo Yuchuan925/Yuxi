@@ -46,8 +46,10 @@ Yuxi 提供用户、部门、共享范围、模型供应商和 API Key 管理。
 ```text
 Web / CLI / 外部 API
         ↓
-FastAPI 接收请求并保存 Message、Request
-        ↓  PostgreSQL 提交后
+FastAPI 接收请求并保存 Input 原文、Receipt
+        ↓
+调度器消费就绪输入，创建 Message、Turn 与 Run
+        ↓  消费事务提交后
 Redis / ARQ 投递 AgentRun
         ↓
 Worker 执行 LangGraph，写入事件和最终结果

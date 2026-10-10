@@ -21,13 +21,14 @@ from yuxi.modules.identity.repositories.users import UserRepository
 import yuxi.modules.schedules.service as service
 from yuxi.modules.schedules.service import _claim_due_run, _create_run_record
 from yuxi.modules.agents.models.runs import AgentRun
-from yuxi.modules.agents.models.inputs import AgentInput, AgentInputMessage, AgentInputReceipt
+from yuxi.modules.agents.models.inputs import AgentInput, AgentInputReceipt
 from yuxi.modules.agents.models.turns import AgentTurn
 from yuxi.modules.agents.models.sessions import Session
 from yuxi.modules.agents.models.messages import Message
 from yuxi.modules.workspace.models import Project
 from yuxi.modules.schedules.models import ScheduledAgentJob, ScheduledAgentRun
 from yuxi.modules.identity.models import User
+from yuxi.modules.agents.services.input_messages import build_chat_input_message, serialize_input_message
 from yuxi.shared.datetime import utc_now
 
 pytestmark = pytest.mark.integration
@@ -128,10 +129,11 @@ async def test_claim_concurrency_coalesce_and_soft_delete_history():
                 app_id=None,
                 agent_slug="chatbot",
                 kind="follow_up",
+                messages=[serialize_input_message(build_chat_input_message("hello"))],
                 source="scheduled_agent",
                 channel="worker",
             )
-            receipt = await AgentInputReceiptRepository(db).create(
+            await AgentInputReceiptRepository(db).create(
                 receipt_id=f"receipt-{uuid.uuid4()}",
                 idempotency_key=scheduled_run.id,
                 uid=uid,
@@ -141,10 +143,6 @@ async def test_claim_concurrency_coalesce_and_soft_delete_history():
                 intent_hash="scheduled",
                 input_id=input_item.id,
             )
-            message = Message(session_record_id=agent_session.id, role="user", content="hello", delivery_status="queued")
-            db.add(message)
-            await db.flush()
-            await input_repo.add_messages(input_id=input_item.id, receipt_id=receipt.id, message_ids=[message.id])
             scheduled_run.status = "submitted"
             await db.flush()
             assert await repo.has_active_run(job_id) is True
@@ -168,16 +166,14 @@ async def test_claim_concurrency_coalesce_and_soft_delete_history():
                 agent_slug="chatbot",
                 uid=uid,
                 turn_id=turn.id,
-                input_id=input_item.id,
                 input_payload={},
                 source="scheduled_agent",
                 channel="worker",
                 session_record_id=agent_session.id,
             )
             await AgentTurnRepository(db).set_current(turn, run_id=agent_run.id)
-            cutoff = await input_repo.get_latest_receive_seq(input_item.id)
-            assert cutoff is not None
-            await input_repo.consume(input_id=input_item.id, turn_id=turn.id, run_id=agent_run.id, cutoff_seq=cutoff)
+            [message] = await input_repo.consume(inputs=[input_item], turn_id=turn.id, run_id=agent_run.id)
+            agent_run.input_message_id = message.id
             agent_run.status = "running"
             assert await repo.has_active_run(job_id) is True
 
@@ -203,12 +199,9 @@ async def test_claim_concurrency_coalesce_and_soft_delete_history():
         async with session_factory() as db:
             await db.execute(delete(ScheduledAgentRun).where(ScheduledAgentRun.job_id == job_id))
             await db.execute(update(AgentTurn).where(AgentTurn.uid == uid).values(current_run_id=None, result_run_id=None))
-            await db.execute(
-                delete(AgentInputMessage).where(AgentInputMessage.input_id.in_(select(AgentInput.id).where(AgentInput.uid == uid)))
-            )
             await db.execute(delete(AgentInputReceipt).where(AgentInputReceipt.uid == uid))
             await db.execute(delete(Message).where(Message.session_record_id.in_(select(Session.id).where(Session.uid == uid))))
-            await db.execute(update(AgentRun).where(AgentRun.uid == uid).values(input_id=None))
+
             await db.execute(delete(AgentInput).where(AgentInput.uid == uid))
             await db.execute(delete(AgentRun).where(AgentRun.uid == uid))
             await db.execute(delete(AgentTurn).where(AgentTurn.uid == uid))
@@ -323,8 +316,9 @@ async def test_transient_dispatch_failure_is_recovered_exactly_once(monkeypatch)
             kind="follow_up",
             source="scheduled_agent",
             channel="worker",
+            messages=[{"role": "user", "content": [{"type": "text", "text": "hello"}]}],
         )
-        receipt = await AgentInputReceiptRepository(db).create(
+        await AgentInputReceiptRepository(db).create(
             receipt_id=f"receipt-{uuid.uuid4()}",
             idempotency_key=scheduled_run_id,
             uid=uid,
@@ -334,15 +328,6 @@ async def test_transient_dispatch_failure_is_recovered_exactly_once(monkeypatch)
             intent_hash="scheduled",
             input_id=input_item.id,
         )
-        message = Message(
-            session_record_id=agent_session.id,
-            role="user",
-            content="hello",
-            delivery_status="queued",
-        )
-        db.add(message)
-        await db.flush()
-        await AgentInputRepository(db).add_messages(input_id=input_id, receipt_id=receipt.id, message_ids=[message.id])
         await db.commit()
         return {"input_id": input_id, "status": "queued"}
 
@@ -436,7 +421,6 @@ async def test_transient_dispatch_failure_is_recovered_exactly_once(monkeypatch)
             assert calls == 2
     finally:
         async with session_factory() as db:
-            await db.execute(delete(AgentInputMessage).where(AgentInputMessage.input_id == input_id))
             await db.execute(delete(AgentInputReceipt).where(AgentInputReceipt.input_id == input_id))
             await db.execute(delete(AgentInput).where(AgentInput.id == input_id))
             await db.execute(delete(Message).where(Message.session_record_id.in_(select(Session.id).where(Session.thread_id == thread_id))))

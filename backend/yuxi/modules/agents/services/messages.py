@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.agents.models.messages import MODEL_AUDIT_MESSAGE_TYPE, Message
 from yuxi.modules.agents.models.runs import AgentRun, build_agent_run_timing
+from yuxi.modules.agents.repositories.attachments import AttachmentRepository
 from yuxi.modules.agents.repositories.input import AgentInputRepository
 from yuxi.modules.agents.repositories.model_audit import ModelMessageAuditRepository
 from yuxi.modules.agents.repositories.runs import AgentRunRepository
@@ -68,7 +69,9 @@ def _serialize_message_audit(message: Any) -> dict[str, Any]:
     return {
         **_serialize_audit_base(message, metadata),
         "type": "human" if message.role == "user" else message.role,
-        "input_id": metadata.get("input_id"),
+        "input_id": message.source_input_id,
+        "input_position": message.input_position,
+        "received_at": format_utc_datetime(message.received_at),
         "delivery_status": message.delivery_status,
     }
 
@@ -422,12 +425,14 @@ async def save_messages_from_langgraph_state(
         if turn is None or turn.current_run_id != run_id:
             raise ValueError("AgentRun 不是当前 Turn 的执行段")
         pending_steer = None
-        if complete_run:
+        if complete_run and turn.status == "running" and not agent_session.queue_paused:
             pending_steer = await AgentInputRepository(session_repo.db).get_pending_steer(
                 thread_id=thread_id,
                 uid=agent_session.uid,
                 app_id=agent_session.app_id,
             )
+            if pending_steer is not None and await AttachmentRepository(session_repo.db).has_unready(pending_steer.id):
+                pending_steer = None
         continue_after_cancelled_steer = complete_run and steer_before_model and pending_steer is None
         if continue_after_cancelled_steer:
             complete_run = False

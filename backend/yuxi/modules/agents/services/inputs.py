@@ -14,7 +14,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.modules.agents.models.inputs import AgentInputReceipt
-from yuxi.modules.agents.models.messages import Message
 from yuxi.modules.agents.models.sessions import Session
 from yuxi.modules.agents.repositories.attachments import AttachmentRepository
 from yuxi.modules.agents.repositories.definitions import AgentRepository
@@ -30,7 +29,7 @@ from yuxi.modules.agents.services.input_config import (
     resolve_agent_run_model_spec,
     resolve_agent_run_tool_approval_mode,
 )
-from yuxi.modules.agents.services.input_messages import AgentRunInputMessage
+from yuxi.modules.agents.services.input_messages import AgentRunInputMessage, serialize_input_message
 from yuxi.modules.agents.services.public_items import serialize_public_items
 from yuxi.modules.agents.services.scheduler import dispatch_next_input
 from yuxi.modules.agents.services.scope import ActorScope
@@ -59,9 +58,9 @@ async def create_thread(
     project_id: str | None = None,
     title: str | None = None,
     messages: list[AgentRunInputMessage] | None = None,
+    attachment_file_ids: list[str] | None = None,
     model_spec: str | None = None,
     tool_approval_mode: str | None = None,
-    attachment_file_ids: list[str] | None = None,
     source: str = "public_api",
     channel: str = "api",
     external_id: str | None = None,
@@ -70,6 +69,9 @@ async def create_thread(
     """在一个事务中创建 Thread，并可同时接收与领取首条输入。"""
     _check_idempotency_key(idempotency_key)
     input_messages = list(messages or [])
+    file_ids = list(attachment_file_ids or [])
+    if file_ids and not input_messages:
+        raise HTTPException(status_code=422, detail="附件必须随非空输入提交")
     intent_hash = _intent_hash(
         "yuxi.session.create",
         agent_slug,
@@ -77,10 +79,10 @@ async def create_thread(
         title,
         model_spec,
         tool_approval_mode,
-        attachment_file_ids or [],
         external_id,
         origin_metadata or {},
         [_message_intent(item) for item in input_messages],
+        file_ids,
     )
     receipt_repo = AgentInputReceiptRepository(db)
     existing = await receipt_repo.get_for_scope(uid=scope.uid, app_id=scope.app_id, thread_id=thread_id, idempotency_key=idempotency_key)
@@ -157,9 +159,9 @@ async def create_thread(
             intent_hash=intent_hash,
             mode="follow_up",
             messages=input_messages,
+            attachment_file_ids=file_ids,
             model_spec=model_spec,
             tool_approval_mode=tool_approval_mode,
-            attachment_file_ids=attachment_file_ids or [],
             source=source,
             channel=channel,
             external_id=external_id,
@@ -179,7 +181,6 @@ async def create_thread(
     if binding.materialize_managed:
         ensure_bound_user_workdir(binding.uid, binding.workdir_path)
     await dispatch_next_input(uid=scope.uid, agent_slug=agent_session.agent_id, thread_id=agent_session.thread_id)
-    await db.refresh(receipt)
     return _accepted(receipt)
 
 
@@ -191,9 +192,9 @@ async def accept_message(
     idempotency_key: str,
     mode: Literal["follow_up", "steer"] | None,
     messages: list[AgentRunInputMessage],
+    attachment_file_ids: list[str] | None = None,
     model_spec: str | None = None,
     tool_approval_mode: str | None = None,
-    attachment_file_ids: list[str] | None = None,
     source: str = "public_api",
     channel: str = "api",
     external_id: str | None = None,
@@ -210,10 +211,10 @@ async def accept_message(
         mode,
         model_spec,
         tool_approval_mode,
-        attachment_file_ids or [],
         external_id,
         origin_metadata or {},
         [_message_intent(item) for item in messages],
+        list(attachment_file_ids or []),
     )
     receipt_repo = AgentInputReceiptRepository(db)
     existing = await receipt_repo.get_for_scope(uid=scope.uid, app_id=scope.app_id, thread_id=thread_id, idempotency_key=idempotency_key)
@@ -236,9 +237,9 @@ async def accept_message(
         intent_hash=intent_hash,
         mode=mode,
         messages=messages,
+        attachment_file_ids=attachment_file_ids,
         model_spec=model_spec,
         tool_approval_mode=tool_approval_mode,
-        attachment_file_ids=attachment_file_ids or [],
         source=source,
         channel=channel,
         external_id=external_id,
@@ -246,7 +247,6 @@ async def accept_message(
     )
     await db.commit()
     await dispatch_next_input(uid=scope.uid, agent_slug=agent_session.agent_id, thread_id=agent_session.thread_id)
-    await db.refresh(receipt)
     return _accepted(receipt)
 
 
@@ -274,6 +274,7 @@ async def get_input_snapshot(*, db: AsyncSession, scope: ActorScope, thread_id: 
         raise HTTPException(status_code=404, detail="Input 不存在")
     messages = await AgentInputRepository(db).list_messages(input_id)
     attachments = await AttachmentRepository(db).for_messages([message.id for message in messages])
+    input_attachments = await AttachmentRepository(db).list_for_input(input_id)
     preparation = await AttachmentRepository(db).statuses_for_inputs([input_id])
     for message in messages:
         await db.refresh(message, attribute_names=["tool_calls"])
@@ -285,7 +286,10 @@ async def get_input_snapshot(*, db: AsyncSession, scope: ActorScope, thread_id: 
         "turn_id": input_item.turn_id,
         "run_id": input_item.consumed_run_id,
         "received_seq": input_item.received_seq,
-        "cutoff_seq": input_item.cutoff_seq,
+        "messages": input_item.messages,
+        "attachment_file_ids": input_item.attachment_file_ids,
+        "attachments": [serialize_attachment(item, thread_id=thread_id) for item in input_attachments],
+        "received_at": input_item.created_at,
         "items": [
             item
             for message in messages
@@ -312,14 +316,14 @@ async def accept_locked(
     messages: list[AgentRunInputMessage],
     model_spec: str | None,
     tool_approval_mode: str | None,
-    attachment_file_ids: list[str],
     source: str,
     channel: str,
     external_id: str | None,
     origin_metadata: dict | None,
     frozen_payload: dict | None = None,
+    attachment_file_ids: list[str] | None = None,
 ) -> AgentInputReceipt:
-    """在调用方事务与 Thread 锁内保存回执、消息和 Input。"""
+    """在调用方事务与 Thread 锁内保存原始 Input、附件与接收回执。"""
     if agent_session.status != "active":
         raise HTTPException(status_code=409, detail="Thread 已归档")
     turn_repo = AgentTurnRepository(db)
@@ -336,44 +340,39 @@ async def accept_locked(
     input_repo = AgentInputRepository(db)
     if mode == "steer" and (model_spec is not None or tool_approval_mode is not None):
         raise HTTPException(status_code=422, detail="Steer 不指定模型或审批配置")
-    input_item = (
-        await input_repo.get_pending_steer(thread_id=agent_session.thread_id, uid=scope.uid, app_id=scope.app_id)
-        if mode == "steer"
-        else None
+    user = await db.scalar(select(User).where(User.uid == scope.uid))
+    agent_item = await AgentRepository(db).get_visible_by_slug(slug=agent_session.agent_id, user=user)
+    if agent_item is None:
+        raise HTTPException(status_code=404, detail="智能体不存在")
+    if agent_session.config_snapshot is None:
+        raise ValueError("Session 缺少配置快照")
+    snapshot = deepcopy(agent_session.config_snapshot)
+    if mode == "steer" and active_turn is not None:
+        current = await AgentRunRepository(db).get_run(active_turn.current_run_id)
+        snapshot = deepcopy(current.input_payload["context_snapshot"])
+    else:
+        if model_spec is not None:
+            snapshot["model"] = await resolve_agent_run_model_spec(model_spec, None, db)
+        if tool_approval_mode is not None:
+            snapshot["tool_approval_mode"] = resolve_agent_run_tool_approval_mode(tool_approval_mode, None)
+    input_payload = {**(frozen_payload or {}), "context_snapshot": snapshot}
+
+    input_item = await input_repo.create(
+        input_id=str(uuid.uuid4()),
+        thread_id=agent_session.thread_id,
+        uid=scope.uid,
+        app_id=scope.app_id,
+        api_key_id=scope.api_key_id,
+        agent_slug=agent_session.agent_id,
+        kind=mode,
+        messages=[serialize_input_message(message) for message in messages],
+        attachment_file_ids=list(attachment_file_ids or []),
+        input_payload=input_payload,
+        source=source,
+        channel=channel,
+        external_id=external_id,
+        origin_metadata=origin_metadata,
     )
-
-    if input_item is None:
-        user = await db.scalar(select(User).where(User.uid == scope.uid))
-        agent_item = await AgentRepository(db).get_visible_by_slug(slug=agent_session.agent_id, user=user)
-        if agent_item is None:
-            raise HTTPException(status_code=404, detail="智能体不存在")
-        if agent_session.config_snapshot is None:
-            raise ValueError("Session 缺少配置快照")
-        snapshot = deepcopy(agent_session.config_snapshot)
-        if mode == "steer" and active_turn is not None:
-            current = await AgentRunRepository(db).get_run(active_turn.current_run_id)
-            snapshot = deepcopy(current.input_payload["context_snapshot"])
-        else:
-            if model_spec is not None:
-                snapshot["model"] = await resolve_agent_run_model_spec(model_spec, None, db)
-            if tool_approval_mode is not None:
-                snapshot["tool_approval_mode"] = resolve_agent_run_tool_approval_mode(tool_approval_mode, None)
-        input_payload = {**(frozen_payload or {}), "context_snapshot": snapshot}
-
-        input_item = await input_repo.create(
-            input_id=str(uuid.uuid4()),
-            thread_id=agent_session.thread_id,
-            uid=scope.uid,
-            app_id=scope.app_id,
-            api_key_id=scope.api_key_id,
-            agent_slug=agent_session.agent_id,
-            kind=mode,
-            input_payload=input_payload,
-            source=source,
-            channel=channel,
-            external_id=external_id,
-            origin_metadata=origin_metadata,
-        )
 
     receipt = await AgentInputReceiptRepository(db).create(
         receipt_id=str(uuid.uuid4()),
@@ -385,32 +384,8 @@ async def accept_locked(
         intent_hash=intent_hash,
         input_id=input_item.id,
     )
-    persisted_messages = []
-    attachment_ids: list[str] = list(attachment_file_ids)
-    for message in messages:
-        metadata = {**message.extra_metadata, "raw_message": message.raw_message(), "input_id": input_item.id}
-        attachment_ids.extend(metadata.pop("attachment_file_ids", []))
-        persisted = Message(
-            session_record_id=agent_session.id,
-            role="user",
-            content=message.content,
-            message_type=message.message_type,
-            image_content=message.image_content,
-            extra_metadata=metadata,
-            delivery_status="queued",
-        )
-        db.add(persisted)
-        persisted_messages.append(persisted)
-    await db.flush()
-    await input_repo.add_messages(input_id=input_item.id, receipt_id=receipt.id, message_ids=[message.id for message in persisted_messages])
-    if attachment_ids:
-        await stage_input_attachments(
-            db=db,
-            scope=scope,
-            input_item=input_item,
-            receipt_id=receipt.id,
-            file_ids=list(dict.fromkeys(attachment_ids)),
-        )
+    if input_item.attachment_file_ids:
+        await stage_input_attachments(db=db, scope=scope, input_item=input_item, file_ids=input_item.attachment_file_ids)
 
     if source != "cooperation":
         from yuxi.modules.agents.services.cooperation import notify_user_intervention
@@ -449,7 +424,7 @@ def require_input_replay(receipt: AgentInputReceipt, event_type: str, intent_has
 
 
 def _accepted(receipt: AgentInputReceipt) -> dict:
-    """返回已持久接收事实和已固定的消费归属。"""
+    """返回接收时固定的命令目标，执行归属由 Input 查询。"""
     return {
         "event_id": receipt.id,
         "input_id": receipt.input_id,

@@ -94,7 +94,6 @@ class AgentRun(Base):
         comment="Run status: pending/running/completed/failed/cancel_requested/cancelled/interrupted/yielded",
     )
     turn_id = Column(String(64), ForeignKey("agent_turns.id", name="fk_agent_runs_turn"), nullable=False, index=True)
-    input_id = Column(String(64), nullable=True, unique=True)
     app_id = Column(String(64), nullable=True, index=True, comment="API Key 来源快照")
     api_key_id = Column(Integer, nullable=True, index=True, comment="发起调用的 API Key ID 快照")
     source = Column(String(32), nullable=False, default="chat", comment="Run source snapshot")
@@ -143,12 +142,6 @@ class AgentRun(Base):
             name="fk_agent_runs_session_runtime_scope",
         ),
         UniqueConstraint("turn_id", "id", name="uq_agent_runs_turn_id_id"),
-        ForeignKeyConstraint(
-            ["input_id", "thread_id"],
-            ["agent_inputs.id", "agent_inputs.thread_id"],
-            name="fk_agent_runs_input_thread",
-            use_alter=True,
-        ),
         Index("ix_agent_runs_turn_execution", "turn_id", "execution_seq", "id"),
         CheckConstraint(
             "status IN ('pending','running','cancel_requested','completed','failed','cancelled','interrupted','yielded')",
@@ -208,7 +201,6 @@ class AgentRun(Base):
             "uid": self.uid,
             "status": self.status,
             "turn_id": self.turn_id,
-            "input_id": self.input_id,
             "app_id": self.app_id,
             "api_key_id": self.api_key_id,
             "source": self.source,

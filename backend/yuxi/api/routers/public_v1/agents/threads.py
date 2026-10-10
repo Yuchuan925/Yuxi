@@ -77,8 +77,8 @@ async def create_public_thread(
     """创建空会话或原子接收首批输入。
 
     提供 Idempotency-Key，重复相同意图返回同一会话和回执，不重复执行。
-    返回 201 证明持久创建或幂等重放。input_id、turn_id、run_id 位于 yuxi.receipt；
-    排队时 Turn/Run 为空。查询 Input 归属后读取 Turn 的明确结果。
+    返回 201 证明持久创建或幂等重放。yuxi.receipt 只返回 Input 目标；
+    查询 Input 消费归属后读取 Turn 的明确结果。
     stream=true 返回长期 SSE，先发送 agent.session.created；客户端主动关闭订阅。
     """
     if payload.stream and payload.input is None:
@@ -92,9 +92,9 @@ async def create_public_thread(
         project_id=payload.project_id,
         title=payload.title,
         messages=input_messages_to_domain(payload.input) if payload.input else None,
+        attachment_file_ids=payload.yuxi.attachment_file_ids,
         model_spec=payload.agent.model if payload.agent else None,
         tool_approval_mode=payload.tool_approval_mode,
-        attachment_file_ids=payload.attachment_file_ids,
         source="public_api",
         channel="api" if context.api_key else "web",
     )

@@ -4,7 +4,7 @@
 
 ## 运行入口
 
-Public Thread 接入把普通消息保存为 Input 与 Message，调度器领取时建立 Turn/Run；审批恢复在同一 Turn 建立下一 Run，协作会话从持久 Input 建立自己的 Thread、Turn、Run，并通过创建者关系关联父执行。worker 只执行已持久化的 Run：
+Public Thread 接入把普通消息保存为 Input 与 Receipt，调度器消费时建立 Turn/Run 和正式 Message；审批恢复在同一 Turn 建立下一 Run，协作会话从持久 Input 建立自己的 Thread、Turn、Run，并通过创建者关系关联父执行。worker 只执行已持久化的 Run：
 
 ```mermaid
 flowchart LR
@@ -27,7 +27,7 @@ API/worker 不信任浏览器内存中的完整配置。请求可以提供受限
 
 状态查询在 Session 与 Workdir 授权后直接读取 PostgreSQL checkpointer 的根 namespace，返回最近完整快照及同批 pending writes 中的中断，仅在最新 Run 为 interrupted 时展示审批。读取不创建 Context 或模型；业务 pending writes 的合并仍由执行图拥有。HTTP 状态查询返回待办、产物、协作树和用量；Turn SSE 提供执行增量与状态，前端通过 `/api/v1/agents/sessions/{thread_id}/cooperation` 轮询完整协作摘要；该入口只读取持久关系，不读取 checkpoint 或结果正文。批量读取全部成员、最新 Turn、执行状态和待处理输入。同一 Thread 在页面与侧栏共享 session runtime 的历史、运行状态、流订阅和恢复请求；最后一个观察视图卸载才释放订阅，视图可见性与浏览器标签可见性共同约束已读和滚动。终态与 resync 请求读取新历史，不复用较早发出的快照。文件由 Workdir/Sandbox 边界持久化，前端文件面板通过文件系统接口读取当前 Workdir。
 
-普通来源调用 `modules/agents/services/inputs.py` 接收用例：作用域校验后保存 Message、Input 与幂等 Receipt，空闲时按优先队头领取并创建 Turn/Run；事务提交后物化 Workdir 并投递 Run。Input 保存来源、优先级、消息成员和接收时冻结的完整可配置 Context，消息正文由 Message 拥有。worker 为冻结配置装配当前身份、Workdir 与授权资源。调度、引导和控制的完整契约见 [Agent 输入队列与调度](./agent-request-queue.md)。
+普通来源调用 `modules/agents/services/inputs.py` 接收用例：作用域校验后保存 Input 原始消息、提交级文件引用与幂等 Receipt，附件只绑定 Input；附件准备就绪后，调度器在同一事务消费优先队头并创建 Turn/Run 与正式 Message，每个 Input 的附件挂到自己的最后一条 Message，提交后投递 Run。Input 永久保存来源、优先级、正文、原始文件 ID 和接收时冻结的完整可配置 Context；Message 拥有执行投影及其时间，保留原 Input、消息位置和接收时间。Receipt 的命令目标不会随消费变化，执行归属通过 Input 查询。worker 为冻结配置装配当前身份、Workdir 与授权资源。调度、引导和控制的完整契约见 [Agent 输入队列与调度](./agent-request-queue.md)。
 
 断线后调用方从 Public Session、Input、Turn、Run 与 Items 查询读取明确的接收、消费和结果归属。排队 Input 尚无 Turn/Run；最终输出只属于 Turn 的 `result_run_id` 所指顶层 Run。HTTP `202`、SSE 中断和 Run `yielded` 都不是整轮成功证明。
 
@@ -54,7 +54,7 @@ completed Turn 的最终回答存在有效知识库或网页检索内容时，We
 
 `_skill_runtime_snapshot` 中的授权 Skill、依赖和预加载内容在 Context 准备时派生；中间件在运行期间维护 token 等状态。身份与运行标记由 worker 注入，持久 Agent 配置通过 `update_config` 仅装载 configurable 字段。接入和执行使用同一装载规则。运行事件的模型、审批与 Workdir 元数据从准备后的 Context 投影。
 
-会话创建时保存完整可配置 Context，模型依次取创建显式值、Agent 配置和系统默认，空会话也验证有效模型。保存的 Agent 与系统默认值修改不改变已有会话。每个时点以完整 `context_snapshot` 为唯一配置来源；执行拒绝缺失快照，不从 metadata 或最新 Agent 补值。Session 更新与输入接收共用会话锁，后接收的 Input 复制更新后的配置，已接收输入保持原快照。单次 follow-up 覆盖随消息原子持久化；活动 steer 与等待恢复继承当前 Run 的配置。运行身份不进入快照，`all` 或固定列表保存资源选择意图，实际资源授权在准备和执行时解析。协作会话继承派发方实际模型和能力配置，显式选择其他 Agent 时保存目标配置；模型历史、checkpoint 和附件上下文各自独立。
+会话创建时保存完整可配置 Context，模型依次取创建显式值、Agent 配置和系统默认，空会话也验证有效模型。保存的 Agent 与系统默认值修改不改变已有会话。每个时点以完整 `context_snapshot` 为唯一配置来源；执行拒绝缺失快照，不从 metadata 或最新 Agent 补值。Session 更新与输入接收共用会话锁，后接收的 Input 复制更新后的配置，已接收输入保持原快照。单次 follow-up 覆盖随消息原子持久化；活动 steer 与等待恢复继承当前 Run 的配置；空闲 steer 合批采用首个 Input 的冻结配置和来源，其他 Input 配置只保留审计。运行身份不进入快照，`all` 或固定列表保存资源选择意图，实际资源授权在准备和执行时解析。协作会话继承派发方实际模型和能力配置，显式选择其他 Agent 时保存目标配置；模型历史、checkpoint 和附件上下文各自独立。
 
 manifest v2 的配置摘要来自准备后的可配置字段，包含模型覆盖、schema 默认值和工作区提示词，排除用户、线程、worker 等运行身份。Skill 条目的来源、版本与哈希来自首次授权解析；预加载内容另保存实际读取字节的摘要，manifest 生成不再次查询 Skill。完整提示词和 Skill 正文不持久化到 manifest。MCP 工具发现、Memory 与文件动态读取发生在后续执行边界，manifest 不承诺冻结其实际可用性或字节。
 
@@ -74,7 +74,7 @@ manifest v2 的配置摘要来自准备后的可配置字段，包含模型覆�
 
 `agents/MEMORY.md` 只有在用户配置 `enable_memory=true`，且该文件存在并包含非空内容时，才由 Memory middleware 读取并提供受限的记忆工具。未保存配置的用户默认启用 Memory，已保存的关闭选择继续生效。用户可在账户设置中切换开关，或点击“查看 Memory”进入个人空间并打开该文件。它是用户主动维护的参考资料，不是系统指令。Memory 读取和更新有独立的用户、Run、worker 和文件大小校验。
 
-Viewer、正式附件和 artifact API 通过持久化 Workspace/Workdir 读取文件，不连接 Agent execution runtime。附件表拥有文件信息、用户/APP、Input/Receipt 归属、准备状态和存储位置。上传建立隔离的 draft；接收事务通过附件行锁绑定 Input；统一准备函数写入 Workdir 并提交 ready 后清理临时来源。恢复循环调用同一准备与调度流程，回执读取或重放只读事实。Message 通过归属关系读取附件，不复制记录；取消排队保留正式文件。OCR 预解析与图片辅助处理只在产品 JWT 私有入口开放，Agent 的 OCR 工具继续按需读取 Workdir。图片与文件提交契约见[公开 API](../advanced/agents-public-api.md#图片与文件附件)。沙盒虚拟路径、Viewer scope、对象 URL 和宿主机路径在各自边界中转换，不能互相替代。
+Viewer、正式附件和 artifact API 通过持久化 Workspace/Workdir 读取文件，不连接 Agent execution runtime。附件表拥有文件信息、用户/APP、Input 与最终 Message 归属、准备状态和存储位置。上传建立隔离的 draft；接收事务通过附件行锁绑定 Input；统一准备函数写入 Workdir 并提交 ready 后清理临时来源。恢复循环调用同一准备与调度流程，回执读取或重放只读事实。Message 通过归属关系读取附件，不复制记录；取消排队保留正式文件。OCR 预解析与图片辅助处理只在产品 JWT 私有入口开放，Agent 的 OCR 工具继续按需读取 Workdir。图片与文件提交契约见[公开 API](../advanced/agents-public-api.md#图片与文件附件)。沙盒虚拟路径、Viewer scope、对象 URL 和宿主机路径在各自边界中转换，不能互相替代。
 
 ## 用户定时 Agent
 
@@ -86,7 +86,7 @@ Viewer、正式附件和 artifact API 通过持久化 Workspace/Workdir 读取�
 
 审批或用户问题中断时，系统把等待点绑定在 Turn 的当前 interrupted Run 和 PostgreSQL checkpoint。结构化回答或审批只消费该等待点一次，在同一 Turn 创建恢复 Run；worker 再为该 Run 准备 Context 并固化 manifest。
 
-worker 读取 Input 的完整配置快照，为当前 Run 重新准备工作区提示词与授权资源；动态文件与权限在各自读取或执行边界生效。等待恢复和 steer 接管复制原 Run 的配置；输出、事件和消息绑定明确的 `input_id`、`turn_id` 与 `run_id`。
+worker 读取 Input 的完整配置快照，为当前 Run 重新准备工作区提示词与授权资源；动态文件与权限在各自读取或执行边界生效。等待恢复和 steer 接管复制原 Run 的配置；Run 与生命周期事件通过有序 `input_ids` 表达合批来源，消息通过 `source_input_id` 表达单条来源，执行归属由 `turn_id` 与 `run_id` 固定。
 
 准备期间收到取消时，worker 使用已提交的取消状态完成取消收尾；manifest 失败不能把取消请求留待 lease 超时。manifest 使用 write-once 指纹，已有旧版 manifest 的 Run 重试若与新准备结果不一致会显式失败；历史 manifest 保留原记录。
 
@@ -105,7 +105,7 @@ worker 读取 Input 的完整配置快照，为当前 Run 重新准备工作区�
 
 ## 线程阅读数据
 
-公开内容通过 Session 或指定 Turn 的 `/items` 分页读取，数据库按授权作用域、公开身份和稳定顺序执行 limit+1，包含用户输入、取消的排队消息和已经公开的正文、工具参数及结果。页面 `yuxi.runs` 只投影该页引用的执行段身份、状态与耗时。公开 item 身份与 output_index 保存于 Message 元数据，Turn 锁分配递增索引；实时与历史复用同一 serializer。Session 提供当前概览，Turn 列表发现零消息轮次，指定 Turn 的详情按 result_run_id 读取最终输出。完整 Model/Tool 审计由独立管理员接口读取。
+公开内容通过 Session 或指定 Turn 的 `/items` 分页读取，数据库按授权作用域、公开身份和稳定顺序执行 limit+1，包含已消费的用户输入和已经公开的正文、工具参数及结果；pending/cancelled 输入仅保留于 Input，不进入正式历史。页面 `yuxi.runs` 只投影该页引用的执行段身份、状态与耗时。公开 item 身份与 output_index 保存于 Message 元数据，Turn 锁分配递增索引；实时与历史复用同一 serializer。Session 提供当前概览，Turn 列表发现零消息轮次，指定 Turn 的详情按 result_run_id 读取最终输出。完整 Model/Tool 审计由独立管理员接口读取。
 
 调试面板通过 `/api/v1/agents/sessions/{thread_id}/audits` 读取所属 Thread 的持久 Message 和 Run，仅允许没有 API Key、没有 APP 作用域的超级管理员使用。消息包含用户、系统、模型和工具记录；Repository 按 Run 创建时间、Run ID、操作 sequence、Message ID 返回最新 500 条的正序窗口，并用 `truncated` 标明截断。Run 内用户输入排在操作前，其他无 sequence 消息排在操作后并按 Message ID 排列；无 Run 消息使用自身创建时间。面板直接使用数据库响应，不合并普通历史或 SSE 正文，读取失败保留上次快照并提示重试。顺序与展示取舍见[调试数据库投影决策](../develop-guides/decisions/implemented/2026-10-10-debug-database-projection.md)。
 
@@ -119,4 +119,4 @@ BaseAgent 保留 LangGraph v3 ProtocolEvent 的通道、顺序、内容块和 na
 
 完成、等待、失败和取消由已提交的 Run/Turn 事实通知。原始推理和业务状态使用明确的 yuxi 扩展；官方 item 与 content 事件保持官方结构。详情见 [Agents Public API](../advanced/agents-public-api.md)。
 
-子 Thread 在委派事务中保存实际模型和审批默认值，各 Input 接收时仍冻结本次配置。直接向子 Thread 提交新的 follow-up 会创建独立的用户 Turn，不继承旧 Turn 的 `created_by_run_id`。Thread 委派关系继续证明其用户、APP 和共享 Project 的授权；本轮 Run 的委派身份只用于本轮父子取消与 tracing，不以 Thread 历史委派推断取消范围。附件来源先随 Input、Receipt 和 Message 提交，再写入授权 Workdir 并提交就绪事实；文件完成准备前不派发。公开用户 item 最初可表达 preparing 引用，完成后回读正式引用。模型附件上下文只包含本次 Input 与此前已消费的来源。
+子 Thread 在委派事务中保存实际模型和审批默认值，各 Input 接收时仍冻结本次配置。直接向子 Thread 提交新的 follow-up 会创建独立的用户 Turn，不继承旧 Turn 的 `created_by_run_id`。Thread 委派关系继续证明其用户、APP 和共享 Project 的授权；本轮 Run 的委派身份只用于本轮父子取消与 tracing，不以 Thread 历史委派推断取消范围。附件来源先随 Input 和 Receipt 提交，再写入授权 Workdir 并提交就绪事实；消费时生成 Message 并绑定最终附件。文件准备期间仅通过 Input/queue 查看 preparing 状态，公开用户 item 在消费后出现。模型附件上下文只包含本次 Input 与此前已消费的来源。

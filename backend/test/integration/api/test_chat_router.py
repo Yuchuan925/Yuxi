@@ -908,7 +908,7 @@ async def test_standard_user_restores_visible_function_items_without_internal_au
         OUTPUT,
         TOOL_RESULT,
     )
-    from test.e2e.e2e_helpers import archive_public_thread, delete_agent
+    from test.e2e.e2e_helpers import archive_public_thread, delete_agent, wait_for_consumed_input
 
     headers = standard_user["headers"]
     uid = str((await test_client.get("/api/auth/me", headers=headers)).json()["uid"])
@@ -928,7 +928,8 @@ async def test_standard_user_restores_visible_function_items_without_internal_au
             },
         )
         assert created.status_code == 201, created.text
-        thread_id, turn_id = created.json()["id"], created.json()["yuxi"]["receipt"]["turn_id"]
+        consumed = await wait_for_consumed_input(test_client, headers, created.json()["yuxi"]["receipt"])
+        thread_id, turn_id = created.json()["id"], consumed["turn_id"]
         assert (await _terminal_turn(test_client, headers, thread_id, turn_id))["status"] == "completed"
         history = await test_client.get(f"/api/v1/agents/sessions/{thread_id}/items?order=asc&limit=100", headers=headers)
         assert history.status_code == 200, history.text

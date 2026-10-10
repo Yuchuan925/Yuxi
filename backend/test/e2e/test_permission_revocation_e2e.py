@@ -16,6 +16,7 @@ from langchain_core.messages import ToolMessage
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 from test.e2e.test_agent_lifecycle_e2e import _message, _provider
+from test.e2e.e2e_helpers import wait_for_consumed_input
 from test.integration.api.test_permission_convergence import actors as actor_fixture, create_agent, SHARED
 from yuxi.modules.agents.runtime.sandbox.paths import VIRTUAL_PATH_PREFIX
 from yuxi.modules.workspace.paths import user_workspace_dir
@@ -270,7 +271,7 @@ async def test_tool_boundary_rechecks_current_caller_and_retains_history(actors,
             },
         )
         assert created.status_code == 201, created.text
-        accepted = created.json()["yuxi"]["receipt"]
+        accepted = await wait_for_consumed_input(client, user["headers"], created.json()["yuxi"]["receipt"])
         for _ in range(200):
             if replay["entered"].is_set():
                 break
@@ -394,7 +395,7 @@ async def test_queued_input_after_revocation_fails_without_another_model_call(ac
             json={"agent_id": agent["slug"], "agent": {"model": model}, "input": [_message("First")]},
         )
         assert initial.status_code == 201, initial.text
-        accepted = initial.json()["yuxi"]["receipt"]
+        accepted = await wait_for_consumed_input(client, user["headers"], initial.json()["yuxi"]["receipt"])
         for _ in range(200):
             if replay["entered"].is_set():
                 break
@@ -516,7 +517,7 @@ async def test_waitpoint_resume_after_revocation_cannot_create_new_run(actors, r
             json={"agent_id": agent["slug"], "agent": {"model": model}, "input": [_message("Wait")]},
         )
         assert response.status_code == 201, response.text
-        accepted = response.json()["yuxi"]["receipt"]
+        accepted = await wait_for_consumed_input(client, user["headers"], response.json()["yuxi"]["receipt"])
         for _ in range(200):
             response = await client.get(
                 f"/api/v1/agents/sessions/{accepted['session_id']}/turns/{accepted['turn_id']}", headers=user["headers"]
@@ -654,7 +655,7 @@ async def test_failed_model_response_cannot_start_retry_or_summary_after_revocat
             },
         )
         assert response.status_code == 201, response.text
-        accepted = response.json()["yuxi"]["receipt"]
+        accepted = await wait_for_consumed_input(client, user["headers"], response.json()["yuxi"]["receipt"])
         if failure == "overflow":
             for _ in range(200):
                 status = await db.fetchval("SELECT status FROM agent_runs WHERE id=$1", accepted["run_id"])

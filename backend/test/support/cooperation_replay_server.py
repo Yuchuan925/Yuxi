@@ -17,7 +17,8 @@ def capacity_calls(messages, results):
         if "capacity-delay" not in results:
             target_gate = gate if "COOP_CAPACITY_CHILD:4" in users else gate + "-ready"
             command = "python3 -c " + shlex.quote(
-                f"import pathlib,time; p=pathlib.Path({target_gate!r}); [time.sleep(0.1) for _ in range(900) if not p.exists()]; assert p.exists(); print('released')"
+                f"import pathlib,time; p=pathlib.Path({target_gate!r}); "
+                "[time.sleep(0.1) for _ in range(900) if not p.exists()]; assert p.exists(); print('released')"
             )
             return [("capacity-delay", "execute", {"command": command})]
         if "COOP_CAPACITY_CHILD:0" in users and "capacity-mail" not in results:
@@ -163,7 +164,8 @@ class CooperationReplayHandler(BaseHTTPRequestHandler):
             }
             if "SELECT_AGENT" in serialized:
                 directory = json.loads(results["agent-directory"])["agents"]
-                target = next(role for role in directory if role["description"] == "COOP_TARGET_ROLE")
+                target_id = re.search(r"SELECT_AGENT:([\w-]+)", serialized).group(1)
+                target = next(role for role in directory if role["id"] == target_id and role["description"] == "COOP_TARGET_ROLE")
                 arguments["agent_id"] = target["id"]
                 arguments["description"] += " SELECTED_AGENT_CHILD"
             calls = [

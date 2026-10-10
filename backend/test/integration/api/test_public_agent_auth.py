@@ -89,7 +89,12 @@ async def test_public_input_rejects_unbound_attachment_without_persisting_receip
             "events": [
                 {
                     "type": "agent.session.input.message",
-                    "input": [{"role": "user", "content": [{"type": "input_text", "text": "read attachment"}]}],
+                    "input": [
+                        {
+                            "role": "user",
+                            "content": [{"type": "input_text", "text": "read attachment"}],
+                        }
+                    ],
                     "yuxi": {"mode": "follow_up", "attachment_file_ids": [file_id]},
                 }
             ]
@@ -129,7 +134,7 @@ async def test_public_input_rejects_unbound_attachment_without_persisting_receip
             "receipts": 0,
             "inputs": int(accepted is not None),
             "runs": 0,
-            "messages": int(accepted is not None),
+            "messages": 0,
         }
     finally:
         if accepted is not None:

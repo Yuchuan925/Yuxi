@@ -53,7 +53,7 @@ async def test_public_run_persists_preloaded_tool_and_model_audit(e2e_client, e2
         assert run_response.status_code == 200, run_response.text
         run = run_response.json()
         assert run["status"] == "completed"
-        assert run["turn_id"] == turn_id and run["input_id"] == created["input_id"]
+        assert run["turn_id"] == turn_id and run["input_ids"] == [created["input_id"]]
         assert run["output"] == turn["yuxi"]["output"]
 
         history_response = await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/items?order=asc&limit=100", headers=e2e_headers)
@@ -71,6 +71,10 @@ async def test_public_run_persists_preloaded_tool_and_model_audit(e2e_client, e2
         audits_response = await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/audits", headers=e2e_headers)
         assert audits_response.status_code == 200, audits_response.text
         audits = [item for item in audits_response.json()["audits"] if item["run_id"] == run_id]
+        assert [item["type"] for item in audits] == ["human", "ai", "tool", "ai"]
+        assert audits[0]["input_id"] == created["input_id"] and audits[0]["input_position"] == 0
+        assert audits[0]["turn_id"] == turn_id
+        audits = audits[1:]
         assert [item["type"] for item in audits] == ["ai", "tool", "ai"]
         assert [item["sequence"] for item in audits] == sorted(item["sequence"] for item in audits)
         assert audits[1]["tool_call_id"] == TOOL_CALL_ID and audits[1]["tool_input"] == {"filepaths": []}
@@ -89,7 +93,7 @@ async def test_public_run_persists_preloaded_tool_and_model_audit(e2e_client, e2
                        run.manifest, run.manifest_fingerprint
                 FROM agent_runs run
                 JOIN agent_turns turn ON turn.id = run.turn_id
-                JOIN agent_inputs input ON input.id = run.input_id
+                JOIN agent_inputs input ON input.consumed_run_id = run.id
                 JOIN messages output ON output.id = run.output_message_id
                 JOIN sessions agent_session ON agent_session.thread_id = run.thread_id
                 JOIN projects project ON project.id = agent_session.project_id
@@ -487,9 +491,9 @@ async def _create_thread(client: httpx.AsyncClient, headers: dict[str, str], slu
         },
     )
     assert response.status_code == 201, response.text
-    result = response.json()["yuxi"]["receipt"]
-    assert result["input_id"] and result["turn_id"] and result["run_id"]
-    return result
+    from test.e2e.e2e_helpers import wait_for_consumed_input
+
+    return await wait_for_consumed_input(client, headers, response.json()["yuxi"]["receipt"])
 
 
 async def _terminal_turn(client: httpx.AsyncClient, headers: dict[str, str], thread_id: str, turn_id: str) -> dict:
