@@ -6,7 +6,7 @@ Owner：backend/yuxi/modules/knowledge/chunking/ragflow_like/presets.py
 
 ## 问题
 
-未知策略、错误类型和错误 parser 配置会被静默替换为 general 或空对象，调用方无法区分有效配置与错误输入。
+未知策略和错误策略类型会被静默替换为 general，调用方无法区分有效配置与错误输入。
 
 ## 决策
 
@@ -14,7 +14,7 @@ Owner：backend/yuxi/modules/knowledge/chunking/ragflow_like/presets.py
 
 分块配置 Owner 在执行配置读取、保存和文件参数合并处拒绝未知 ID 与错误类型。保留缺省、None、空字符串的默认或继承语义，以及 general/naive 映射。HTTP 文档提交在登记作业前复用相同校验；已持久化坏配置在实际处理时明确失败。
 
-知识库管理读取仅捕获分块配置异常，保留原值并记录告警，使资源授权、删除与修复仍可执行。文件显式更新先校验补丁，再合并并校验最终配置；有效覆盖值可修复坏值，空策略与 None 配置保留当前文件覆盖。PostgreSQL 继续拥有配置事实，读取不改写数据。
+知识库管理读取仅捕获分块配置异常，保留原值并记录告警，使资源授权、删除与修复仍可执行。文件与请求按原优先级选择最终策略后校验；有效请求可以覆盖文件坏值。不改变 parser_config 契约和普通处理参数的浅覆盖行为。PostgreSQL 继续拥有配置事实，读取不改写数据。
 
 ## 替代方案
 
@@ -26,6 +26,6 @@ Owner：backend/yuxi/modules/knowledge/chunking/ragflow_like/presets.py
 
 ## 验证
 
-参数化 unit 覆盖所有配置来源、非法策略与 parser 类型、默认和别名。真实 HTTP/独立 PostgreSQL schema 验证六类文档提交失败后不存在作业、知识库创建更新不产生错误写入、保留真实资源授权的管理修复、文件更新持久结果与空补丁继承。CI system-tests 执行该集成文件。
+参数化 unit 覆盖所有配置来源、非法策略与策略类型、默认和别名。真实 HTTP/独立 PostgreSQL schema 验证六类文档提交失败后不存在作业、知识库创建更新不产生错误写入、保留真实资源授权的管理修复、文件更新持久结果与空补丁继承。CI system-tests 执行该集成文件。
 
-恢复旧提交行为后，四类 parse/index 提交负例均失败；恢复未经修正的严格校验时，知识库与两个文件修复回归均失败。移除文件补丁校验时 False/0/[] 三个拒绝断言失败。相关 84 项测试通过，补充负例后单独重跑 28 项集成通过。
+普通嵌套选项整体替换回归证明原覆盖契约不变；parser_config 保持既有归一化行为。验证结果记录在 PR。

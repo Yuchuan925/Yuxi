@@ -29,7 +29,7 @@ from yuxi.modules.background_jobs.service import job_tracker
 from yuxi.modules.identity.models import User
 from yuxi.modules.identity.permissions import ResourcePermission, resolve_knowledge_base_permission
 from yuxi.modules.knowledge.base import KBNameConflictError, KBNotFoundError
-from yuxi.modules.knowledge.chunking.ragflow_like.presets import get_chunk_preset_options, validate_chunk_params
+from yuxi.modules.knowledge.chunking.ragflow_like.presets import get_chunk_preset_options, normalize_chunk_preset_id
 from yuxi.modules.knowledge.graphs.milvus_graph_service import GRAPH_TASK_TYPE, MilvusGraphService
 from yuxi.modules.knowledge.read_models import KnowledgeBaseDetail
 from yuxi.modules.knowledge.runtime import knowledge_base
@@ -149,7 +149,7 @@ def _ensure_document_params(params: dict | None) -> dict:
     if not isinstance(params, dict):
         raise HTTPException(status_code=400, detail="params must be an object")
     try:
-        validate_chunk_params(params)
+        normalize_chunk_preset_id(params.get("chunk_preset_id"))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return params

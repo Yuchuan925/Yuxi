@@ -21,16 +21,6 @@ def test_invalid_preset_rejected_in_every_source(value, source):
         resolve_chunk_processing_params(*sources)
 
 
-@pytest.mark.parametrize("value", ["invalid", [], False, 0])
-@pytest.mark.parametrize("source", ["knowledge_base", "file", "request"])
-def test_invalid_parser_config_rejected_in_every_source(value, source):
-    """非对象 parser 配置不能被忽略或替换为空对象。"""
-    sources = [{}, {}, {}]
-    sources[["knowledge_base", "file", "request"].index(source)] = {"chunk_parser_config": value}
-    with pytest.raises(ValueError, match="chunk_parser_config"):
-        resolve_chunk_processing_params(*sources)
-
-
 @pytest.mark.parametrize("value", [None, "", "general", "naive", " NAIVE "])
 def test_default_and_internal_alias_remain_general(value):
     """缺省和已有内部别名继续映射通用策略。"""
@@ -47,3 +37,9 @@ def test_optional_file_and_request_values_inherit_knowledge_base():
     assert result["chunk_preset_id"] == "book"
     assert result["chunk_parser_config"] == {"chunk_token_num": 256}
     assert ensure_chunk_defaults_in_additional_params({"chunk_parser_config": None})["chunk_parser_config"] == {}
+
+
+def test_request_preset_overrides_invalid_file_preset():
+    """最终生效的请求配置可覆盖历史文件坏值。"""
+    result = resolve_chunk_processing_params({}, {"chunk_preset_id": "typo"}, {"chunk_preset_id": "qa"})
+    assert result["chunk_preset_id"] == "qa"

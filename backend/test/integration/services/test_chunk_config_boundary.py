@@ -97,11 +97,11 @@ async def boundary(monkeypatch):
         await admin.dispose()
 
 
-@pytest.mark.parametrize("params", [{"chunk_preset_id": "typo"}, {"chunk_preset_id": False}, {"chunk_parser_config": []}])
 @pytest.mark.parametrize("action", ["parse", "index", "parse-pending", "index-pending", "", "add"])
-async def test_invalid_document_request_creates_no_job(boundary, params, action):
+async def test_invalid_document_request_creates_no_job(boundary, action):
     """所有文档作业提交入口都在登记前拒绝错误配置。"""
     client, factory = boundary
+    params = {"chunk_preset_id": "typo"}
     payload = {"params": params}
     if not action.endswith("pending"):
         payload["file_ids"] = ["fixture-file"]
@@ -168,12 +168,13 @@ async def test_bad_persisted_knowledge_config_can_be_read_and_repaired(boundary)
         assert row.additional_params["chunk_preset_id"] == "qa"
 
 
-@pytest.mark.parametrize("bad", [{"chunk_preset_id": "typo"}, {"chunk_parser_config": []}])
-async def test_valid_file_update_repairs_persisted_config(boundary, bad):
+async def test_valid_file_update_repairs_persisted_config(boundary):
     """显式更新校验合并后的配置，独立读取文件记录确认修复。"""
     _, factory = boundary
     async with factory() as db, db.begin():
-        db.add(KnowledgeFile(file_id="fixture-file", kb_id="fixture-kb", filename="fixture.md", processing_params=bad))
+        db.add(
+            KnowledgeFile(file_id="fixture-file", kb_id="fixture-kb", filename="fixture.md", processing_params={"chunk_preset_id": "typo"})
+        )
     executor = object.__new__(MilvusKB)
     patch = {"chunk_preset_id": "qa", "chunk_parser_config": {"chunk_token_num": 256}}
     await executor.update_file_params("fixture-kb", "fixture-file", patch, additional_params={})
@@ -218,3 +219,18 @@ async def test_invalid_file_patch_leaves_persisted_configuration_unchanged(bound
         row = await observer.scalar(select(KnowledgeFile))
         assert row.processing_params == original
         assert row.updated_by is None
+
+
+async def test_file_update_replaces_non_chunk_nested_options(boundary):
+    """普通处理选项仍由请求整体覆盖，不递归保留已删除的键。"""
+    _, factory = boundary
+    async with factory() as db, db.begin():
+        db.add(
+            KnowledgeFile(
+                file_id="fixture-file", kb_id="fixture-kb", filename="fixture.md", processing_params={"custom": {"keep": 1, "removed": 2}}
+            )
+        )
+    await object.__new__(MilvusKB).update_file_params("fixture-kb", "fixture-file", {"custom": {"keep": 3}}, additional_params={})
+    async with factory() as observer:
+        row = await observer.scalar(select(KnowledgeFile))
+        assert row.processing_params["custom"] == {"keep": 3}

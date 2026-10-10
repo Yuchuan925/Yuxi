@@ -3,6 +3,8 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
+from yuxi.infrastructure.observability.logging import logger
+
 DEFAULT_CHUNK_PRESET_ID = "general"
 
 CHUNK_PRESETS: dict[str, dict[str, str]] = {
@@ -68,15 +70,6 @@ def normalize_chunk_preset_id(value: str | None) -> str:
     raise ChunkConfigError(f"未知 chunk_preset_id: {value}")
 
 
-def validate_chunk_params(params: dict[str, Any]) -> None:
-    """校验配置来源，不提前填默认值以保留覆盖与继承语义。"""
-    if "chunk_preset_id" in params:
-        normalize_chunk_preset_id(params["chunk_preset_id"])
-    config = params.get("chunk_parser_config")
-    if config is not None and not isinstance(config, dict):
-        raise ChunkConfigError("chunk_parser_config 必须是对象")
-
-
 def map_to_internal_parser_id(preset_id: str) -> str:
     normalized = normalize_chunk_preset_id(preset_id)
     if normalized == DEFAULT_CHUNK_PRESET_ID:
@@ -91,10 +84,10 @@ def get_default_chunk_parser_config(preset_id: str) -> dict[str, Any]:
 
 def ensure_chunk_defaults_in_additional_params(additional_params: dict[str, Any] | None) -> dict[str, Any]:
     params = dict(additional_params or {})
-    validate_chunk_params(params)
     params["chunk_preset_id"] = normalize_chunk_preset_id(params.get("chunk_preset_id"))
 
-    if "chunk_parser_config" in params and params["chunk_parser_config"] is None:
+    if "chunk_parser_config" in params and not isinstance(params.get("chunk_parser_config"), dict):
+        logger.warning("Invalid chunk_parser_config in additional_params, fallback to empty dict")
         params["chunk_parser_config"] = {}
 
     return params
@@ -108,12 +101,13 @@ def resolve_chunk_processing_params(
     kb_additional = ensure_chunk_defaults_in_additional_params(kb_additional_params)
     file_params = dict(file_processing_params or {})
     request = dict(request_params or {})
-    validate_chunk_params(file_params)
-    validate_chunk_params(request)
 
-    preset_id = normalize_chunk_preset_id(
-        request.get("chunk_preset_id") or file_params.get("chunk_preset_id") or kb_additional.get("chunk_preset_id")
-    )
+    preset_id = kb_additional["chunk_preset_id"]
+    for params in (file_params, request):
+        value = params.get("chunk_preset_id")
+        if value is not None and value != "":
+            preset_id = value
+    preset_id = normalize_chunk_preset_id(preset_id)
 
     parser_config = get_default_chunk_parser_config(preset_id)
 
