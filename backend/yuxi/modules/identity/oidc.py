@@ -367,16 +367,17 @@ async def get_or_create_oidc_department(
         name=final_dept_name,
         description=final_dept_desc,
     )
-    db.add(dept)
     try:
-        await db.commit()
-        await db.refresh(dept)
+        async with db.begin_nested():
+            db.add(dept)
+            await db.flush()
         logger.info(f"Created OIDC department: {final_dept_name}")
     except IntegrityError:
         # 并发创建时部门可能已存在，再次查询
-        await db.rollback()
         result = await db.execute(select(Department).filter(Department.name == final_dept_name))
         dept = result.scalar_one_or_none()
+        if dept is None:
+            raise
 
     return dept
 
@@ -486,12 +487,15 @@ async def create_oidc_binding_placeholder(db, sub: str, target_user: User) -> No
     )
 
     try:
-        db.add(placeholder_user)
-        await db.commit()
+        async with db.begin_nested():
+            db.add(placeholder_user)
+            await db.flush()
         logger.info(f"Created OIDC binding placeholder (deleted) for sub {sub} -> user {target_user.id} ({target_user.uid})")
     except IntegrityError:
-        # 并发创建冲突，回滚后忽略
-        await db.rollback()
+        # 只接受同一目标的并发绑定，其他唯一约束冲突不能伪装成功。
+        bound_user = await find_user_by_oidc_sub(db, sub)
+        if bound_user is None or bound_user.id != target_user.id:
+            raise
         logger.info(f"OIDC binding placeholder already exists for sub {sub}")
 
 
@@ -525,7 +529,7 @@ async def build_unique_oidc_username(db, preferred_username: str, sub: str) -> s
 
 async def create_oidc_user(db, user_info: dict, department_id: int | None = None) -> User:
     """创建 OIDC 用户"""
-    user_repo = UserRepository()
+    user_repo = UserRepository(db)
 
     sub = user_info["sub"]
     preferred_username = user_info["name"] or user_info["username"]
@@ -571,28 +575,31 @@ async def create_oidc_user(db, user_info: dict, department_id: int | None = None
 
     for retry_index in range(3):
         try:
-            new_user = await user_repo.create(
-                {
-                    "username": username,
-                    "uid": uid,
-                    "phone_number": None,
-                    "avatar": None,
-                    "password_hash": password_hash,
-                    "role": oidc_config.default_role,
-                    "department_id": department_id,
-                    "last_login": utc_now(),
-                }
-            )
-            logger.info(f"Created OIDC user: {new_user.username} ({uid})")
+            async with db.begin_nested():
+                new_user = await user_repo.create(
+                    {
+                        "username": username,
+                        "uid": uid,
+                        "phone_number": None,
+                        "avatar": None,
+                        "password_hash": password_hash,
+                        "role": oidc_config.default_role,
+                        "department_id": department_id,
+                        "last_login": utc_now(),
+                    }
+                )
+                logger.info(f"Created OIDC user: {new_user.username} ({uid})")
 
-            # use_raw_username 模式下，创建占位用户记录绑定关系
-            if oidc_config.use_raw_username:
-                await create_oidc_binding_placeholder(db, sub, new_user)
+                # use_raw_username 模式下，创建占位用户记录绑定关系
+                if oidc_config.use_raw_username:
+                    await create_oidc_binding_placeholder(db, sub, new_user)
 
             return new_user
         except IntegrityError:
             existing_user = await find_user_by_oidc_sub(db, sub)
             if existing_user:
+                if oidc_config.use_raw_username and existing_user.uid != uid:
+                    raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="OIDC标识已绑定到其他账号")
                 return existing_user
             username = await build_unique_oidc_username(db, f"{preferred_username}-{retry_index + 2}", sub)
 
@@ -621,8 +628,7 @@ async def restore_deleted_oidc_user(db, deleted_user: User, user_info: dict) -> 
         random_password = secrets.token_urlsafe(32)
         deleted_user.password_hash = AuthUtils.hash_password(random_password)
 
-    await db.commit()
-    await db.refresh(deleted_user)
+    await db.flush()
     logger.info(f"Restored deleted OIDC user: {deleted_user.username} ({deleted_user.uid})")
     return deleted_user
 
@@ -630,7 +636,7 @@ async def restore_deleted_oidc_user(db, deleted_user: User, user_info: dict) -> 
 async def update_oidc_user_login(db, user: User) -> None:
     """更新 OIDC 用户登录时间"""
     user.last_login = utc_now()
-    await db.commit()
+    await db.flush()
 
 
 async def find_oidc_user_by_raw_username(db, username: str) -> User | None:
@@ -643,103 +649,3 @@ async def get_oidc_department_name(db, department_id: int) -> str | None:
     """读取 OIDC 登录用户的部门名称。"""
     result = await db.execute(select(Department.name).filter(Department.id == department_id))
     return result.scalar_one_or_none()
-
-
-async def build_oidc_login_response(db, extracted_info: dict) -> tuple[dict | None, str | None]:
-    """验证账号绑定并构造一次性 code 的登录数据。"""
-    # 查找用户：总是先通过 sub 查找，保证绑定关系可验证
-    sub = extracted_info["sub"]
-    user_by_sub = await find_user_by_oidc_sub(db, sub)
-
-    if oidc_config.use_raw_username:
-        # 使用原始用户名模式
-        username = extracted_info["username"]
-        user = None
-        if username:
-            user_by_name = await find_oidc_user_by_raw_username(db, username)
-            if user_by_name and user_by_name.user_kind == "end_user":
-                return None, "终端用户不能用于 OIDC 登录"
-            if user_by_name and user_by_name.is_deleted:
-                user_by_name = None
-
-            if user_by_sub:
-                # sub 已经绑定到一个用户
-                if user_by_name and user_by_sub.id == user_by_name.id:
-                    # sub 绑定的用户就是找到的用户名用户 -> 验证通过
-                    user = user_by_name
-                    logger.info(f"OIDC user logged in with raw username: {username} (sub: {sub})")
-                else:
-                    # sub 已经绑定到另一个用户，存在冲突，拒绝登录
-                    conflict_name = user_by_sub.username if not user_by_name else user_by_name.username
-                    logger.warning(
-                        f"OIDC sub {sub} is already bound to a different user, "
-                        f"login rejected to prevent account hijacking (conflict: {conflict_name})"
-                    )
-                    return None, "OIDC标识已绑定到其他账号，请联系管理员处理绑定冲突"
-            else:
-                # sub 尚未绑定到任何用户
-                if user_by_name:
-                    # 用户名存在，且 sub 没有绑定 -> 允许登录，并创建绑定记录
-                    # 在不修改表结构的情况下，我们创建一个占位用户 oidc:{sub} 来记录绑定关系
-                    # 这个占位用户不会被用来登录，仅用于存储sub -> 用户的绑定关系
-                    user = user_by_name
-                    logger.info(f"Binding new OIDC sub {sub} to existing user with raw username: {username}")
-                    # 创建绑定占位用户（后台静默创建，不影响现有用户）
-                    await create_oidc_binding_placeholder(db, sub, user_by_name)
-                else:
-                    # 用户名不存在，需要创建新用户
-                    if oidc_config.auto_create_user:
-                        user = None  # 让后续逻辑创建
-                    else:
-                        return None, "用户不存在，请联系管理员开通账号"
-        else:
-            # 没有获取到 username，回退到按sub查找
-            user = user_by_sub
-    else:
-        # 标准 OIDC 模式，通过 sub 查找
-        user = user_by_sub
-
-    if user:
-        await update_oidc_user_login(db, user)
-        logger.info(f"OIDC user logged in: {user.username}")
-    elif oidc_config.auto_create_user:
-        deleted_user = await find_deleted_oidc_user_by_sub(db, sub)
-        if deleted_user:
-            user = await restore_deleted_oidc_user(db, deleted_user, extracted_info)
-            logger.info(f"OIDC deleted user restored and logged in: {user.username}")
-        else:
-            # 从用户信息中获取部门信息
-            dept_name = extracted_info.get("department_name")
-            dept_desc = extracted_info.get("department_description")
-            dept = await get_or_create_oidc_department(db, dept_name, dept_desc)
-            department_id = dept.id if dept else None
-            user = await create_oidc_user(db, extracted_info, department_id)
-    else:
-        return None, "用户未注册，请联系管理员开通账号"
-
-    if user.user_kind == "end_user":
-        return None, "终端用户不能用于 OIDC 登录"
-    if user.is_deleted:
-        return None, "该账户已注销"
-
-    token_data = {"sub": str(user.id)}
-    jwt_token = AuthUtils.create_access_token(token_data)
-
-    department_name = None
-    if user.department_id:
-        department_name = await get_oidc_department_name(db, user.department_id)
-
-    response_data = {
-        "access_token": jwt_token,
-        "token_type": "bearer",
-        "user_id": user.id,
-        "username": user.username,
-        "uid": user.uid,
-        "phone_number": user.phone_number,
-        "avatar": user.avatar,
-        "role": user.role,
-        "department_id": user.department_id,
-        "department_name": department_name,
-    }
-
-    return response_data, None
