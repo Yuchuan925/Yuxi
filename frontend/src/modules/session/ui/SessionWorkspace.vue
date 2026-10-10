@@ -90,26 +90,31 @@
             class="chat-main"
             ref="chatMainRef"
             :class="{
+              'is-loading-history': earlierMessagesLoading,
               'has-embedded-state': statePanelOpen && statePanelPlacement.mode === 'embedded'
             }"
           >
             <div class="chat-box">
               <button
                 v-if="historyPages[currentChatId]?.hasMore"
-                class="agent-nav-btn"
-                :disabled="historyPages[currentChatId]?.loading"
-                @click="fetchThreadMessages({ threadId: currentChatId, more: true })"
+                type="button"
+                class="agent-nav-btn history-load-btn"
+                :disabled="historyPages[currentChatId]?.loading || earlierMessagesLoading"
+                :aria-busy="historyPages[currentChatId]?.loading || earlierMessagesLoading"
+                @click="loadEarlierMessages"
               >
-                加载更早消息
+                {{ earlierMessagesLabel }}
               </button>
               <template v-for="row in messageGroupRows" :key="row.key">
                 <div v-if="row.type === 'message-group'" class="group-box">
                   <div v-if="row.timeLabel" class="message-group-time">
                     {{ row.timeLabel }}
                   </div>
-                  <template
+                  <div
                     v-for="(displayItem, itemIndex) in row.displayItems"
                     :key="displayItem.key"
+                    class="history-display-item"
+                    :data-history-key="displayItem.key"
                   >
                     <AgentMessageComponent
                       v-if="displayItem.type === 'message'"
@@ -140,7 +145,7 @@
                       :duration-ms="displayItem.durationMs"
                       :mention="mentionConfig"
                     />
-                  </template>
+                  </div>
                   <RunFailureNotice
                     v-if="row.group.run?.status === 'failed'"
                     :error-message="row.group.run.error_message"
@@ -2606,10 +2611,79 @@ const scrollController = new ScrollController(() =>
   workspaceActive.value ? chatMainRef.value : null
 )
 let retainedScrollTop = 0
+const earlierMessagesLoading = ref(false)
+const earlierMessagesError = ref(false)
+const earlierMessagesLabel = computed(() => {
+  if (historyPages.value[currentChatId.value]?.loading || earlierMessagesLoading.value) {
+    return '正在加载更早消息…'
+  }
+  return earlierMessagesError.value ? '加载失败，点击重试' : '加载更早消息'
+})
+
+/** 追加历史后按可见消息恢复位置，保留请求期间用户的滚动。 */
+const loadEarlierMessages = async () => {
+  const threadId = currentChatId.value
+  const container = chatMainRef.value
+  const paging = historyPages.value[threadId]
+  if (
+    !container ||
+    !workspaceActive.value ||
+    !pageVisible.value ||
+    isLoadingMessages.value ||
+    !paging?.hasMore ||
+    paging.loading ||
+    earlierMessagesLoading.value
+  ) {
+    return
+  }
+  earlierMessagesLoading.value = true
+  earlierMessagesError.value = false
+  scrollController.disableAutoScroll()
+  scrollController.cancelPendingScrolls()
+  const anchor = [...container.querySelectorAll('.history-display-item')].find(
+    (element) => element.getBoundingClientRect().bottom > container.getBoundingClientRect().top
+  )
+  const anchorKey = anchor?.dataset.historyKey
+  const anchorTop = anchor?.getBoundingClientRect().top
+  const previousHeight = container.scrollHeight
+  const previousScrollTop = container.scrollTop
+  try {
+    await fetchThreadMessages({ threadId, more: true })
+    await nextTick()
+    if (
+      currentChatId.value !== threadId ||
+      chatMainRef.value !== container ||
+      !workspaceActive.value
+    ) {
+      return
+    }
+    const currentAnchor = anchor?.isConnected
+      ? anchor
+      : [...container.querySelectorAll('.history-display-item')].find(
+          (element) => element.dataset.historyKey === anchorKey
+        )
+    const offset = currentAnchor
+      ? currentAnchor.getBoundingClientRect().top - anchorTop + container.scrollTop - previousScrollTop
+      : container.scrollHeight - previousHeight
+    container.scrollTop += offset
+    retainedScrollTop = container.scrollTop
+  } catch {
+    // Runtime 已提供错误提示；停止自动重试，交由用户点击恢复。
+    if (currentChatId.value === threadId) earlierMessagesError.value = true
+  } finally {
+    earlierMessagesLoading.value = false
+  }
+}
+
 const handleWorkspaceScroll = () => {
   if (!workspaceActive.value) return
-  retainedScrollTop = chatMainRef.value?.scrollTop || 0
+  const scrollTop = chatMainRef.value?.scrollTop || 0
+  const scrollingUp = scrollTop < retainedScrollTop
+  retainedScrollTop = scrollTop
   scrollController.handleScroll()
+  if (scrollingUp && scrollTop <= 600 && !earlierMessagesError.value) {
+    void loadEarlierMessages()
+  }
 }
 const messageInputDockRef = ref(null)
 let chatMainResizeObserver = null
@@ -3848,6 +3922,7 @@ watch(
 
 watch(currentChatId, (threadId, oldThreadId) => {
   if (threadId === oldThreadId) return
+  earlierMessagesError.value = false
   // 旧线程已被删除时丢弃输入草稿，避免写入无法再次访问的孤儿缓存
   const keepInput = !oldThreadId || threads.value.some((thread) => thread.id === oldThreadId)
   // 切换线程：保存旧线程的输入草稿，并还原新线程（或新建对话）的草稿
@@ -3974,6 +4049,10 @@ watch(currentChatId, (threadId, oldThreadId) => {
   min-width: 0; /* Prevent flex item from overflowing */
 
   scrollbar-width: none;
+}
+
+.chat-main.is-loading-history {
+  overflow-anchor: none; /* 追加期间由视图补偿阅读位置，避免浏览器重复锚定。 */
 }
 
 .chat-content-container.has-file-panel .chat-main {
@@ -4233,7 +4312,8 @@ watch(currentChatId, (threadId, oldThreadId) => {
   flex-direction: column;
 }
 
-.group-box {
+.group-box,
+.history-display-item {
   display: flex;
   flex-direction: column;
 }
@@ -4734,6 +4814,21 @@ watch(currentChatId, (threadId, oldThreadId) => {
 
   .loading-icon {
     animation: spin 1s linear infinite;
+  }
+}
+
+.history-load-btn {
+  min-height: 40px;
+  flex-shrink: 0;
+  color: var(--color-text-secondary);
+
+  &:disabled {
+    cursor: wait;
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--main-color);
+    outline-offset: 2px;
   }
 }
 
