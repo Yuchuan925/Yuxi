@@ -39,14 +39,9 @@ from yuxi.modules.identity.services.cli_auth import (
     exchange_cli_auth_token,
     get_cli_auth_session_for_user,
 )
-from yuxi.modules.identity.services.login_limits import (
-    check_login_rate_limit,
-    clear_login_failures,
-    extract_client_ip,
-    record_login_failure,
-)
+from yuxi.modules.identity.services.login_limits import extract_client_ip
+from yuxi.modules.identity.services.password_login import PasswordLoginRejected, login_with_password
 from yuxi.modules.identity.services.usernames import generate_unique_uid, is_valid_phone_number, validate_username
-from yuxi.shared.datetime import utc_now
 
 # 创建路由器
 auth = APIRouter(prefix="/auth", tags=["authentication"])
@@ -225,93 +220,31 @@ async def login_for_access_token(
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: AsyncSession = Depends(get_db),
 ):
-    # 查找用户 - 支持user_id和phone_number登录
-    login_identifier = form_data.username  # OAuth2表单中的username字段作为登录标识符
-    client_ip = extract_client_ip(request)
-
-    # IP+账号 与 IP 全局滑动窗口失败限速，与账号级锁定叠加
-    allowed, retry_after = await check_login_rate_limit(client_ip, login_identifier)
-    if not allowed:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="登录尝试过于频繁，请稍后再试",
-            headers={"Retry-After": str(retry_after)},
-        )
-
-    user_repository = UserRepository(db)
-    user = await user_repository.get_by_login_identifier(login_identifier)
-
-    # 如果用户不存在，为防止用户名枚举攻击，返回通用错误信息
-    if not user or user.user_kind == "end_user":
-        await record_login_failure(client_ip, login_identifier)
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="登录标识或密码错误",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    # 检查用户是否已被删除
-    if user.is_deleted:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="该账户已注销",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    # 检查用户是否处于登录锁定状态
-    if user.is_login_locked():
-        remaining_time = user.get_remaining_lock_time()
-        raise HTTPException(
-            status_code=status.HTTP_423_LOCKED,
-            detail=f"登录被锁定，请等待 {remaining_time} 秒后再试",
-            headers={"WWW-Authenticate": "Bearer", "X-Lock-Remaining": str(remaining_time)},
-        )
-
-    # 锁定已过期：清零失败计数，避免解锁后首次失败又立即再次锁定
-    if user.login_locked_until is not None:
-        user.reset_failed_login()
-        await user_repository.save(user)
-
-    # 验证密码
-    if not AuthUtils.verify_password(user.password_hash, form_data.password):
-        # 密码错误，记录 IP 维度失败并增加账号失败次数
-        await record_login_failure(client_ip, login_identifier)
-        user.increment_failed_login()
-        await user_repository.save(user)
-
-        await db.commit()
-
-        # 检查是否需要锁定
-        if user.is_login_locked():
-            remaining_time = user.get_remaining_lock_time()
-            raise HTTPException(
-                status_code=status.HTTP_423_LOCKED,
-                detail=f"由于多次登录失败，账户已被锁定 {remaining_time} 秒",
-                headers={"WWW-Authenticate": "Bearer", "X-Lock-Remaining": str(remaining_time)},
+    """适配密码登录表单、拒绝原因与 HTTP 响应。"""
+    try:
+        result = await login_with_password(db, form_data.username, form_data.password, extract_client_ip(request))
+    except PasswordLoginRejected as error:
+        headers = {"WWW-Authenticate": "Bearer"}
+        if error.reason == "rate_limited":
+            code, detail = 429, "登录尝试过于频繁，请稍后再试"
+            headers = {"Retry-After": str(error.remaining_seconds)}
+        elif error.reason == "deleted":
+            code, detail = 403, "该账户已注销"
+        elif error.reason in {"locked", "newly_locked"}:
+            code = 423
+            remaining = error.remaining_seconds
+            detail = (
+                f"登录被锁定，请等待 {remaining} 秒后再试" if error.reason == "locked" else f"由于多次登录失败，账户已被锁定 {remaining} 秒"
             )
+            headers["X-Lock-Remaining"] = str(remaining)
         else:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="用户名或密码错误",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
+            code = 401
+            detail = "登录标识或密码错误" if error.reason == "unknown_account" else "用户名或密码错误"
+        raise HTTPException(status_code=code, detail=detail, headers=headers) from error
 
-    # 登录成功，重置失败计数器并清除 IP+账号维度的失败记录
-    user.reset_failed_login()
-    user.last_login = utc_now()
-    await user_repository.save(user)
-    await clear_login_failures(client_ip, login_identifier)
-
-    # 生成访问令牌
-    token_data = {"sub": str(user.id)}
-    access_token = AuthUtils.create_access_token(token_data)
-
-    # 获取部门名称
-    department_name = None
-    if user.department_id:
-        department_name = await DepartmentRepository(db).get_name_by_id(user.department_id)
-    await db.commit()
-
+    user = result.user
+    access_token = result.access_token
+    department_name = result.department_name
     return {
         "access_token": access_token,
         "token_type": "bearer",
