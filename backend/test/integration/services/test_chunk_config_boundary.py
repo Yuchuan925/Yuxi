@@ -58,9 +58,9 @@ async def boundary(monkeypatch):
         monkeypatch.setattr(pg_manager, "get_async_session_context", session_context)
         monkeypatch.setattr(dispatch, "publish_job", AsyncMock())
         executor = SimpleNamespace(normalize_additional_params=MilvusKB.normalize_additional_params)
-        monkeypatch.setattr(router.knowledge_base, "_get_or_create_kb_instance", AsyncMock(return_value=executor))
+        monkeypatch.setattr(router.knowledge_base_manager, "_get_or_create_kb_instance", AsyncMock(return_value=executor))
         detail = SimpleNamespace(name="Fixture", pending_parse_count=1, pending_index_count=1)
-        monkeypatch.setattr(router, "_ensure_database_supports_documents", AsyncMock(return_value=detail))
+        monkeypatch.setattr(router, "_ensure_knowledge_base_supports_documents", AsyncMock(return_value=detail))
 
         @asynccontextmanager
         async def cache_lock(kb_id):
@@ -107,7 +107,7 @@ async def test_invalid_document_request_creates_no_job(boundary, action):
         payload["file_ids"] = ["fixture-file"]
     if action in {"", "add"}:
         payload["items"] = ["minio://knowledgebases/fixture-kb/upload/fixture.md"]
-    path = "/api/knowledge/databases/fixture-kb/documents" + (f"/{action}" if action else "")
+    path = "/api/knowledge/knowledge-bases/fixture-kb/documents" + (f"/{action}" if action else "")
     response = await client.post(path, json=payload)
     assert response.status_code == 400, response.text
     assert next(iter(params)) in response.json()["detail"]
@@ -119,11 +119,11 @@ async def test_invalid_document_request_creates_no_job(boundary, action):
 async def test_invalid_knowledge_config_does_not_change_database(boundary, method):
     """管理创建与更新均在持久化前拒绝未知策略。"""
     client, factory = boundary
-    path = "/api/knowledge/databases" + ("/fixture-kb" if method == "put" else "")
+    path = "/api/knowledge/knowledge-bases" + ("/fixture-kb" if method == "put" else "")
     response = await client.request(
         method,
         path,
-        json={"database_name": "Invalid", "name": "Invalid", "description": "", "additional_params": {"chunk_preset_id": "typo"}},
+        json={"name": "Invalid", "description": "", "additional_params": {"chunk_preset_id": "typo"}},
     )
     assert response.status_code == 400, response.text
     assert "chunk_preset_id" in response.text
@@ -139,7 +139,7 @@ async def test_valid_document_config_is_preserved_in_job(boundary):
     client, factory = boundary
     params = {"chunk_preset_id": "qa", "chunk_parser_config": {"chunk_token_num": 256}}
     response = await client.post(
-        "/api/knowledge/databases/fixture-kb/documents/index", json={"file_ids": ["fixture-file"], "params": params}
+        "/api/knowledge/knowledge-bases/fixture-kb/documents/index", json={"file_ids": ["fixture-file"], "params": params}
     )
     assert response.status_code == 200, response.text
     async with factory() as observer:
@@ -154,12 +154,12 @@ async def test_bad_persisted_knowledge_config_can_be_read_and_repaired(boundary)
     async with factory() as db, db.begin():
         row = await db.scalar(select(KnowledgeBase))
         row.additional_params = {"chunk_preset_id": "typo"}
-    response = await client.get("/api/knowledge/databases/fixture-kb")
+    response = await client.get("/api/knowledge/knowledge-bases/fixture-kb")
     assert response.status_code == 200, response.text
     assert response.json()["additional_params"]["chunk_preset_id"] == "typo"
-    assert any(row.kb_id == "fixture-kb" for row in await router.knowledge_base.get_databases())
+    assert any(row.kb_id == "fixture-kb" for row in await router.knowledge_base_manager.get_knowledge_bases())
     response = await client.put(
-        "/api/knowledge/databases/fixture-kb",
+        "/api/knowledge/knowledge-bases/fixture-kb",
         json={"name": "Repaired", "description": "", "additional_params": {"chunk_preset_id": "qa"}},
     )
     assert response.status_code == 200, response.text
