@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from yuxi.modules.knowledge.manager import KnowledgeBaseManager
+from yuxi.modules.knowledge.repositories.files import KnowledgeFileRepository
 from yuxi.modules.identity.permissions import ResourcePermission
 
 pytestmark = pytest.mark.asyncio
@@ -44,6 +45,7 @@ class FakeKnowledgeBaseRepository:
 
 
 class FakeKnowledgeFileRepository:
+    normalize_path_prefix = staticmethod(KnowledgeFileRepository.normalize_path_prefix)
     list_calls = []
     exists_calls = []
     action_id_calls = []
@@ -406,3 +408,17 @@ async def test_list_document_file_ids_by_statuses_delegates_to_repository():
             "limit": 500,
         }
     ]
+
+
+@pytest.mark.parametrize(("source", "expected"), [(None, ""), (" ./资料\\章节// ", "资料/章节/"), ("./", "")])
+async def test_document_list_returns_repository_normalized_path(source, expected):
+    """列表响应使用公开路径契约，结果与查询目录语义一致。"""
+    result = await KnowledgeBaseManager("/tmp/yuxi-test").list_document_files("kb_1", path_prefix=source)
+    assert result["path_prefix"] == expected
+
+
+@pytest.mark.parametrize("source", ["/etc", "../private", "资料/../private"])
+async def test_public_path_contract_rejects_non_relative_prefix(source):
+    """公开契约保留现有相对目录边界。"""
+    with pytest.raises(ValueError, match="path_prefix"):
+        KnowledgeFileRepository.normalize_path_prefix(source)

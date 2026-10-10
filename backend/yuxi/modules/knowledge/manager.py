@@ -850,7 +850,6 @@ class KnowledgeBaseManager:
         )
         creators = {user.uid: user for user in creators}
         items = [self._file_record_list_item(record, child_counts, creators.get(getattr(record, "created_by", None))) for record in records]
-        normalize_path_prefix = getattr(repo, "_normalize_path_prefix", lambda value: value or "")
 
         result = {
             "items": items,
@@ -859,7 +858,7 @@ class KnowledgeBaseManager:
             "page_size": normalized_page_size,
             "has_more": normalized_page * normalized_page_size < total,
             "parent_id": parent_id,
-            "path_prefix": normalize_path_prefix(path_prefix),
+            "path_prefix": repo.normalize_path_prefix(path_prefix),
             "recursive": effective_recursive,
         }
         if stats is not None:
