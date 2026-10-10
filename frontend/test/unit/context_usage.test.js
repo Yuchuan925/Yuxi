@@ -3,6 +3,9 @@ import test from 'node:test'
 
 import {
   calculateContextRatio,
+  resolveContextUsageSummary,
+  getContextUsageSegments,
+  formatTokenCount,
   formatContextToken,
   formatContextUsageTooltip,
   getContextUsageTone,
@@ -84,7 +87,10 @@ test('getContextUsageTone: 根据占比返回正常/警告/危险色调', () => 
 })
 
 test('resolveContextPressureTokens: 优先使用回复完成后的下一轮估算', () => {
-  assert.equal(resolveContextPressureTokens({ next_llm_input_tokens: 170, llm_input_tokens: 120 }), 170)
+  assert.equal(
+    resolveContextPressureTokens({ next_llm_input_tokens: 170, llm_input_tokens: 120 }),
+    170
+  )
   assert.equal(resolveContextPressureTokens({ llm_input_tokens: 120 }), 120)
   assert.equal(resolveContextPressureTokens({ next_llm_input_tokens: null }), null)
   assert.equal(resolveContextPressureTokens(null), null)
@@ -93,4 +99,44 @@ test('resolveContextPressureTokens: 优先使用回复完成后的下一轮估�
 test('shouldSuggestContextCompression: 只在达到 85% 派生提示线时建议压缩', () => {
   assert.equal(shouldSuggestContextCompression(0.849), false)
   assert.equal(shouldSuggestContextCompression(0.85), true)
+})
+
+test('上下文详情与输入环使用下一轮压力，优先压缩阈值并限制比例', () => {
+  assert.deepEqual(
+    resolveContextUsageSummary({
+      next_llm_input_tokens: 90,
+      llm_input_tokens: 60,
+      summary_trigger_tokens: 100,
+      context_window: 200
+    }),
+    { usedTokens: 90, limitTokens: 100, ratio: 0.9, stackTotal: 60 }
+  )
+  assert.equal(resolveContextUsageSummary({ llm_input_tokens: 300, context_window: 200 }).ratio, 1)
+  assert.equal(formatTokenCount(2048), '2K')
+})
+
+test('缺失遥测保留未知占比，旧消息统计回退不把已压缩消息计入占用', () => {
+  const usage = {
+    system_tokens: 10,
+    tools_tokens: 20,
+    llm_messages_tokens: 40,
+    summary_active: true,
+    summary_message_tokens: 5,
+    state_messages_tokens: 90,
+    context_window: 100
+  }
+  assert.deepEqual(resolveContextUsageSummary(usage), {
+    usedTokens: 70,
+    limitTokens: 100,
+    ratio: null,
+    stackTotal: 70
+  })
+  assert.equal(getContextUsageSegments(usage).find((item) => item.key === 'messages').value, 35)
+  assert.equal(getContextUsageSegments(usage).find((item) => item.key === 'cut').value, 50)
+  assert.deepEqual(resolveContextUsageSummary(null), {
+    usedTokens: 0,
+    limitTokens: null,
+    ratio: null,
+    stackTotal: 0
+  })
 })

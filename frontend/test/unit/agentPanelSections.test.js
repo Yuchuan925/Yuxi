@@ -111,14 +111,16 @@ test('暂停队列仍有请求时禁用上下文压缩', () => {
     new URL('../../src/modules/session/ui/SessionWorkspace.vue', import.meta.url),
     'utf8'
   )
-  const position = source.indexOf('@click="handleContextCompression"')
-  const action = source.slice(source.lastIndexOf('<button', position), source.indexOf('</button>', position))
+  const position = source.indexOf('<ContextUsagePanel')
+  const action = source.slice(position, source.indexOf('/>', position))
+  const panel = readFileSync(new URL('../../src/modules/session/ui/ContextUsagePanel.vue', import.meta.url), 'utf8')
   const handler = source.slice(
     source.indexOf('const handleContextCompression'),
     source.indexOf('// 发送或中断')
   )
 
-  assert.match(action, /:disabled="[^"]*hasQueuedInputs/s)
+  assert.match(action, /:compression-disabled="[^"]*hasQueuedInputs/s)
+  assert.match(panel, /:disabled="compressing \|\| compressionDisabled"/)
   assert.match(handler, /hasQueuedInputs\.value/)
 })
 
