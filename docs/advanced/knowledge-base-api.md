@@ -48,6 +48,8 @@ Content-Type: application/json
 
 按状态处理整批文件时，使用 `/documents/parse-pending` 和 `/documents/index-pending`。直接提交的文件 ID 数量有限制，大批量导入应使用按状态入口。
 
+分块配置通过知识库 `additional_params` 或文档请求 `params` 提供。`chunk_preset_id` 接受 `/api/knowledge/chunk-presets` 返回的策略；未知值或非字符串返回 `400`，不会登记处理作业。缺省、`null` 和空字符串表示默认或继承上层策略；内部别名 `naive` 对应 `general`。有效配置按请求、文件、知识库的顺序覆盖；管理读取保留已持久化的非法配置原值；实际处理时明确失败。管理员通过知识库更新接口或文档参数更新提交有效值修复，文件更新中的空策略与 `null` 配置继续保留已有覆盖值。
+
 URL 导入需要管理员身份和目标知识库的管理权限。先调用 `POST /api/knowledge/files/fetch-url`，通过 URL 白名单校验并得到对象地址，再进入导入流程。白名单配置与抓取器的 SSRF 防护、重定向和大小限制由[文档处理与 OCR](./document-processing.md#从-url-导入网页)拥有。不要把 `content_type=url` 直接传给文档导入接口。
 
 上传入口会检查内容哈希，但数据库没有内容哈希唯一约束。并发请求仍可能产生重复记录；`/documents/add` 和一体化入口会保存调用方提供的哈希，不会替调用方再次完成幂等去重。

@@ -40,6 +40,10 @@ CHUNK_ENGINE_VERSION = "ragflow_like_v1"
 GENERAL_INTERNAL_PARSER_ID = "naive"
 
 
+class ChunkConfigError(ValueError):
+    """分块配置非法，管理读取可保留原值供修复。"""
+
+
 def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     result = deepcopy(base)
     for key, value in (override or {}).items():
@@ -51,18 +55,19 @@ def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]
 
 
 def normalize_chunk_preset_id(value: str | None) -> str:
-    if not value:
+    """保留缺省与内部别名，拒绝显式非法策略。"""
+    if value is None or value == "":
         return DEFAULT_CHUNK_PRESET_ID
-
-    normalized = str(value).strip().lower()
+    if not isinstance(value, str):
+        raise ChunkConfigError("chunk_preset_id 必须是字符串")
+    normalized = value.strip().lower()
     if normalized == GENERAL_INTERNAL_PARSER_ID:
         return DEFAULT_CHUNK_PRESET_ID
 
     if normalized in CHUNK_PRESET_IDS:
         return normalized
 
-    logger.warning(f"Unknown chunk preset id '{value}', fallback to general")
-    return DEFAULT_CHUNK_PRESET_ID
+    raise ChunkConfigError(f"未知 chunk_preset_id: {value}")
 
 
 def map_to_internal_parser_id(preset_id: str) -> str:
@@ -97,9 +102,12 @@ def resolve_chunk_processing_params(
     file_params = dict(file_processing_params or {})
     request = dict(request_params or {})
 
-    preset_id = normalize_chunk_preset_id(
-        request.get("chunk_preset_id") or file_params.get("chunk_preset_id") or kb_additional.get("chunk_preset_id")
-    )
+    preset_id = kb_additional["chunk_preset_id"]
+    for params in (file_params, request):
+        value = params.get("chunk_preset_id")
+        if value is not None and value != "":
+            preset_id = value
+    preset_id = normalize_chunk_preset_id(preset_id)
 
     parser_config = get_default_chunk_parser_config(preset_id)
 
