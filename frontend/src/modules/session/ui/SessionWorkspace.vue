@@ -929,6 +929,7 @@ import CooperationTree from '@/modules/session/ui/CooperationTree.vue'
 import { useAgentMentionConfig } from '@/modules/session/model/useAgentMentionConfig'
 import { collectCooperationTasks } from '@/modules/session/model/cooperationToolView'
 import AgentArtifactsCard from '@/modules/session/ui/AgentArtifactsCard.vue'
+import { normalizeArtifacts } from '@/modules/session/model/artifacts'
 import AgentPanel from '@/modules/session/ui/workspace/AgentPanel.vue'
 import AttachmentTmpUploadModal from '@/modules/session/ui/AttachmentTmpUploadModal.vue'
 import ProjectSelectionSection from '@/modules/projects/ui/ProjectSelectionSection.vue'
@@ -1805,13 +1806,10 @@ const currentArtifacts = computed(() => {
   return Array.isArray(artifacts) ? artifacts : []
 })
 const currentArtifactFiles = computed(() =>
-  currentArtifacts.value
-    .map((path) => String(path || '').trim())
-    .filter(Boolean)
-    .map((path) => ({
-      path,
-      name: getPanelFileName({ path })
-    }))
+  normalizeArtifacts(currentArtifacts.value).map((artifact) => ({
+    ...artifact,
+    name: getPanelFileName(artifact)
+  }))
 )
 /** 返回待办状态的无障碍文案。 */
 const getTodoStatusLabel = (status) => {

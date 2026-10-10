@@ -29,7 +29,7 @@ tool_dependencies: ["present_artifacts"]
 3. 从生成接口响应中读取图片地址，默认路径为 `images[0].url`。
 4. 在同一个沙盒脚本中用 `Authorization: Bearer $SILICONFLOW_API_KEY` 下载该图片地址；如果接口直接返回 base64，则直接解码保存。
 5. 根据用户要求和项目结构，将最终图片保存到当前 Workdir 中合适的位置。
-6. 调用 `present_artifacts`，传入保存后的绝对虚拟路径，让前端展示图片产物。
+6. 调用 `present_artifacts`，将保存后的绝对虚拟路径放入 `filepaths`，指定 `type: "image"`，让前端直接预览图片。
 7. 最终回复简要说明图片已生成，不要把外部临时 URL 当作最终结果展示。
 
 ## 脚本示例

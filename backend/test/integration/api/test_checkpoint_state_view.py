@@ -25,7 +25,10 @@ class DisplayState(TypedDict):
     token_usage: dict
 
 
-async def test_state_view_reads_postgres_snapshot_and_rejects_other_users(test_client, admin_headers, standard_user):
+@pytest.mark.parametrize(
+    "artifact_payload", [["result.txt"], [{"path": "screenshot.png", "type": "image"}, {"path": "result.txt", "type": "file"}]]
+)
+async def test_state_view_reads_postgres_snapshot_and_rejects_other_users(test_client, admin_headers, standard_user, artifact_payload):
     """无模型配置也可读快照，未知和其他用户线程拒绝读取。"""
     slug = f"pytest-checkpoint-{uuid.uuid4().hex[:8]}"
     created = await test_client.post(
@@ -63,7 +66,7 @@ async def test_state_view_reads_postgres_snapshot_and_rejects_other_users(test_c
                 "messages": [HumanMessage(content="persisted checkpoint message")],
                 "todos": [{"content": "persisted todo", "status": "completed"}],
                 "files": {"legacy.txt": {"content": ["old checkpoint content"]}},
-                "artifacts": ["result.txt"],
+                "artifacts": artifact_payload,
                 "cooperation": {"sessions": [{"session_id": "forged-child"}]},
                 "token_usage": {"total": 17},
             }

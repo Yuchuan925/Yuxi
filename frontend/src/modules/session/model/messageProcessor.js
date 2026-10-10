@@ -1,3 +1,6 @@
+import { normalizeArtifacts } from './artifacts.js'
+import { getToolCallStatus } from './toolCallProjection.js'
+
 /** 解析工具返回的 JSON 内容。 */
 const parseToolResultContent = (content) => {
   if (Array.isArray(content)) return content
@@ -58,22 +61,21 @@ export class MessageProcessor {
   }
 
   /**
-   * 提取一轮对话中已成功登记的交付物路径。
+   * 提取一轮对话中已成功登记的交付物路径与展示类型。
    * @param {Object} group - 单轮对话
-   * @returns {Array<string>} 去重后的交付物路径
+   * @returns {Array<{path: string, type: string}>} 去重后的交付物
    */
   static extractArtifactsFromMessageGroup(group) {
     if (!group || !Array.isArray(group.messages)) return []
 
     const artifacts = []
-    const seenPaths = new Set()
     for (const message of group.messages) {
       if (message?.type !== 'ai' || !Array.isArray(message.tool_calls)) continue
 
       for (const toolCall of message.tool_calls) {
         const toolName = toolCall?.name || toolCall?.function?.name
         if (toolName !== 'present_artifacts') continue
-        if (!toolCall.tool_call_result && toolCall.status !== 'success') continue
+        if (getToolCallStatus(toolCall) !== 'completed') continue
 
         let args = toolCall.args ?? toolCall.function?.arguments
         if (typeof args === 'string') {
@@ -87,13 +89,11 @@ export class MessageProcessor {
         const filepaths = Array.isArray(args?.filepaths) ? args.filepaths : []
         for (const filepath of filepaths) {
           const normalizedPath = typeof filepath === 'string' ? filepath.trim() : ''
-          if (!normalizedPath || seenPaths.has(normalizedPath)) continue
-          seenPaths.add(normalizedPath)
-          artifacts.push(normalizedPath)
+          if (normalizedPath) artifacts.push({ path: normalizedPath, type: args.type || 'file' })
         }
       }
     }
-    return artifacts
+    return normalizeArtifacts(artifacts)
   }
 
   /**

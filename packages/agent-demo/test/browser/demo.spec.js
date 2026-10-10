@@ -328,13 +328,17 @@ test("历史回读、流式正文、生成中追加消息和携带身份下载�
     result_run_id: "run-1",
     status: "completed",
   };
-  backend.state.artifacts = ["/home/gem/user-data/报告 #1.txt"];
+  backend.state.artifacts = [
+    { path: "/home/gem/user-data/报告 #1.txt", type: "file" },
+    "/home/gem/user-data/legacy.txt",
+  ];
   backend.emit({
     type: "agent.session.turn.item.done",
     item: backend.state.items[1],
   });
   backend.emit({ type: "agent.session.turn.completed" });
   await expect(page.getByLabel("对话消息")).toContainText("你好，已完成");
+  await expect(page.getByRole("button", { name: "legacy.txt 点击下载" })).toBeVisible();
   const downloading = page.waitForEvent("download");
   await page.getByRole("button", { name: "报告 #1.txt 点击下载" }).click();
   const file = await downloading;
