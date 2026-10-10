@@ -48,17 +48,17 @@ async def test_concurrent_executor_construction_is_deduplicated(tmp_path, monkey
     assert construction_count == 1
 
 
-async def test_delete_database_commits_tombstone_before_any_external_cleanup(tmp_path, monkeypatch):
+async def test_delete_knowledge_base_commits_tombstone_before_any_external_cleanup(tmp_path, monkeypatch):
     """删除请求只提交事实；外部清理通过 outbox，不阻塞不可见提交。"""
     manager = KnowledgeBaseManager(str(tmp_path))
-    repository = SimpleNamespace(mark_deleted_by_kb_id=AsyncMock(return_value=["database:kb_1:deleted"]))
+    repository = SimpleNamespace(mark_deleted_by_kb_id=AsyncMock(return_value=["knowledge_base:kb_1:deleted"]))
     monkeypatch.setattr(
         "yuxi.modules.knowledge.repositories.files.KnowledgeFileRepository",
         lambda: repository,
     )
     executor = AsyncMock(side_effect=RuntimeError("Milvus offline"))
     monkeypatch.setattr(manager, "get_kb_executor", executor)
-    result = await manager.delete_database("kb_1")
+    result = await manager.delete_knowledge_base("kb_1")
     assert result == {"message": "删除成功"}
     repository.mark_deleted_by_kb_id.assert_awaited_once_with("kb_1")
     executor.assert_not_awaited()
@@ -88,7 +88,7 @@ async def test_parse_file_refreshes_stats_and_keeps_original_error_after_executo
 
     monkeypatch.setattr(manager, "get_kb_config", get_kb_config)
     monkeypatch.setattr(manager, "_get_or_create_kb_instance", AsyncMock(return_value=FakeExecutor()))
-    monkeypatch.setattr(manager, "_refresh_database_stats", refresh_database_stats)
+    monkeypatch.setattr(manager, "_refresh_knowledge_base_stats", refresh_database_stats)
 
     with pytest.raises(ValueError, match="parse failed"):
         await manager.parse_file("kb_1", "file_1")

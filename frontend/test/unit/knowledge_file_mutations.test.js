@@ -88,12 +88,12 @@ test('知识库文件夹移动与重命名 API 使用管理端 PUT 契约', asyn
 
     assert.deepEqual(requests, [
       {
-        url: '/api/knowledge/databases/kb-1/folders/folder-1/rename',
+        url: '/api/knowledge/knowledge-bases/kb-1/folders/folder-1/rename',
         method: 'PUT',
         body: { folder_name: '新名称' }
       },
       {
-        url: '/api/knowledge/databases/kb-1/documents/file-1/move',
+        url: '/api/knowledge/knowledge-bases/kb-1/documents/file-1/move',
         method: 'PUT',
         body: { new_parent_id: 'folder-2' }
       }

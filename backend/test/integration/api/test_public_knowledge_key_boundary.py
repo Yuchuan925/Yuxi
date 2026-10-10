@@ -29,12 +29,12 @@ async def test_knowledge_key_is_limited_to_public_knowledge_api(test_client, adm
         assert isinstance(listed.json(), list)
 
         for path in (
-            "/api/knowledge/databases",
-            "/api/knowledge/databases/external",
+            "/api/knowledge/knowledge-bases",
+            "/api/knowledge/knowledge-bases/external",
             "/api/v1/agents",
             "/api/user/apikey/",
             "/api/graph/list",
-            "/api/evaluation/databases/unused/datasets",
+            "/api/evaluation/knowledge-bases/unused/datasets",
         ):
             blocked = await test_client.get(path, headers=headers)
             assert blocked.status_code == 403, (path, blocked.text)
@@ -68,7 +68,7 @@ async def test_agents_key_cannot_access_public_knowledge_api(test_client, admin_
 
 async def test_public_knowledge_does_not_expose_management_routes(test_client, admin_headers):
     """版本化知识域仅注册工具查询，不迁入管理路由。"""
-    response = await test_client.get("/api/v1/knowledge/databases", headers=admin_headers)
+    response = await test_client.get("/api/v1/knowledge/knowledge-bases", headers=admin_headers)
     assert response.status_code == 404, response.text
 
 

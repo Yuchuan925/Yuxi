@@ -46,7 +46,7 @@ Owner：backend/yuxi/modules/knowledge/manager.py
 | 知识库级任务分批实体化全部无冲突路径、记录启动者并保持文件身份和对象地址 | SSE 断开取消任务、一个冲突回滚其他路径、改变 `file_id` 或 MinIO URL | 实体化 service、JobTracker、文件 repository、MinIO 元数据契约 | 真实 HTTP/PostgreSQL integration：不建立 SSE 也完成任务，终态后回读目录树、创建人和原文件 ID | 注入同名普通文件与中断，已完成批次保留且重跑只处理剩余路径 | Not run |
 | 只读和无管理权限调用方不能实体化 | 仅由前端隐藏，直接调用仍可写 | FastAPI 权限依赖、只读 Connector | 真实 HTTP integration | 只读用户、只读 Connector 和跨知识库路径请求返回拒绝且数据库不变 | Not run |
 | 文件名派生状态不会与实体化后的目录事实冲突 | KnowledgeFile 已变更但 Chunk 或搜索结果仍显示旧路径 | 各派生数据 Owner | 对实际使用文件名的 Owner 做集成回读；无 consumer 时以负向符号搜索证明 | 建立包含已索引文件的虚拟目录后转换，旧名称不得继续作为当前事实 | Not run |
-| 文件统计卡对历史数据显示 warning 并通过 SSE 展示知识库级进度 | 单个文件夹行出现迁移入口，或关闭弹窗取消后端任务 | `DataBaseInfoView.vue` 与知识库 API 封装 | 前端 unit、lint、build、真实浏览器录屏 | 中断 SSE 后任务继续，重新检测仍反映数据库剩余事实 | Not run |
+| 文件统计卡对历史数据显示 warning 并通过 SSE 展示知识库级进度 | 单个文件夹行出现迁移入口，或关闭弹窗取消后端任务 | `KnowledgeBaseInfoView.vue` 与知识库 API 封装 | 前端 unit、lint、build、真实浏览器录屏 | 中断 SSE 后任务继续，重新检测仍反映数据库剩余事实 | Not run |
 
 ## 风险
 

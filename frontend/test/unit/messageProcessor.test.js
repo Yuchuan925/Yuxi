@@ -3,7 +3,7 @@ import test from 'node:test'
 
 import { MessageProcessor } from '../../src/modules/session/model/messageProcessor.js'
 
-const databases = [{ name: '财税库' }, { name: 'DifyKB' }, { name: 'LightGraphKB' }]
+const knowledgeBases = [{ name: '财税库' }, { name: 'DifyKB' }, { name: 'LightGraphKB' }]
 
 test('流式与历史只消费统一展示字段，不解释供应商元数据', () => {
   for (const message of [
@@ -109,7 +109,7 @@ test('知识库来源与历史消息保持独立的归一化语义', () => {
     ]
   }
 
-  const chunks = MessageProcessor.extractKnowledgeChunksFromMessageGroup(group, databases)
+  const chunks = MessageProcessor.extractKnowledgeChunksFromMessageGroup(group, knowledgeBases)
 
   assert.equal(chunks.some((chunk) => chunk.content === 'A' && chunk.kb_name === '财税库'), true)
   assert.equal(

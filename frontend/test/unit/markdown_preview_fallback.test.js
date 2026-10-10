@@ -59,7 +59,7 @@ test('relative document images resolve beside their artifact with the same autho
     '/api/v1/agents/sessions/thread-1/artifacts/home/gem/user-data/project/parsed/images/chart.png'
   )
   assert.equal(resolveMarkdownImageUrl('images/chart.png', '', origin), null)
-  assert.equal(resolveMarkdownImageUrl('https://outside.example/api/knowledge/databases/a/images/x.png', base, origin), null)
+  assert.equal(resolveMarkdownImageUrl('https://outside.example/api/knowledge/knowledge-bases/a/images/x.png', base, origin), null)
   assert.equal(resolveMarkdownImageUrl('//outside.example/x.png', base, origin), null)
-  assert.equal(resolveMarkdownImageUrl('/api/knowledge/databases/kb/images/kb-images/chart.png', '', origin), '/api/knowledge/databases/kb/images/kb-images/chart.png')
+  assert.equal(resolveMarkdownImageUrl('/api/knowledge/knowledge-bases/kb/images/kb-images/chart.png', '', origin), '/api/knowledge/knowledge-bases/kb/images/kb-images/chart.png')
 })

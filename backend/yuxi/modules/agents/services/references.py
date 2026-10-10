@@ -229,7 +229,7 @@ async def _load_reference_input(db, scope, thread_id, turn_id):
     sources = collect_reference_sources(await repo.list_retrievals(turn_id), {item["kb_id"] for item in visible})
     from yuxi.modules.knowledge.runtime import knowledge_base
 
-    document_support = {item["kb_id"]: knowledge_base.database_type_supports_documents(item["kb_type"]) for item in visible}
+    document_support = {item["kb_id"]: knowledge_base.knowledge_base_type_supports_documents(item["kb_type"]) for item in visible}
     for source in sources:
         if source["kind"] == "knowledge":
             source["supports_documents"] = document_support[source["kb_id"]]

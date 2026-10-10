@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { agentApi, databaseApi, toolApi } from '@/apis'
+import { agentApi, knowledgeBaseApi, toolApi } from '@/apis'
 import { handleChatError } from '@/shared/lib/errorHandler'
 import { normalizeAgentConfigurableItems } from '@/modules/agents/model/agentConfigUtils'
 
@@ -76,9 +76,9 @@ export const useAgentStore = defineStore(
     async function fetchAccessibleKnowledgeBases() {
       const currentGeneration = generation
       try {
-        const response = await databaseApi.getAccessibleDatabases()
+        const response = await knowledgeBaseApi.getAccessibleKnowledgeBases()
         if (currentGeneration !== generation) return
-        availableKnowledgeBases.value = response.databases || []
+        availableKnowledgeBases.value = response.knowledge_bases || []
       } catch (e) {
         if (currentGeneration !== generation) return
         console.warn('Failed to fetch accessible knowledge bases:', e)

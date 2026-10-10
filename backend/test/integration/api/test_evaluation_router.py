@@ -16,7 +16,7 @@ async def _upload_test_dataset(test_client, admin_headers: dict[str, str], kb_id
     line = '{"query":"什么是单元测试？","gold_answer":"用于验证代码行为的自动化测试"}\n'
 
     response = await test_client.post(
-        f"/api/evaluation/databases/{kb_id}/datasets/upload",
+        f"/api/evaluation/knowledge-bases/{kb_id}/datasets/upload",
         data={"name": dataset_name, "description": "pytest dataset for download"},
         files={"file": ("pytest_dataset.jsonl", line.encode("utf-8"), "application/x-ndjson")},
         headers=admin_headers,
@@ -38,8 +38,8 @@ async def test_download_dataset_requires_admin(test_client, standard_user):
     assert response.status_code == 403
 
 
-async def test_admin_can_download_dataset(test_client, admin_headers, knowledge_database):
-    dataset_id, expected_line = await _upload_test_dataset(test_client, admin_headers, knowledge_database["kb_id"])
+async def test_admin_can_download_dataset(test_client, admin_headers, knowledge_base_resource):
+    dataset_id, expected_line = await _upload_test_dataset(test_client, admin_headers, knowledge_base_resource["kb_id"])
 
     response = await test_client.get(
         f"/api/evaluation/datasets/{dataset_id}/download",

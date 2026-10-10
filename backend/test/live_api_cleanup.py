@@ -698,28 +698,28 @@ async def cleanup_pytest_knowledge_resources(
 ) -> None:
     """通过公开 API 删除 pytest 前缀的评估资源和知识库。"""
 
-    list_response = await client.get("/api/knowledge/databases", headers=headers)
+    list_response = await client.get("/api/knowledge/knowledge-bases", headers=headers)
     if list_response.status_code != 200:
-        raise RuntimeError(f"Failed to list knowledge databases for cleanup: {list_response.text}")
+        raise RuntimeError(f"Failed to list knowledge bases for cleanup: {list_response.text}")
 
     payload = list_response.json()
     if payload.get("message"):
-        raise RuntimeError(f"Failed to list knowledge databases for cleanup: {payload['message']}")
+        raise RuntimeError(f"Failed to list knowledge bases for cleanup: {payload['message']}")
 
-    databases = payload.get("databases")
-    if not isinstance(databases, list):
-        raise RuntimeError("Knowledge database cleanup response is missing a databases list")
+    knowledge_bases = payload.get("knowledge_bases")
+    if not isinstance(knowledge_bases, list):
+        raise RuntimeError("Knowledge base cleanup response is missing a knowledge_bases list")
 
     failures: list[str] = []
-    for database in databases:
-        kb_id = database.get("kb_id") if isinstance(database, dict) else None
+    for knowledge_base in knowledge_bases:
+        kb_id = knowledge_base.get("kb_id") if isinstance(knowledge_base, dict) else None
         if not kb_id:
-            failures.append("Knowledge database cleanup entry is missing kb_id")
+            failures.append("Knowledge base cleanup entry is missing kb_id")
             continue
 
         resource_specs = (
-            (f"/api/evaluation/databases/{kb_id}/runs", "run_id", f"/api/evaluation/databases/{kb_id}/runs"),
-            (f"/api/evaluation/databases/{kb_id}/datasets", "dataset_id", "/api/evaluation/datasets"),
+            (f"/api/evaluation/knowledge-bases/{kb_id}/runs", "run_id", f"/api/evaluation/knowledge-bases/{kb_id}/runs"),
+            (f"/api/evaluation/knowledge-bases/{kb_id}/datasets", "dataset_id", "/api/evaluation/datasets"),
         )
         for list_path, id_field, delete_prefix in resource_specs:
             response = await client.get(list_path, headers=headers)
@@ -744,16 +744,16 @@ async def cleanup_pytest_knowledge_resources(
                 if delete_response.status_code not in {200, 404}:
                     failures.append(f"Failed to delete evaluation resource {resource_id}: {delete_response.text}")
 
-    for database in databases:
-        if not isinstance(database, dict) or not _is_pytest_resource(database.get("name")):
+    for knowledge_base in knowledge_bases:
+        if not isinstance(knowledge_base, dict) or not _is_pytest_resource(knowledge_base.get("name")):
             continue
-        kb_id = database.get("kb_id")
+        kb_id = knowledge_base.get("kb_id")
         if not kb_id:
             continue
 
-        delete_response = await client.delete(f"/api/knowledge/databases/{kb_id}", headers=headers)
+        delete_response = await client.delete(f"/api/knowledge/knowledge-bases/{kb_id}", headers=headers)
         if delete_response.status_code not in {200, 404}:
-            failures.append(f"Failed to delete knowledge database {kb_id}: {delete_response.text}")
+            failures.append(f"Failed to delete knowledge knowledge_base {kb_id}: {delete_response.text}")
 
     if failures:
         raise RuntimeError("; ".join(failures))

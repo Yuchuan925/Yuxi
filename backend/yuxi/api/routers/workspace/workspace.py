@@ -227,11 +227,11 @@ async def _ensure_knowledge_read_access(current_user: User, kb_id: str) -> None:
 
 
 async def _ensure_knowledge_supports_documents(kb_id: str) -> None:
-    db_info, supports_documents = await _get_knowledge_base().get_database_document_support(kb_id)
-    if not db_info:
+    kb_info, supports_documents = await _get_knowledge_base().get_knowledge_base_document_support(kb_id)
+    if not kb_info:
         raise HTTPException(status_code=404, detail=f"知识库 {kb_id} 不存在")
     if not supports_documents:
-        raise HTTPException(status_code=501, detail=f"{db_info.name or db_info.kb_type} 不支持文件浏览")
+        raise HTTPException(status_code=501, detail=f"{kb_info.name or kb_info.kb_type} 不支持文件浏览")
 
 
 def _raise_knowledge_read_error(error: ValueError) -> None:

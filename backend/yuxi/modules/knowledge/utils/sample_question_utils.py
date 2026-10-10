@@ -48,11 +48,11 @@ def build_sample_question_file_list(files: dict[str, dict[str, Any]]) -> list[di
     ]
 
 
-def build_sample_questions_user_message(db_name: str, files_info: list[dict[str, str]], count: int) -> str:
+def build_sample_questions_user_message(name: str, files_info: list[dict[str, str]], count: int) -> str:
     files_text = "\n".join([f"- {file_info['filename']} ({file_info['type']})" for file_info in files_info[:20]])
     file_count_text = f"（共{len(files_info)}个文件）" if len(files_info) > 20 else ""
 
-    return textwrap.dedent(f"""请为知识库\"{db_name}\"生成{count}个测试问题。
+    return textwrap.dedent(f"""请为知识库\"{name}\"生成{count}个测试问题。
 
         知识库文件列表{file_count_text}：
         {files_text}
@@ -81,27 +81,27 @@ def parse_sample_questions_content(content: str) -> list[str]:
     return questions
 
 
-async def generate_database_sample_questions(kb_id: str, count: int = 10) -> dict[str, Any]:
-    db_info = await knowledge_base.get_database_info(kb_id, include_files=True)
-    if not db_info:
+async def generate_knowledge_base_sample_questions(kb_id: str, count: int = 10) -> dict[str, Any]:
+    kb_info = await knowledge_base.get_knowledge_base_info(kb_id, include_files=True)
+    if not kb_info:
         raise HTTPException(status_code=404, detail=f"知识库 {kb_id} 不存在")
 
-    kb_type = db_info.kb_type.lower()
+    kb_type = kb_info.kb_type.lower()
     if not KnowledgeBaseFactory.get_kb_class(kb_type).supports_documents:
-        raise HTTPException(status_code=400, detail=f"{db_info.name or kb_type} 不支持基于文件生成测试问题")
+        raise HTTPException(status_code=400, detail=f"{kb_info.name or kb_type} 不支持基于文件生成测试问题")
 
-    db_name = db_info.name
-    all_files = db_info.files or {}
+    name = kb_info.name
+    all_files = kb_info.files or {}
     if not all_files:
         raise HTTPException(status_code=400, detail="知识库中没有文件")
 
     files_info = build_sample_question_file_list(all_files)
-    logger.info(f"开始生成知识库问题，知识库: {db_name}, 文件数量: {len(files_info)}, 问题数量: {count}")
+    logger.info(f"开始生成知识库问题，知识库: {name}, 文件数量: {len(files_info)}, 问题数量: {count}")
 
     model = select_model(model_spec=(await system_options.get())["default_model"])
     messages = [
         {"role": "system", "content": SAMPLE_QUESTIONS_SYSTEM_PROMPT},
-        {"role": "user", "content": build_sample_questions_user_message(db_name, files_info, count)},
+        {"role": "user", "content": build_sample_questions_user_message(name, files_info, count)},
     ]
     response = await model.call(messages, stream=False)
     content = response.content if hasattr(response, "content") else str(response)
@@ -124,11 +124,11 @@ async def generate_database_sample_questions(kb_id: str, count: int = 10) -> dic
         "questions": questions,
         "count": len(questions),
         "kb_id": kb_id,
-        "db_name": db_name,
+        "name": name,
     }
 
 
-async def get_database_sample_questions(kb_id: str) -> dict[str, Any]:
+async def get_knowledge_base_sample_questions(kb_id: str) -> dict[str, Any]:
     kb = await KnowledgeBaseRepository().get_by_kb_id(kb_id)
     if kb is None:
         raise HTTPException(status_code=404, detail=f"知识库 {kb_id} 不存在")

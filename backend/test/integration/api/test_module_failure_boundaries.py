@@ -133,10 +133,10 @@ async def test_dify_http_failure_export_and_result_boundaries(test_client, admin
     kb_id = None
     try:
         response = await test_client.post(
-            "/api/knowledge/databases",
+            "/api/knowledge/knowledge-bases",
             headers=admin_headers,
             json={
-                "database_name": "pytest_dify_boundary_" + uuid4().hex[:12],
+                "name": "pytest_dify_boundary_" + uuid4().hex[:12],
                 "description": "Pytest Dify failure boundaries",
                 "kb_type": "dify",
                 "additional_params": {
@@ -148,7 +148,7 @@ async def test_dify_http_failure_export_and_result_boundaries(test_client, admin
         )
         assert response.status_code == 200, response.text
         kb_id = response.json()["kb_id"]
-        path = f"/api/knowledge/databases/{kb_id}"
+        path = f"/api/knowledge/knowledge-bases/{kb_id}"
         response = await test_client.get(path + "/export", headers=admin_headers)
         assert response.status_code == 501, response.text
         assert response.json()["detail"] == "当前知识库类型不支持数据导出"
@@ -172,7 +172,7 @@ async def test_dify_http_failure_export_and_result_boundaries(test_client, admin
     finally:
         try:
             if kb_id:
-                response = await test_client.delete(f"/api/knowledge/databases/{kb_id}", headers=admin_headers)
+                response = await test_client.delete(f"/api/knowledge/knowledge-bases/{kb_id}", headers=admin_headers)
                 assert response.status_code == 200, response.text
         finally:
             server.shutdown()
@@ -250,10 +250,10 @@ async def test_corrupt_skill_share_config_remains_repairable(test_client, admin_
 async def test_null_knowledge_permission_does_not_become_global(test_client, admin_headers, standard_user, null_kind):
     """创建默认共享合法，持久 NULL 不得在列表和工具读取中扩大成全局权限。"""
     response = await test_client.post(
-        "/api/knowledge/databases",
+        "/api/knowledge/knowledge-bases",
         headers=admin_headers,
         json={
-            "database_name": "pytest_null_kb_share_" + uuid4().hex[:12],
+            "name": "pytest_null_kb_share_" + uuid4().hex[:12],
             "description": "Pytest null knowledge sharing",
             "kb_type": "dify",
             "share_config": None,
@@ -271,10 +271,10 @@ async def test_null_knowledge_permission_does_not_become_global(test_client, adm
         await conn.execute("UPDATE users SET role = 'admin' WHERE uid = $1", standard_user["user"]["uid"])
         persisted = json.loads(await conn.fetchval("SELECT share_config FROM knowledge_bases WHERE kb_id = $1", kb_id))
         assert persisted["read_scope"]["access_level"] == "global"
-        response = await test_client.get("/api/knowledge/databases/accessible", headers=standard_user["headers"])
+        response = await test_client.get("/api/knowledge/knowledge-bases/accessible", headers=standard_user["headers"])
         assert response.status_code == 200, response.text
-        assert kb_id in {item["kb_id"] for item in response.json()["databases"]}
-        response = await test_client.get(f"/api/knowledge/databases/{kb_id}", headers=standard_user["headers"])
+        assert kb_id in {item["kb_id"] for item in response.json()["knowledge_bases"]}
+        response = await test_client.get(f"/api/knowledge/knowledge-bases/{kb_id}", headers=standard_user["headers"])
         assert response.status_code == 200, response.text
         if null_kind == "sql":
             await conn.execute("UPDATE knowledge_bases SET share_config = NULL WHERE kb_id = $1", kb_id)
@@ -282,22 +282,22 @@ async def test_null_knowledge_permission_does_not_become_global(test_client, adm
         else:
             await conn.execute("UPDATE knowledge_bases SET share_config = 'null'::jsonb WHERE kb_id = $1", kb_id)
             assert await conn.fetchval("SELECT share_config FROM knowledge_bases WHERE kb_id = $1", kb_id) == "null"
-        response = await test_client.get("/api/knowledge/databases/accessible", headers=standard_user["headers"])
+        response = await test_client.get("/api/knowledge/knowledge-bases/accessible", headers=standard_user["headers"])
         assert response.status_code == 200, response.text
-        assert kb_id not in {item["kb_id"] for item in response.json()["databases"]}
-        response = await test_client.get(f"/api/knowledge/databases/{kb_id}", headers=standard_user["headers"])
+        assert kb_id not in {item["kb_id"] for item in response.json()["knowledge_bases"]}
+        response = await test_client.get(f"/api/knowledge/knowledge-bases/{kb_id}", headers=standard_user["headers"])
         assert response.status_code == 403, response.text
         from yuxi.infrastructure.postgres.manager import pg_manager
         from yuxi.modules.knowledge.runtime import knowledge_base
 
         try:
-            assert await knowledge_base.get_accessible_database_info_by_uid(standard_user["user"]["uid"], kb_id) is None
+            assert await knowledge_base.get_accessible_knowledge_base_info_by_uid(standard_user["user"]["uid"], kb_id) is None
         finally:
             # 参数化测试使用独立事件循环，不能把本次连接池传到下一项。
             await pg_manager.async_engine.dispose()
     finally:
         try:
-            response = await test_client.delete(f"/api/knowledge/databases/{kb_id}", headers=admin_headers)
+            response = await test_client.delete(f"/api/knowledge/knowledge-bases/{kb_id}", headers=admin_headers)
             assert response.status_code == 200, response.text
             row = await conn.fetchrow("SELECT deleted_at FROM knowledge_bases WHERE kb_id = $1", kb_id)
             assert row is None or row["deleted_at"] is not None

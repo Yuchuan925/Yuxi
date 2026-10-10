@@ -12,7 +12,7 @@
 
     <div v-if="!isDetailPage" class="extensions-content">
       <div v-if="userStore.isAdmin && activeTab === 'knowledge'" class="tab-panel">
-        <DataBaseView ref="knowledgeRef" embedded />
+        <KnowledgeBaseView ref="knowledgeRef" embedded />
       </div>
       <div v-if="userStore.isAdmin && activeTab === 'tools'" class="tab-panel">
         <ToolsCardList ref="toolsRef" />
@@ -36,7 +36,7 @@ import ToolsCardList from '@/modules/extensions/ui/ToolsCardList.vue'
 import McpCardList from '@/modules/extensions/ui/McpCardList.vue'
 import SkillCardList from '@/modules/extensions/ui/SkillCardList.vue'
 import PageHeader from '@/shared/ui/PageHeader.vue'
-import DataBaseView from '@/modules/knowledge/ui/KnowledgeCatalog.vue'
+import KnowledgeBaseView from '@/modules/knowledge/ui/KnowledgeCatalog.vue'
 import { useUserStore } from '@/modules/identity/model/user'
 
 const route = useRoute()
@@ -78,7 +78,7 @@ const replaceTabQuery = (tab) => {
 
 const isDetailPage = computed(() => {
   return (
-    route.path.startsWith('/extensions/knowledgebase/') ||
+    route.path.startsWith('/extensions/knowledge-bases/') ||
     route.path.startsWith('/extensions/mcp/') ||
     route.path.startsWith('/extensions/skill/')
   )

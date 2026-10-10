@@ -16,7 +16,7 @@ from yuxi.modules.agents.models.attachments import AgentAttachment
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
 
-async def test_concurrent_knowledge_uploads_preserve_both_files(test_client, admin_headers, knowledge_database):
+async def test_concurrent_knowledge_uploads_preserve_both_files(test_client, admin_headers, knowledge_base_resource):
     """知识库并发上传两个文件，回读真实对象核对内容与哈希。"""
     storage = get_minio_client()
     contents = {f"pytest-upload-{uuid4().hex}.txt": content for content in (b"first knowledge file", b"second knowledge file")}
@@ -26,7 +26,7 @@ async def test_concurrent_knowledge_uploads_preserve_both_files(test_client, adm
         """保存成功上传的对象位置，供核对与清理。"""
         response = await test_client.post(
             "/api/knowledge/files/upload",
-            params={"kb_id": knowledge_database["kb_id"]},
+            params={"kb_id": knowledge_base_resource["kb_id"]},
             files={"file": (name, content, "text/plain")},
             headers=admin_headers,
         )

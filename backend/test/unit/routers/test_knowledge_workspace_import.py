@@ -11,11 +11,11 @@ pytestmark = pytest.mark.asyncio
 
 
 async def test_import_workspace_files_uploads_workspace_file_to_minio(monkeypatch):
-    async def fake_ensure_database_supports_documents(slug: str, operation: str) -> None:
+    async def fake_ensure_knowledge_base_supports_documents(slug: str, operation: str) -> None:
         assert slug == "db_1"
         assert "文档添加" in operation
 
-    async def fake_file_existed_in_db(slug: str, content_hash: str) -> bool:
+    async def fake_file_exists_in_knowledge_base(slug: str, content_hash: str) -> bool:
         assert slug == "db_1"
         assert content_hash
         return False
@@ -33,8 +33,8 @@ async def test_import_workspace_files_uploads_workspace_file_to_minio(monkeypatc
 
     monkeypatch.setattr(
         knowledge_router,
-        "_ensure_database_supports_documents",
-        fake_ensure_database_supports_documents,
+        "_ensure_knowledge_base_supports_documents",
+        fake_ensure_knowledge_base_supports_documents,
     )
 
     user = SimpleNamespace(id="user_1")
@@ -45,8 +45,8 @@ async def test_import_workspace_files_uploads_workspace_file_to_minio(monkeypatc
         return "note.md", b"# workspace note\n"
 
     monkeypatch.setattr(knowledge_router, "read_workspace_file_bytes", fake_read_workspace_file_bytes)
-    monkeypatch.setattr(knowledge_router.knowledge_base, "file_existed_in_db", fake_file_existed_in_db)
-    monkeypatch.setattr(knowledge_router.knowledge_base, "get_same_name_files", fake_get_same_name_files)
+    monkeypatch.setattr(knowledge_router.knowledge_base_manager, "file_exists_in_knowledge_base", fake_file_exists_in_knowledge_base)
+    monkeypatch.setattr(knowledge_router.knowledge_base_manager, "get_same_name_files", fake_get_same_name_files)
     monkeypatch.setattr(knowledge_router, "aupload_file_to_minio", fake_upload)
 
     result = await knowledge_router.import_workspace_files(
@@ -65,7 +65,7 @@ async def test_import_workspace_files_uploads_workspace_file_to_minio(monkeypatc
 
 
 async def test_import_workspace_files_rejects_directory(monkeypatch):
-    async def fake_ensure_database_supports_documents(slug: str, operation: str) -> None:
+    async def fake_ensure_knowledge_base_supports_documents(slug: str, operation: str) -> None:
         return None
 
     async def fake_read_workspace_file_bytes(**_kwargs):
@@ -73,8 +73,8 @@ async def test_import_workspace_files_rejects_directory(monkeypatch):
 
     monkeypatch.setattr(
         knowledge_router,
-        "_ensure_database_supports_documents",
-        fake_ensure_database_supports_documents,
+        "_ensure_knowledge_base_supports_documents",
+        fake_ensure_knowledge_base_supports_documents,
     )
     monkeypatch.setattr(knowledge_router, "read_workspace_file_bytes", fake_read_workspace_file_bytes)
 

@@ -101,7 +101,7 @@ def _patch_retrievers(monkeypatch, *, kb_type: str = "milvus", retriever=None):
     manager = SimpleNamespace(
         find_file_content=_not_configured,
         open_file_content=_not_configured,
-        get_database_document_support=_fake_get_database_document_support,
+        get_knowledge_base_document_support=_fake_get_database_document_support,
     )
 
     async def _retrieve(kb_id: str, query: str, **options):
@@ -115,7 +115,7 @@ def _patch_retrievers(monkeypatch, *, kb_type: str = "milvus", retriever=None):
         "open_document",
         "find_in_document",
         "_require_kb_supports_documents",
-        "database_type_supports_documents",
+        "knowledge_base_type_supports_documents",
     ):
         setattr(manager, name, MethodType(getattr(KnowledgeBaseManager, name), manager))
     monkeypatch.setattr(tools, "_get_knowledge_base", lambda: manager)
@@ -136,7 +136,7 @@ async def test_tool_rechecks_permissions_instead_of_context_snapshot(monkeypatch
     from yuxi.modules.knowledge.runtime import knowledge_base
 
     readable = [SimpleNamespace(kb_id="db-1", name="FAQ", description=None, kb_type="milvus")]
-    monkeypatch.setattr(knowledge_base, "get_databases_by_uid", AsyncMock(side_effect=[readable, []]))
+    monkeypatch.setattr(knowledge_base, "get_knowledge_bases_by_uid", AsyncMock(side_effect=[readable, []]))
     context = SimpleNamespace(uid="u1", knowledges=["db-1"], _visible_knowledge_bases=await _fake_visible_kbs(None))
     runtime = SimpleNamespace(context=context)
 
@@ -151,7 +151,7 @@ async def test_tool_permission_failure_is_observable(monkeypatch):
 
     from yuxi.modules.knowledge.runtime import knowledge_base
 
-    monkeypatch.setattr(knowledge_base, "get_databases_by_uid", AsyncMock(side_effect=RuntimeError("storage unavailable")))
+    monkeypatch.setattr(knowledge_base, "get_knowledge_bases_by_uid", AsyncMock(side_effect=RuntimeError("storage unavailable")))
     runtime = SimpleNamespace(context=SimpleNamespace(uid="u1", knowledges="all"))
     with pytest.raises(RuntimeError, match="storage unavailable"):
         await tools._resolve_visible_knowledge_bases_for_query(runtime)

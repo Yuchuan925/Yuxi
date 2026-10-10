@@ -50,9 +50,9 @@ async def test_enqueue_document_creates_job(
 ):
     """Trigger knowledge ingestion to ensure a job record is materialised."""
     create_response = await test_client.post(
-        "/api/knowledge/databases",
+        "/api/knowledge/knowledge-bases",
         json={
-            "database_name": f"pytest_job_router_{uuid.uuid4().hex[:8]}",
+            "name": f"pytest_job_router_{uuid.uuid4().hex[:8]}",
             "description": "Job router integration test",
             "embedding_model_spec": "siliconflow-cn:Pro/BAAI/bge-m3",
             "kb_type": "milvus",
@@ -81,7 +81,7 @@ async def test_enqueue_document_creates_job(
         file_path = upload_payload["file_path"]
 
         enqueue_response = await test_client.post(
-            f"/api/knowledge/databases/{kb_id}/documents",
+            f"/api/knowledge/knowledge-bases/{kb_id}/documents",
             json={
                 "items": [file_path],
                 "params": {
@@ -138,7 +138,7 @@ async def test_enqueue_document_creates_job(
         assert file_id, result
 
         file_response = await test_client.get(
-            f"/api/knowledge/databases/{kb_id}/documents/{file_id}/basic",
+            f"/api/knowledge/knowledge-bases/{kb_id}/documents/{file_id}/basic",
             headers=admin_headers,
         )
         assert file_response.status_code == 200, file_response.text
@@ -148,7 +148,7 @@ async def test_enqueue_document_creates_job(
         assert file_meta.get("status") == "parsed", file_payload
         assert file_meta.get("markdown_file"), file_payload
     finally:
-        await test_client.delete(f"/api/knowledge/databases/{kb_id}", headers=admin_headers)
+        await test_client.delete(f"/api/knowledge/knowledge-bases/{kb_id}", headers=admin_headers)
 
 
 async def test_cancel_http_records_intent_before_execution_confirmation(test_client, admin_headers):

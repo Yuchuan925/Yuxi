@@ -107,7 +107,7 @@ const props = defineProps({
     type: Boolean,
     default: false
   },
-  databasePresetId: {
+  knowledgeBasePresetId: {
     type: String,
     default: DEFAULT_CHUNK_PRESET_ID
   }
@@ -133,8 +133,8 @@ const parserConfig = computed(() => {
 const presetOptions = computed(() => {
   const options = []
   const defaultPresetLabel =
-    chunkPresetLabelMap.value[props.databasePresetId] ||
-    props.databasePresetId ||
+    chunkPresetLabelMap.value[props.knowledgeBasePresetId] ||
+    props.knowledgeBasePresetId ||
     DEFAULT_CHUNK_PRESET_ID
 
   if (props.allowPresetFollowDefault) {
@@ -150,7 +150,7 @@ const presetOptions = computed(() => {
 })
 
 const effectivePresetId = computed(
-  () => props.tempChunkParams.chunk_preset_id || props.databasePresetId || DEFAULT_CHUNK_PRESET_ID
+  () => props.tempChunkParams.chunk_preset_id || props.knowledgeBasePresetId || DEFAULT_CHUNK_PRESET_ID
 )
 const presetDescription = computed(() => getChunkPresetDescription(effectivePresetId.value))
 

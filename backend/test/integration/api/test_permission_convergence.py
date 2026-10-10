@@ -149,9 +149,9 @@ async def test_ordinary_shared_knowledge_and_skill_creation_is_rejected_without_
     user = actors["identities"]["user0"]
     name = f"permission-rejected-{uuid.uuid4().hex[:8]}"
     response = await client.post(
-        "/api/knowledge/databases",
+        "/api/knowledge/knowledge-bases",
         headers=user["headers"],
-        json={"database_name": name, "description": "forbidden", "share_config": SHARED},
+        json={"name": name, "description": "forbidden", "share_config": SHARED},
     )
     assert response.status_code == 403, response.text
     assert await db.fetchval("SELECT count(*) FROM knowledge_bases WHERE name=$1", name) == 0

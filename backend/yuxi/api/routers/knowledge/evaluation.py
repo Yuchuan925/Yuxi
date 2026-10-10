@@ -76,7 +76,7 @@ async def require_evaluation_dataset_manage(
     return current_user
 
 
-@evaluation.post("/databases/{kb_id}/datasets/upload")
+@evaluation.post("/knowledge-bases/{kb_id}/datasets/upload")
 async def upload_evaluation_dataset(
     kb_id: str,
     file: UploadFile = File(...),
@@ -106,7 +106,7 @@ async def upload_evaluation_dataset(
         raise HTTPException(status_code=500, detail=f"上传评估数据集失败: {str(e)}")
 
 
-@evaluation.get("/databases/{kb_id}/datasets")
+@evaluation.get("/knowledge-bases/{kb_id}/datasets")
 async def list_evaluation_datasets(
     kb_id: str,
     current_user: User = Depends(require_knowledge_base_read),
@@ -123,7 +123,7 @@ async def list_evaluation_datasets(
         raise HTTPException(status_code=500, detail=f"获取评估数据集列表失败: {str(e)}")
 
 
-@evaluation.get("/databases/{kb_id}/datasets/{dataset_id}")
+@evaluation.get("/knowledge-bases/{kb_id}/datasets/{dataset_id}")
 async def get_evaluation_dataset(
     kb_id: str,
     dataset_id: str,
@@ -199,7 +199,7 @@ async def delete_evaluation_dataset(
         raise HTTPException(status_code=500, detail=f"删除评估数据集失败: {str(e)}")
 
 
-@evaluation.post("/databases/{kb_id}/datasets/generate")
+@evaluation.post("/knowledge-bases/{kb_id}/datasets/generate")
 async def generate_evaluation_dataset(
     kb_id: str,
     request: GenerateDatasetRequest,
@@ -230,7 +230,7 @@ async def generate_evaluation_dataset(
         raise HTTPException(status_code=500, detail=f"生成评估数据集失败: {str(e)}")
 
 
-@evaluation.post("/databases/{kb_id}/datasets/{dataset_id}/resume")
+@evaluation.post("/knowledge-bases/{kb_id}/datasets/{dataset_id}/resume")
 async def resume_evaluation_dataset(
     kb_id: str,
     dataset_id: str,
@@ -250,7 +250,7 @@ async def resume_evaluation_dataset(
         raise HTTPException(status_code=500, detail=f"恢复评估数据集生成失败: {str(e)}")
 
 
-@evaluation.post("/databases/{kb_id}/runs")
+@evaluation.post("/knowledge-bases/{kb_id}/runs")
 async def run_evaluation(
     kb_id: str,
     request: RunEvaluationRequest,
@@ -278,7 +278,7 @@ async def run_evaluation(
         raise HTTPException(status_code=500, detail=f"启动评估失败: {str(e)}")
 
 
-@evaluation.get("/databases/{kb_id}/runs")
+@evaluation.get("/knowledge-bases/{kb_id}/runs")
 async def list_evaluation_runs(
     kb_id: str,
     current_user: User = Depends(require_knowledge_base_read),
@@ -295,7 +295,7 @@ async def list_evaluation_runs(
         raise HTTPException(status_code=500, detail=f"获取评估运行历史失败: {str(e)}")
 
 
-@evaluation.get("/databases/{kb_id}/runs/{run_id}")
+@evaluation.get("/knowledge-bases/{kb_id}/runs/{run_id}")
 async def get_evaluation_run_results(
     kb_id: str,
     run_id: str,
@@ -328,7 +328,7 @@ async def get_evaluation_run_results(
         raise HTTPException(status_code=500, detail=f"获取评估运行结果失败: {str(e)}")
 
 
-@evaluation.delete("/databases/{kb_id}/runs/{run_id}")
+@evaluation.delete("/knowledge-bases/{kb_id}/runs/{run_id}")
 async def delete_evaluation_run(
     kb_id: str,
     run_id: str,

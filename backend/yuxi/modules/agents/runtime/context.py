@@ -433,8 +433,8 @@ async def resolve_agent_resource_options(
     if "knowledges" in fields_to_load:
         from yuxi.modules.knowledge.runtime import knowledge_base
 
-        databases = await knowledge_base.get_databases_by_user(user)
-        options["knowledges"] = [_resource_option(item.kb_id, item.name, item.description) for item in databases if item.kb_id]
+        knowledge_bases = await knowledge_base.get_knowledge_bases_by_user(user)
+        options["knowledges"] = [_resource_option(item.kb_id, item.name, item.description) for item in knowledge_bases if item.kb_id]
     if "mcps" in fields_to_load:
         from yuxi.modules.extensions.mcp.repository import get_all_mcp_servers
         from yuxi.modules.extensions.mcp.service import get_enabled_mcp_server_slugs

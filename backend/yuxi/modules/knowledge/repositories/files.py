@@ -897,9 +897,9 @@ class KnowledgeFileRepository:
 
         async with kb_config_cache_lock(kb_id):
             await delete_cached_kb_config(kb_id)
-            return await self._mark_database_deleted(kb_id)
+            return await self._mark_knowledge_base_deleted(kb_id)
 
-    async def _mark_database_deleted(self, kb_id: str) -> list[str]:
+    async def _mark_knowledge_base_deleted(self, kb_id: str) -> list[str]:
         """在同一事务提交 KB、File tombstone 和外部清理意图。"""
         event_keys: list[str] = []
         async with pg_manager.get_async_session_context() as session:
@@ -907,19 +907,21 @@ class KnowledgeFileRepository:
             if kb is None:
                 return []
             kb.deleted_at = kb.deleted_at or utc_now()
-            database_key = f"database:{kb_id}:deleted"
-            existing = await session.scalar(select(KnowledgeProjectionOutbox).where(KnowledgeProjectionOutbox.event_key == database_key))
+            knowledge_base_key = f"knowledge_base:{kb_id}:deleted"
+            existing = await session.scalar(
+                select(KnowledgeProjectionOutbox).where(KnowledgeProjectionOutbox.event_key == knowledge_base_key)
+            )
             if existing is None:
                 session.add(
                     KnowledgeProjectionOutbox(
-                        event_key=database_key,
+                        event_key=knowledge_base_key,
                         kb_id=kb_id,
                         aggregate_id=kb_id,
                         generation=1,
-                        operation="database_deleted",
+                        operation="knowledge_base_deleted",
                     )
                 )
-            event_keys.append(database_key)
+            event_keys.append(knowledge_base_key)
             result = await session.execute(select(KnowledgeFile).where(KnowledgeFile.kb_id == kb_id).with_for_update())
             for record in result.scalars().all():
                 generation = int(record.generation or 1)

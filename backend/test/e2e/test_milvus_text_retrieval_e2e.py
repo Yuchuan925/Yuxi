@@ -119,10 +119,10 @@ async def test_worker_index_and_all_search_modes_use_text_constraints(e2e_client
         provider_created = True
         await wait_model_provider_cache()
         created = await e2e_client.post(
-            "/api/knowledge/databases",
+            "/api/knowledge/knowledge-bases",
             headers=e2e_headers,
             json={
-                "database_name": f"pytest_milvus3_{uuid4().hex}",
+                "name": f"pytest_milvus3_{uuid4().hex}",
                 "description": "Milvus text E2E",
                 "kb_type": "milvus",
                 "embedding_model_spec": f"{provider_id}:replay-embedding",
@@ -149,7 +149,7 @@ async def test_worker_index_and_all_search_modes_use_text_constraints(e2e_client
             assert uploaded.status_code == 200, uploaded.text
             info = uploaded.json()
             added = await e2e_client.post(
-                f"/api/knowledge/databases/{kb_id}/documents/add",
+                f"/api/knowledge/knowledge-bases/{kb_id}/documents/add",
                 headers=e2e_headers,
                 json={
                     "items": [info["file_path"]],
@@ -165,7 +165,7 @@ async def test_worker_index_and_all_search_modes_use_text_constraints(e2e_client
         async def index_documents():
             """通过公共入口触发索引并等待 owning worker 的终态。"""
             indexed = await e2e_client.post(
-                f"/api/knowledge/databases/{kb_id}/documents/index",
+                f"/api/knowledge/knowledge-bases/{kb_id}/documents/index",
                 headers=e2e_headers,
                 json={"file_ids": list(file_ids.values()), "params": {}},
             )
@@ -173,7 +173,7 @@ async def test_worker_index_and_all_search_modes_use_text_constraints(e2e_client
             await _wait_job(e2e_client, e2e_headers, indexed.json()["job_id"])
 
         parsed = await e2e_client.post(
-            f"/api/knowledge/databases/{kb_id}/documents/parse",
+            f"/api/knowledge/knowledge-bases/{kb_id}/documents/parse",
             headers=e2e_headers,
             json={"file_ids": list(file_ids.values()), "params": {}},
         )
@@ -187,7 +187,10 @@ async def test_worker_index_and_all_search_modes_use_text_constraints(e2e_client
             [chunk] = await repository.list_by_file_id(file_id)
             assert chunk.content == samples[name]
             assert (chunk.start_line, chunk.end_line) == expected_lines[name]
-            content_response = await e2e_client.get(f"/api/knowledge/databases/{kb_id}/documents/{file_id}/content", headers=e2e_headers)
+            content_response = await e2e_client.get(
+                f"/api/knowledge/knowledge-bases/{kb_id}/documents/{file_id}/content",
+                headers=e2e_headers,
+            )
             assert content_response.status_code == 200, content_response.text
             [preview_chunk] = content_response.json()["lines"]
             assert (preview_chunk["start_line"], preview_chunk["end_line"]) == expected_lines[name]
@@ -242,7 +245,7 @@ async def test_worker_index_and_all_search_modes_use_text_constraints(e2e_client
         async def query(mode, **options):
             """从 HTTP 返回读取真实服务端检索结果。"""
             response = await e2e_client.post(
-                f"/api/knowledge/databases/{kb_id}/query-test",
+                f"/api/knowledge/knowledge-bases/{kb_id}/query-test",
                 headers=e2e_headers,
                 json={
                     "query": options.pop("query", "Milvus"),
@@ -313,7 +316,7 @@ async def test_worker_index_and_all_search_modes_use_text_constraints(e2e_client
             assert result["score_type"] == {"vector": "cosine", "keyword": "bm25", "hybrid": "hybrid"}[mode]
             assert any(segment["matched"] for fragment in result["highlights"] for segment in fragment)
             saved = await e2e_client.put(
-                f"/api/knowledge/databases/{kb_id}/query-params",
+                f"/api/knowledge/knowledge-bases/{kb_id}/query-params",
                 headers=e2e_headers,
                 json={
                     "search_mode": mode,
@@ -333,7 +336,7 @@ async def test_worker_index_and_all_search_modes_use_text_constraints(e2e_client
             assert public.status_code == 200, public.text
             [public_result] = public.json()["results"]
             restored = await e2e_client.put(
-                f"/api/knowledge/databases/{kb_id}/query-params",
+                f"/api/knowledge/knowledge-bases/{kb_id}/query-params",
                 headers=e2e_headers,
                 json={"search_mode": "vector", "required_terms": "", "excluded_terms": "", "exact_phrase": ""},
             )
@@ -354,7 +357,7 @@ async def test_worker_index_and_all_search_modes_use_text_constraints(e2e_client
             assert result["content"] in samples.values()
         for options in ({"required_terms": ["bad"]}, {"search_mode": "unsupported"}):
             invalid = await e2e_client.post(
-                f"/api/knowledge/databases/{kb_id}/query-test",
+                f"/api/knowledge/knowledge-bases/{kb_id}/query-test",
                 headers=e2e_headers,
                 json={"query": "Milvus", "meta": options},
             )
@@ -460,7 +463,7 @@ async def test_worker_index_and_all_search_modes_use_text_constraints(e2e_client
         assert len(before.json()["data"]["nodes"]) == 4
         assert "PRIVATE_SOURCE_B" in json.dumps(before.json())
         async with knowledge_projection_lock(kb_id, shared=True):
-            deleted = await e2e_client.delete(f"/api/knowledge/databases/{kb_id}/documents/{removed_file}", headers=e2e_headers)
+            deleted = await e2e_client.delete(f"/api/knowledge/knowledge-bases/{kb_id}/documents/{removed_file}", headers=e2e_headers)
             assert deleted.status_code == 200, deleted.text
             assert await asyncio.to_thread(graph_node_count) == 4, "清理被锁阻塞，外部旧内容确实还在"
             hidden = await e2e_client.get("/api/graph/subgraph", headers=e2e_headers, params={"kb_id": kb_id})
@@ -478,7 +481,7 @@ async def test_worker_index_and_all_search_modes_use_text_constraints(e2e_client
         assert len(shared.json()["data"]["nodes"]) == 3
         assert "PRIVATE_SOURCE_B" not in json.dumps(shared.json())
         assert collection.query(expr=f'file_id == "{removed_file}"', output_fields=["file_id"], consistency_level="Strong") == []
-        deleted = await e2e_client.delete(f"/api/knowledge/databases/{kb_id}", headers=e2e_headers)
+        deleted = await e2e_client.delete(f"/api/knowledge/knowledge-bases/{kb_id}", headers=e2e_headers)
         assert deleted.status_code == 200, deleted.text
         assert await repository.list_by_kb_id(kb_id) == []
         await _wait_projection_cleanup(kb_id)
@@ -489,7 +492,7 @@ async def test_worker_index_and_all_search_modes_use_text_constraints(e2e_client
         kb_id = None
     finally:
         if kb_id:
-            await e2e_client.delete(f"/api/knowledge/databases/{kb_id}", headers=e2e_headers)
+            await e2e_client.delete(f"/api/knowledge/knowledge-bases/{kb_id}", headers=e2e_headers)
         if provider_created:
             await e2e_client.delete(f"/api/system/model-providers/{provider_id}", headers=e2e_headers)
         connections.disconnect(alias)

@@ -70,11 +70,11 @@ async def test_viewer_and_artifact_download_preserve_mime_and_multichunk_bytes(t
         assert removed.status_code == 200, removed.text
 
 
-async def test_knowledge_original_download_preserves_mime_and_source_bytes(test_client, admin_headers, knowledge_database):
+async def test_knowledge_original_download_preserves_mime_and_source_bytes(test_client, admin_headers, knowledge_base_resource):
     """通过知识库原文件 HTTP 下载核对类型与真实源对象。"""
     storage = get_minio_client()
     bucket = storage.KB_BUCKETS["documents"]
-    kb_id = knowledge_database["kb_id"]
+    kb_id = knowledge_base_resource["kb_id"]
     name = f"{kb_id}/upload/pytest-mime-{uuid4().hex}.MD"
     source = f"minio://{bucket}/{name}"
     content = b"# original knowledge bytes\n"
@@ -82,7 +82,7 @@ async def test_knowledge_original_download_preserves_mime_and_source_bytes(test_
     try:
         await storage.aupload_file(bucket, name, content)
         added = await test_client.post(
-            f"/api/knowledge/databases/{kb_id}/documents/add",
+            f"/api/knowledge/knowledge-bases/{kb_id}/documents/add",
             json={
                 "items": [source],
                 "params": {
@@ -105,6 +105,6 @@ async def test_knowledge_original_download_preserves_mime_and_source_bytes(test_
         assert await storage.adownload_file(bucket, name) == content
     finally:
         if file_id:
-            removed = await test_client.delete(f"/api/knowledge/databases/{kb_id}/documents/{file_id}", headers=admin_headers)
+            removed = await test_client.delete(f"/api/knowledge/knowledge-bases/{kb_id}/documents/{file_id}", headers=admin_headers)
             assert removed.status_code in {200, 404}, removed.text
         await storage.adelete_file(bucket, name)

@@ -94,10 +94,10 @@ def build_graph_payload(normalized_result: dict[str, Any]) -> dict[str, Any]:
 # 将大段 Cypher 字符串集中管理，提升 write_chunk_graph 的可读性。
 
 
-def cypher_merge_chunk(db_label: str) -> str:
+def cypher_merge_chunk(kb_label: str) -> str:
     """MERGE Chunk 节点并写入元数据。"""
     return f"""
-    MERGE (c:Chunk:MilvusKB:`{db_label}` {{chunk_id: $chunk_id}})
+    MERGE (c:Chunk:MilvusKB:`{kb_label}` {{chunk_id: $chunk_id}})
     SET c.file_id = $file_id,
         c.kb_id = $kb_id,
         c.chunk_index = $chunk_index,
@@ -107,11 +107,11 @@ def cypher_merge_chunk(db_label: str) -> str:
     """
 
 
-def cypher_merge_entity_mention(db_label: str) -> str:
+def cypher_merge_entity_mention(kb_label: str) -> str:
     """MERGE Entity 节点并创建 Chunk → Entity 的 MENTIONS 关系。"""
     return f"""
-    MATCH (c:Chunk:MilvusKB:`{db_label}` {{chunk_id: $chunk_id}})
-    MERGE (e:Entity:MilvusKB:`{db_label}` {{
+    MATCH (c:Chunk:MilvusKB:`{kb_label}` {{chunk_id: $chunk_id}})
+    MERGE (e:Entity:MilvusKB:`{kb_label}` {{
         kb_id: $kb_id,
         normalized_name: $normalized_name,
         label: $entity_label
@@ -124,15 +124,15 @@ def cypher_merge_entity_mention(db_label: str) -> str:
     """
 
 
-def cypher_merge_relation(db_label: str) -> str:
+def cypher_merge_relation(kb_label: str) -> str:
     """MERGE 两个 Entity 之间的 RELATION 边。"""
     return f"""
-    MATCH (source:Entity:MilvusKB:`{db_label}` {{
+    MATCH (source:Entity:MilvusKB:`{kb_label}` {{
         kb_id: $kb_id,
         normalized_name: $source_name,
         label: $source_label
     }})
-    MATCH (target:Entity:MilvusKB:`{db_label}` {{
+    MATCH (target:Entity:MilvusKB:`{kb_label}` {{
         kb_id: $kb_id,
         normalized_name: $target_name,
         label: $target_label

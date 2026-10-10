@@ -29,7 +29,7 @@ class FakeKnowledgeBase:
     def __init__(self, detail: KnowledgeBaseDetail):
         self.detail = detail
 
-    async def get_database_info(self, kb_id: str, include_files: bool = False) -> KnowledgeBaseDetail:
+    async def get_knowledge_base_info(self, kb_id: str, include_files: bool = False) -> KnowledgeBaseDetail:
         return self.detail
 
 
@@ -45,7 +45,7 @@ def test_parse_sample_questions_content_rejects_invalid_payload():
 
 
 @pytest.mark.asyncio
-async def test_generate_database_sample_questions_rejects_empty_files(monkeypatch):
+async def test_generate_knowledge_base_sample_questions_rejects_empty_files(monkeypatch):
     monkeypatch.setattr(sq, "knowledge_base", FakeKnowledgeBase(_database_detail({}, name="空知识库")))
     monkeypatch.setattr(
         sq.KnowledgeBaseFactory,
@@ -54,14 +54,14 @@ async def test_generate_database_sample_questions_rejects_empty_files(monkeypatc
     )
 
     with pytest.raises(HTTPException) as exc_info:
-        await sq.generate_database_sample_questions("kb_1")
+        await sq.generate_knowledge_base_sample_questions("kb_1")
 
     assert exc_info.value.status_code == 400
     assert "没有文件" in exc_info.value.detail
 
 
 @pytest.mark.asyncio
-async def test_generate_database_sample_questions_saves_and_returns_questions(monkeypatch):
+async def test_generate_knowledge_base_sample_questions_saves_and_returns_questions(monkeypatch):
     saved: dict = {}
 
     class FakeModel:
@@ -97,8 +97,8 @@ async def test_generate_database_sample_questions_saves_and_returns_questions(mo
 
     monkeypatch.setattr(type(sq.system_options), "get", get_system_options)
 
-    generated = await sq.generate_database_sample_questions("kb_1", count=1)
-    stored = await sq.get_database_sample_questions("kb_1")
+    generated = await sq.generate_knowledge_base_sample_questions("kb_1", count=1)
+    stored = await sq.get_knowledge_base_sample_questions("kb_1")
 
     assert generated["questions"] == ["如何使用 demo？"]
     assert generated["count"] == 1
@@ -106,7 +106,7 @@ async def test_generate_database_sample_questions_saves_and_returns_questions(mo
 
 
 @pytest.mark.asyncio
-async def test_generate_database_sample_questions_maps_invalid_json(monkeypatch):
+async def test_generate_knowledge_base_sample_questions_maps_invalid_json(monkeypatch):
     class FakeModel:
         async def call(self, messages, stream: bool = False):
             return SimpleNamespace(content="not json")
@@ -129,7 +129,7 @@ async def test_generate_database_sample_questions_maps_invalid_json(monkeypatch)
     monkeypatch.setattr(type(sq.system_options), "get", get_system_options)
 
     with pytest.raises(HTTPException) as exc_info:
-        await sq.generate_database_sample_questions("kb_1")
+        await sq.generate_knowledge_base_sample_questions("kb_1")
 
     assert exc_info.value.status_code == 500
     assert "AI返回格式错误" in exc_info.value.detail
@@ -144,12 +144,12 @@ async def test_generated_questions_require_successful_save(monkeypatch, missing)
     monkeypatch.setattr(sq, "system_options", SimpleNamespace(get=AsyncMock(return_value={"default_model": "test:model"})))
     model = SimpleNamespace(call=AsyncMock(return_value=SimpleNamespace(content='{"questions":["测试？"]}')))
     monkeypatch.setattr(sq, "select_model", lambda **_: model)
-    error = RuntimeError("database unavailable")
+    error = RuntimeError("knowledge_base unavailable")
     repository = SimpleNamespace(update=AsyncMock(return_value=None, side_effect=None if missing else error))
     monkeypatch.setattr(sq, "KnowledgeBaseRepository", lambda: repository)
 
     with pytest.raises(HTTPException if missing else RuntimeError) as caught:
-        await sq.generate_database_sample_questions("kb_1")
+        await sq.generate_knowledge_base_sample_questions("kb_1")
 
     if missing:
         assert caught.value.status_code == 404

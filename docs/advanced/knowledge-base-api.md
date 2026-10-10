@@ -17,12 +17,18 @@
 
 前端显示和 Agent 配置只会缩小可见范围，最终授权由后端依赖和 repository/manager 查询执行。
 
+## 知识库管理
+
+管理资源使用 `/api/knowledge/knowledge-bases`。创建知识库的请求字段为 `name`、`description`、`kb_type` 与该类型需要的配置；更新同样使用 `name`。知识库身份使用 `kb_id`。
+
+管理员列表与 `/accessible` 可见列表的响应集合字段为 `knowledge_bases`。创建和详情返回知识库对象；更新返回 `message` 与 `knowledge_base`。文档、图谱构建及检索接口位于该资源下，评估资源位于 `/api/evaluation/knowledge-bases/{kb_id}`。完整字段和路由以部署实例的 OpenAPI 为准。
+
 ## 一体化导入
 
 一体化入口适合一次提交“添加记录 → 解析 → 可选索引”。先把原文件上传到知识库暂存区，取得 `file_path` 和 `content_hash`，再调用：
 
 ```http
-POST /api/knowledge/databases/{kb_id}/documents
+POST /api/knowledge/knowledge-bases/{kb_id}/documents
 Authorization: Bearer <admin-token>
 Content-Type: application/json
 
@@ -42,9 +48,9 @@ Content-Type: application/json
 需要在每个阶段检查结果时，按下面顺序调用：
 
 1. `POST /api/knowledge/files/upload?kb_id=<kb-id>` 上传原文件，保存 `file_path`、`content_hash` 和 `size`。
-2. `POST /api/knowledge/databases/{kb_id}/documents/add` 创建文件记录；这一步不解析、不索引。
-3. `POST /api/knowledge/databases/{kb_id}/documents/parse`，请求体可以是文件 ID 数组，也可以是 `{"file_ids":[...],"params":{...}}`；回读状态确认 `parsed`。
-4. `POST /api/knowledge/databases/{kb_id}/documents/index`，请求体包含 `file_ids` 和可选 `params`；回读状态确认 `indexed`。
+2. `POST /api/knowledge/knowledge-bases/{kb_id}/documents/add` 创建文件记录；这一步不解析、不索引。
+3. `POST /api/knowledge/knowledge-bases/{kb_id}/documents/parse`，请求体可以是文件 ID 数组，也可以是 `{"file_ids":[...],"params":{...}}`；回读状态确认 `parsed`。
+4. `POST /api/knowledge/knowledge-bases/{kb_id}/documents/index`，请求体包含 `file_ids` 和可选 `params`；回读状态确认 `indexed`。
 
 按状态处理整批文件时，使用 `/documents/parse-pending` 和 `/documents/index-pending`。直接提交的文件 ID 数量有限制，大批量导入应使用按状态入口。
 
@@ -74,7 +80,7 @@ Dify 和 Notion 只提供外部检索能力。它们不支持 Yuxi 的文档上�
 
 ## Milvus 文本检索参数
 
-`query_kb` 接收 `kb_id`、`query_text` 和可选的 `file_name`，使用知识库保存的默认检索配置。单次公共检索不接受 `options` 覆盖。具有管理权限的调用方可通过 `PUT /api/knowledge/databases/{kb_id}/query-params` 保存默认值；检索测试页面通过管理侧 `query-test` 的 `meta` 传入本次参数。
+`query_kb` 接收 `kb_id`、`query_text` 和可选的 `file_name`，使用知识库保存的默认检索配置。单次公共检索不接受 `options` 覆盖。具有管理权限的调用方可通过 `PUT /api/knowledge/knowledge-bases/{kb_id}/query-params` 保存默认值；检索测试页面通过管理侧 `query-test` 的 `meta` 传入本次参数。
 
 保存 Milvus 检索配置的请求体示例：
 

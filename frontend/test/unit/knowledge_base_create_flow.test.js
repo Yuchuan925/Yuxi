@@ -2,11 +2,11 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
-  buildDatabaseRequest,
-  createEmptyDatabaseForm,
-  selectDatabaseType,
-  validateDatabaseConfig
-} from '../../src/modules/knowledge/model/databaseCreateForm.js'
+  buildKnowledgeBaseRequest,
+  createEmptyKnowledgeBaseForm,
+  selectKnowledgeBaseType,
+  validateKnowledgeBaseConfig
+} from '../../src/modules/knowledge/model/knowledgeBaseCreateForm.js'
 import { getKbTypeLabel } from '../../src/modules/knowledge/model/kb_utils.js'
 
 const difyType = {
@@ -19,28 +19,28 @@ const difyType = {
 }
 
 test('切换知识库类型保留通用字段并重置类型参数', () => {
-  const form = { ...createEmptyDatabaseForm('embed/model'), name: '产品资料', description: '说明' }
-  const selected = selectDatabaseType(form, 'dify', difyType)
+  const form = { ...createEmptyKnowledgeBaseForm('embed/model'), name: '产品资料', description: '说明' }
+  const selected = selectKnowledgeBaseType(form, 'dify', difyType)
   assert.equal(selected.name, '产品资料')
   assert.equal(selected.description, '说明')
   assert.deepEqual(selected.additional_params, { url: '', token: '' })
 })
 
 test('配置校验拒绝空名称和必填动态字段', () => {
-  const empty = selectDatabaseType(createEmptyDatabaseForm(), 'dify', difyType)
-  assert.equal(validateDatabaseConfig(empty, difyType), '请输入知识库名称')
+  const empty = selectKnowledgeBaseType(createEmptyKnowledgeBaseForm(), 'dify', difyType)
+  assert.equal(validateKnowledgeBaseConfig(empty, difyType), '请输入知识库名称')
   empty.name = '资料'
-  assert.equal(validateDatabaseConfig(empty, difyType), '请填写地址')
+  assert.equal(validateKnowledgeBaseConfig(empty, difyType), '请填写地址')
 })
 
 test('只为需要嵌入模型的类型构建模型和分块参数', () => {
   const form = {
-    ...createEmptyDatabaseForm('embed/model'),
+    ...createEmptyKnowledgeBaseForm('embed/model'),
     name: '资料',
     kb_type: 'milvus',
     chunk_preset_id: 'general'
   }
-  const request = buildDatabaseRequest(
+  const request = buildKnowledgeBaseRequest(
     form,
     { requires_embedding_model: true, create_params: { options: [] } },
     { version: 2 },
@@ -49,7 +49,7 @@ test('只为需要嵌入模型的类型构建模型和分块参数', () => {
   assert.equal(request.embedding_model_spec, 'embed/model')
   assert.equal(request.additional_params.chunk_preset_id, 'general')
 
-  const connectorRequest = buildDatabaseRequest(
+  const connectorRequest = buildKnowledgeBaseRequest(
     { ...form, kb_type: 'dify' },
     difyType,
     { version: 2 },

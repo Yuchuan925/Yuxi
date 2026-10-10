@@ -162,10 +162,10 @@ def patch_repositories(monkeypatch):
     )
 
 
-async def test_get_database_info_omits_files_by_default():
+async def test_get_knowledge_base_info_omits_files_by_default():
     manager = KnowledgeBaseManager("/tmp/yuxi-test")
 
-    result = await manager.get_database_info("kb_1")
+    result = await manager.get_knowledge_base_info("kb_1")
 
     assert result.kb_id == "kb_1"
     assert result.files is None
@@ -173,7 +173,7 @@ async def test_get_database_info_omits_files_by_default():
     assert result.total_size == 1024
 
 
-async def test_get_databases_does_not_initialize_knowledge_backend(monkeypatch):
+async def test_get_knowledge_bases_does_not_initialize_knowledge_backend(monkeypatch):
     manager = KnowledgeBaseManager("/tmp/yuxi-test")
 
     def fail_if_initialized(_kb_type):
@@ -181,19 +181,19 @@ async def test_get_databases_does_not_initialize_knowledge_backend(monkeypatch):
 
     monkeypatch.setattr(manager, "_get_or_create_kb_instance", fail_if_initialized)
 
-    result = await manager.get_databases()
+    result = await manager.get_knowledge_bases()
 
-    database = result[0]
-    assert database.kb_id == "kb_1"
-    assert database.name == "知识库"
-    assert database.row_count == 3
-    assert database.file_count == 2
-    assert database.additional_params["chunk_preset_id"] == "general"
-    assert "stats" not in database.additional_params
-    assert database.created_by == "user_1"
+    knowledge_base = result[0]
+    assert knowledge_base.kb_id == "kb_1"
+    assert knowledge_base.name == "知识库"
+    assert knowledge_base.row_count == 3
+    assert knowledge_base.file_count == 2
+    assert knowledge_base.additional_params["chunk_preset_id"] == "general"
+    assert "stats" not in knowledge_base.additional_params
+    assert knowledge_base.created_by == "user_1"
 
 
-async def test_get_databases_skips_rows_with_invalid_metadata(monkeypatch):
+async def test_get_knowledge_bases_skips_rows_with_invalid_metadata(monkeypatch):
     class BrokenKnowledgeBaseClass:
         @classmethod
         def normalize_additional_params(cls, _additional_params):
@@ -240,12 +240,12 @@ async def test_get_databases_skips_rows_with_invalid_metadata(monkeypatch):
     )
 
     manager = KnowledgeBaseManager("/tmp/yuxi-test")
-    result = await manager.get_databases()
+    result = await manager.get_knowledge_bases()
 
     assert [db.kb_id for db in result] == ["kb_good"]
 
 
-async def test_get_databases_by_user_sets_permission_and_redacts_readonly_secrets(monkeypatch):
+async def test_get_knowledge_bases_by_user_sets_permission_and_redacts_readonly_secrets(monkeypatch):
     class SecretKnowledgeBaseRepository(FakeKnowledgeBaseRepository):
         async def get_all(self):
             record = await self.get_by_kb_id("kb_1")
@@ -260,8 +260,8 @@ async def test_get_databases_by_user_sets_permission_and_redacts_readonly_secret
     )
     manager = KnowledgeBaseManager("/tmp/yuxi-test")
 
-    readonly = await manager.get_databases_by_user({"uid": "user_2", "role": "admin", "department_id": None})
-    owner = await manager.get_databases_by_user({"uid": "user_1", "role": "admin", "department_id": None})
+    readonly = await manager.get_knowledge_bases_by_user({"uid": "user_2", "role": "admin", "department_id": None})
+    owner = await manager.get_knowledge_bases_by_user({"uid": "user_1", "role": "admin", "department_id": None})
 
     assert readonly[0].effective_permission == ResourcePermission.READ
     assert readonly[0].can_manage is False

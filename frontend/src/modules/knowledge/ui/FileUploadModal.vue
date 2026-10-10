@@ -88,8 +88,8 @@
                 :show-chunk-size-overlap="true"
                 :show-preset="true"
                 :allow-preset-follow-default="true"
-                :database-preset-id="
-                  store.database?.additional_params?.chunk_preset_id || 'general'
+                :knowledge-base-preset-id="
+                  store.knowledgeBase?.additional_params?.chunk_preset_id || 'general'
                 "
               />
             </div>
@@ -287,7 +287,7 @@ import { ref, computed, onMounted, watch, h } from 'vue'
 import { message, Upload, Modal } from 'ant-design-vue'
 import { useUserStore } from '@/modules/identity/model/user'
 import { useConfigStore } from '@/modules/settings/model/config'
-import { useDatabaseStore } from '@/modules/knowledge/model/database'
+import { useKnowledgeBaseStore } from '@/modules/knowledge/model/knowledgeBase'
 import { fileApi, documentApi } from '@/apis/knowledge_api'
 import {
   FileUp,
@@ -333,7 +333,7 @@ const props = defineProps({
 
 const emit = defineEmits(['update:visible', 'success'])
 
-const store = useDatabaseStore()
+const store = useKnowledgeBaseStore()
 const configStore = useConfigStore()
 const DEFAULT_OCR_ENGINE = 'rapid_ocr'
 const defaultOcrEngine = ref(DEFAULT_OCR_ENGINE)
@@ -881,15 +881,15 @@ const showSameNameFilesInUploadArea = (files) => {
 
 const downloadSameNameFile = async (file) => {
   try {
-    // 获取当前数据库ID
-    const currentDbId = kbId.value
-    if (!currentDbId) {
+    // 获取当前知识库ID
+    const currentKbId = kbId.value
+    if (!currentKbId) {
       message.error('知识库ID不存在')
       return
     }
 
     message.loading('正在下载文件...', 0)
-    const response = await documentApi.downloadDocument(currentDbId, file.file_id)
+    const response = await documentApi.downloadDocument(currentKbId, file.file_id)
     message.destroy()
 
     // 创建下载链接
@@ -920,15 +920,15 @@ const deleteSameNameFile = (file) => {
     cancelText: '取消',
     onOk: async () => {
       try {
-        // 获取当前数据库ID
-        const currentDbId = kbId.value
-        if (!currentDbId) {
+        // 获取当前知识库ID
+        const currentKbId = kbId.value
+        if (!currentKbId) {
           message.error('知识库ID不存在')
           return
         }
 
         message.loading('正在删除文件...', 0)
-        await documentApi.deleteDocument(currentDbId, file.file_id)
+        await documentApi.deleteDocument(currentKbId, file.file_id)
         message.destroy()
 
         // 从同名文件列表中移除
@@ -1012,7 +1012,7 @@ const runUploadTask = (task) => {
 
     const currentKbId = kbId.value
     if (!currentKbId) {
-      const error = new Error('Database ID is missing')
+      const error = new Error('Knowledge base ID is missing')
       if (fileUid) {
         uploadTaskStatus.value[fileUid] = 'error'
       }

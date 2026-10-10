@@ -4,7 +4,7 @@ export const createDefaultShareConfig = () => ({
   manage_scope: null
 })
 
-export const createEmptyDatabaseForm = (embeddingModel = '') => ({
+export const createEmptyKnowledgeBaseForm = (embeddingModel = '') => ({
   name: '',
   description: '',
   embedding_model_spec: embeddingModel,
@@ -21,13 +21,13 @@ export const createParamValues = (fields = []) =>
     ])
   )
 
-export const selectDatabaseType = (form, type, typeInfo) => ({
+export const selectKnowledgeBaseType = (form, type, typeInfo) => ({
   ...form,
   kb_type: type,
   additional_params: createParamValues(typeInfo?.create_params?.options)
 })
 
-export const validateDatabaseConfig = (form, typeInfo) => {
+export const validateKnowledgeBaseConfig = (form, typeInfo) => {
   if (!String(form?.name || '').trim()) return '请输入知识库名称'
   if (typeInfo?.requires_embedding_model && !form?.embedding_model_spec) {
     return '请选择嵌入模型'
@@ -51,7 +51,7 @@ export const validateDatabaseConfig = (form, typeInfo) => {
   return ''
 }
 
-export const buildDatabaseRequest = (form, typeInfo, shareConfig, defaultEmbeddingModel) => {
+export const buildKnowledgeBaseRequest = (form, typeInfo, shareConfig, defaultEmbeddingModel) => {
   const additionalParams = {}
   for (const field of typeInfo?.create_params?.options || []) {
     const value = form.additional_params[field.key]
@@ -59,7 +59,7 @@ export const buildDatabaseRequest = (form, typeInfo, shareConfig, defaultEmbeddi
   }
 
   const request = {
-    database_name: form.name.trim(),
+    name: form.name.trim(),
     description: form.description?.trim() || '',
     kb_type: form.kb_type,
     additional_params: additionalParams,

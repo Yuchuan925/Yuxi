@@ -1,11 +1,11 @@
 <template>
-  <div class="database-container layout-container">
+  <div class="knowledge-base-container layout-container">
     <PageHeader
       v-if="!props.embedded"
       title="知识库"
       :active-key="knowledgeActiveView"
       :tabs="knowledgeViewItems"
-      :loading="dbState.listLoading"
+      :loading="knowledgeBaseState.listLoading"
       :show-border="true"
       aria-label="知识库视图切换"
     />
@@ -29,27 +29,27 @@
           type="primary"
           class="lucide-icon-btn"
           :disabled="!kbTypes.length"
-          @click="state.openNewDatabaseModel = true"
+          @click="state.openNewKnowledgeBaseModel = true"
         >
           <Plus :size="16" /> 新建知识库
         </a-button>
       </template>
     </PageShoulder>
 
-    <DatabaseCreateFlowModal
-      v-model:open="state.openNewDatabaseModel"
+    <KnowledgeBaseCreateFlowModal
+      v-model:open="state.openNewKnowledgeBaseModel"
       :supported-kb-types="supportedKbTypes"
     />
 
     <!-- 加载状态 -->
-    <div v-if="dbState.listLoading" class="loading-container">
+    <div v-if="knowledgeBaseState.listLoading" class="loading-container">
       <a-spin size="large" />
       <p>正在加载知识库...</p>
     </div>
 
     <!-- 空状态显示 -->
     <ResourceEmptyState
-      v-else-if="!databases || databases.length === 0"
+      v-else-if="!knowledgeBases || knowledgeBases.length === 0"
       title="暂无知识库"
       description="创建知识库后，可以上传文件并配置检索、图谱和评估能力。"
       :icon="getKbTypeIcon('milvus')"
@@ -60,7 +60,7 @@
           size="large"
           class="lucide-icon-btn"
           :disabled="!kbTypes.length"
-          @click="state.openNewDatabaseModel = true"
+          @click="state.openNewKnowledgeBaseModel = true"
         >
           <template #icon>
             <Plus :size="16" />
@@ -70,25 +70,25 @@
       </template>
     </ResourceEmptyState>
 
-    <!-- 数据库列表 -->
+    <!-- 知识库列表 -->
     <ExtensionCardGrid v-else>
       <InfoCard
-        v-for="database in filteredDatabases"
-        :key="database.kb_id"
-        :title="database.name"
-        :subtitle="cardSubtitle(database)"
-        :description="database.description || '暂无描述'"
-        :tags="cardTags(database)"
-        :disabled="kbUtils.isReadOnlyDatabase(database)"
-        @click="navigateToDatabase(database)"
+        v-for="knowledgeBase in filteredKnowledgeBases"
+        :key="knowledgeBase.kb_id"
+        :title="knowledgeBase.name"
+        :subtitle="cardSubtitle(knowledgeBase)"
+        :description="knowledgeBase.description || '暂无描述'"
+        :tags="cardTags(knowledgeBase)"
+        :disabled="kbUtils.isReadOnlyKnowledgeBase(knowledgeBase)"
+        @click="navigateToKnowledgeBase(knowledgeBase)"
       >
         <template #icon>
-          <component :is="getKbTypeIcon(database.kb_type || 'milvus')" :size="20" />
+          <component :is="getKbTypeIcon(knowledgeBase.kb_type || 'milvus')" :size="20" />
         </template>
         <template #card-more-action-corner>
           <a-menu
-            class="database-action-menu"
-            @click="({ key }) => handleDatabaseAction(key, database)"
+            class="knowledge-base-action-menu"
+            @click="({ key }) => handleKnowledgeBaseAction(key, knowledgeBase)"
           >
             <a-menu-item key="copy">
               <span class="lucide-menu-item">
@@ -96,14 +96,14 @@
                 <span>复制 ID</span>
               </span>
             </a-menu-item>
-            <a-menu-item v-if="database.can_manage" key="edit">
+            <a-menu-item v-if="knowledgeBase.can_manage" key="edit">
               <span class="lucide-menu-item">
                 <Pencil :size="15" />
                 <span>编辑知识库</span>
               </span>
             </a-menu-item>
             <a-menu-divider />
-            <a-menu-item v-if="database.can_manage" key="delete" danger>
+            <a-menu-item v-if="knowledgeBase.can_manage" key="delete" danger>
               <span class="lucide-menu-item">
                 <Trash2 :size="15" />
                 <span>删除知识库</span>
@@ -120,14 +120,14 @@
 import { ref, onMounted, reactive, watch, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { storeToRefs } from 'pinia'
-import { useDatabaseStore } from '@/modules/knowledge/model/database'
+import { useKnowledgeBaseStore } from '@/modules/knowledge/model/knowledgeBase'
 import { Copy, Pencil, Plus, Trash2 } from '@lucide/vue'
 import { message, Modal } from 'ant-design-vue'
-import { databaseApi, typeApi } from '@/apis/knowledge_api'
+import { knowledgeBaseApi, typeApi } from '@/apis/knowledge_api'
 import PageHeader from '@/shared/ui/PageHeader.vue'
 import PageShoulder from '@/shared/ui/PageShoulder.vue'
 import ResourceEmptyState from '@/shared/ui/ResourceEmptyState.vue'
-import DatabaseCreateFlowModal from '@/modules/knowledge/ui/DatabaseCreateFlowModal.vue'
+import KnowledgeBaseCreateFlowModal from '@/modules/knowledge/ui/KnowledgeBaseCreateFlowModal.vue'
 import ExtensionCardGrid from '@/modules/extensions/ui/ExtensionCardGrid.vue'
 import InfoCard from '@/shared/ui/InfoCard.vue'
 import dayjs, { parseToShanghai } from '@/shared/lib/time'
@@ -136,14 +136,14 @@ import { getShareConfigLabel } from '@/modules/agents/model/shareConfig'
 
 const route = useRoute()
 const router = useRouter()
-const databaseStore = useDatabaseStore()
+const knowledgeBaseStore = useKnowledgeBaseStore()
 
 const props = defineProps({
   embedded: { type: Boolean, default: false }
 })
 
 // 使用 store 的状态
-const { databases, state: dbState } = storeToRefs(databaseStore)
+const { knowledgeBases, state: knowledgeBaseState } = storeToRefs(knowledgeBaseStore)
 
 const knowledgeActiveView = 'documents'
 const knowledgeViewItems = [
@@ -154,24 +154,24 @@ const kbTypes = computed(() => Object.keys(supportedKbTypes.value))
 const searchQuery = ref('')
 const typeFilter = ref(null)
 
-const filteredDatabases = computed(() => {
-  let list = databases.value
+const filteredKnowledgeBases = computed(() => {
+  let list = knowledgeBases.value
   if (searchQuery.value) {
     const q = searchQuery.value.toLowerCase()
     list = list.filter(
-      (db) =>
-        db.name.toLowerCase().includes(q) ||
-        (db.description && db.description.toLowerCase().includes(q))
+      (kb) =>
+        kb.name.toLowerCase().includes(q) ||
+        (kb.description && kb.description.toLowerCase().includes(q))
     )
   }
   if (typeFilter.value) {
-    list = list.filter((db) => (db.kb_type || 'milvus') === typeFilter.value)
+    list = list.filter((kb) => (kb.kb_type || 'milvus') === typeFilter.value)
   }
   return list
 })
 
 const state = reactive({
-  openNewDatabaseModel: false
+  openNewKnowledgeBaseModel: false
 })
 
 // 支持的知识库类型
@@ -220,48 +220,48 @@ const formatCreatedTime = (createdAt) => {
   return `${years} 年前创建`
 }
 
-const cardSubtitle = (database) => {
+const cardSubtitle = (knowledgeBase) => {
   const parts = []
-  if (database.created_at) {
-    parts.push(formatCreatedTime(database.created_at))
+  if (knowledgeBase.created_at) {
+    parts.push(formatCreatedTime(knowledgeBase.created_at))
   }
-  if (!kbUtils.isReadOnlyDatabase(database)) {
-    parts.push(`${database.stats?.file_count || 0} 文件`)
+  if (!kbUtils.isReadOnlyKnowledgeBase(knowledgeBase)) {
+    parts.push(`${knowledgeBase.stats?.file_count || 0} 文件`)
   }
   return parts.join(' · ')
 }
 
-const cardTags = (database) => {
+const cardTags = (knowledgeBase) => {
   const tags = [
     {
-      name: getKbTypeLabel(database.kb_type || 'milvus'),
-      color: getKbTypeColor(database.kb_type || 'milvus')
+      name: getKbTypeLabel(knowledgeBase.kb_type || 'milvus'),
+      color: getKbTypeColor(knowledgeBase.kb_type || 'milvus')
     },
     {
-      name: getShareConfigLabel(database.share_config),
+      name: getShareConfigLabel(knowledgeBase.share_config),
       color: 'gray'
     }
   ]
-  if (database.embedding_model_spec) {
+  if (knowledgeBase.embedding_model_spec) {
     tags.push({
-      name: database.embedding_model_spec.split('/').slice(-1)[0],
+      name: knowledgeBase.embedding_model_spec.split('/').slice(-1)[0],
       color: 'gray'
     })
   }
   return tags
 }
 
-const navigateToDatabase = (database) => {
-  if (kbUtils.isReadOnlyDatabase(database)) return
-  router.push({ path: `/extensions/knowledgebase/${database.kb_id}` })
+const navigateToKnowledgeBase = (knowledgeBase) => {
+  if (kbUtils.isReadOnlyKnowledgeBase(knowledgeBase)) return
+  router.push({ path: `/extensions/knowledge-bases/${knowledgeBase.kb_id}` })
 }
 
-const copyDatabaseId = async (database) => {
+const copyKnowledgeBaseId = async (knowledgeBase) => {
   try {
-    await navigator.clipboard.writeText(database.kb_id)
+    await navigator.clipboard.writeText(knowledgeBase.kb_id)
   } catch {
     const textArea = document.createElement('textarea')
-    textArea.value = database.kb_id
+    textArea.value = knowledgeBase.kb_id
     document.body.appendChild(textArea)
     textArea.select()
     document.execCommand('copy')
@@ -270,18 +270,18 @@ const copyDatabaseId = async (database) => {
   message.success('知识库 ID 已复制')
 }
 
-const deleteDatabase = (database) => {
+const deleteKnowledgeBase = (knowledgeBase) => {
   Modal.confirm({
     title: '删除知识库',
-    content: `确定要删除知识库“${database.name}”吗？此操作不可撤销。`,
+    content: `确定要删除知识库“${knowledgeBase.name}”吗？此操作不可撤销。`,
     okText: '删除',
     okType: 'danger',
     cancelText: '取消',
     onOk: async () => {
       try {
-        await databaseApi.deleteDatabase(database.kb_id)
+        await knowledgeBaseApi.deleteKnowledgeBase(knowledgeBase.kb_id)
         message.success('知识库已删除')
-        await databaseStore.loadDatabases()
+        await knowledgeBaseStore.loadKnowledgeBases()
       } catch (error) {
         message.error(error.message || '删除失败')
         throw error
@@ -290,20 +290,20 @@ const deleteDatabase = (database) => {
   })
 }
 
-const handleDatabaseAction = (key, database) => {
+const handleKnowledgeBaseAction = (key, knowledgeBase) => {
   if (key === 'copy') {
-    copyDatabaseId(database)
+    copyKnowledgeBaseId(knowledgeBase)
     return
   }
   if (key === 'edit') {
     router.push({
-      path: `/extensions/knowledgebase/${database.kb_id}`,
+      path: `/extensions/knowledge-bases/${knowledgeBase.kb_id}`,
       query: { action: 'edit' }
     })
     return
   }
   if (key === 'delete') {
-    deleteDatabase(database)
+    deleteKnowledgeBase(knowledgeBase)
   }
 }
 
@@ -311,29 +311,29 @@ watch(
   () => route.path,
   (newPath) => {
     if (newPath === '/extensions' && route.query.tab === 'knowledge') {
-      databaseStore.loadDatabases()
+      knowledgeBaseStore.loadKnowledgeBases()
     }
   }
 )
 
 onMounted(() => {
   loadSupportedKbTypes()
-  databaseStore.loadDatabases()
+  knowledgeBaseStore.loadKnowledgeBases()
 })
 
 defineExpose({
-  loading: computed(() => dbState.value.listLoading)
+  loading: computed(() => knowledgeBaseState.value.listLoading)
 })
 </script>
 
 <style lang="less" scoped>
-.database-container {
+.knowledge-base-container {
   :deep(.info-card-icon) {
     background: var(--gray-0);
   }
 }
 
-.database-container {
+.knowledge-base-container {
   padding: 0;
 }
 
@@ -349,7 +349,7 @@ defineExpose({
 
 <style lang="less">
 /* 下拉层 teleport 到 body，需使用菜单命名空间修正 Ant 默认的 inline 行盒高度。 */
-.database-action-menu .ant-dropdown-menu-title-content {
+.knowledge-base-action-menu .ant-dropdown-menu-title-content {
   display: flex;
   align-items: center;
   width: 100%;

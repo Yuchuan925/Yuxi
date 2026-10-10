@@ -152,7 +152,7 @@ class KnowledgeBase(ABC):
         创建底层知识库实例
 
         Args:
-            kb_id: 数据库ID
+            kb_id: 知识库ID
             embedding_model_spec: 嵌入模型配置
 
         Returns:
@@ -183,7 +183,7 @@ class KnowledgeBase(ABC):
         Add a file record to metadata (Status: UPLOADED)
 
         Args:
-            kb_id: Database ID
+            kb_id: Knowledge base ID
             item: File path or URL
             params: Parameters
             operator_id: Operator ID who created the file
@@ -244,7 +244,7 @@ class KnowledgeBase(ABC):
         Parse file to Markdown and save to MinIO (Status: PARSING -> PARSED/ERROR_PARSING)
 
         Args:
-            kb_id: Database ID
+            kb_id: Knowledge base ID
             file_id: File ID
             operator_id: ID of the user performing the operation
 
@@ -812,7 +812,7 @@ class KnowledgeBase(ABC):
         Index parsed file (Status: INDEXING -> INDEXED/ERROR_INDEXING)
 
         Args:
-            kb_id: Database ID
+            kb_id: Knowledge base ID
             file_id: File ID
             operator_id: ID of the user performing the operation
 
@@ -821,12 +821,12 @@ class KnowledgeBase(ABC):
         """
         pass
 
-    async def cleanup_database_resources(self, kb_id: str) -> dict:
+    async def cleanup_knowledge_base_resources(self, kb_id: str) -> dict:
         """
         清理知识库关联的文件与存储资源。
 
         Args:
-            kb_id: 数据库ID
+            kb_id: 知识库ID
 
         Returns:
             操作结果
@@ -939,7 +939,7 @@ class KnowledgeBase(ABC):
 
         Args:
             query_text: 查询文本
-            kb_id: 数据库ID
+            kb_id: 知识库ID
             **kwargs: 查询参数
 
         Returns:
@@ -953,7 +953,7 @@ class KnowledgeBase(ABC):
         获取知识库类型的查询参数配置
 
         Args:
-            kb_id: 数据库ID
+            kb_id: 知识库ID
             **kwargs: 额外参数
 
         Returns:
@@ -996,7 +996,7 @@ class KnowledgeBase(ABC):
         Recursively delete a folder and its content.
 
         Args:
-            kb_id: Database ID
+            kb_id: Knowledge base ID
             folder_id: Folder ID to delete
         """
         from yuxi.modules.knowledge.repositories.files import KnowledgeFileRepository
@@ -1019,7 +1019,7 @@ class KnowledgeBase(ABC):
         Move a file or folder to a new parent folder.
 
         Args:
-            kb_id: Database ID
+            kb_id: Knowledge base ID
             file_id: File/Folder ID to move
             new_parent_id: New parent folder ID (None for root)
 
@@ -1063,7 +1063,7 @@ class KnowledgeBase(ABC):
         删除文件
 
         Args:
-            kb_id: 数据库ID
+            kb_id: 知识库ID
             file_id: 文件ID
         """
         pass
@@ -1074,7 +1074,7 @@ class KnowledgeBase(ABC):
         获取文件基本信息（仅元数据）
 
         Args:
-            kb_id: 数据库ID
+            kb_id: 知识库ID
             file_id: 文件ID
 
         Returns:
@@ -1088,7 +1088,7 @@ class KnowledgeBase(ABC):
         获取文件内容信息（chunks和lines）
 
         Args:
-            kb_id: 数据库ID
+            kb_id: 知识库ID
             file_id: 文件ID
 
         Returns:
@@ -1102,7 +1102,7 @@ class KnowledgeBase(ABC):
         获取文件完整信息（基本信息+内容信息）
 
         Args:
-            kb_id: 数据库ID
+            kb_id: 知识库ID
             file_id: 文件ID
 
         Returns:

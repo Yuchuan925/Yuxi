@@ -30,10 +30,10 @@ import yuxi.api.routers.system as system_router
             "configure",
         ),
         (
-            knowledge_router.get_databases,
+            knowledge_router.get_knowledge_bases,
             {},
-            knowledge_router.knowledge_base,
-            "get_databases_by_uid",
+            knowledge_router.knowledge_base_manager,
+            "get_knowledge_bases_by_uid",
         ),
         (
             knowledge_eval_router.list_evaluation_datasets,
@@ -41,7 +41,7 @@ import yuxi.api.routers.system as system_router
             knowledge_eval_router.EvaluationService,
             "list_datasets",
         ),
-        (graph_router.get_graphs, {}, graph_router.knowledge_base, "get_databases_by_uid"),
+        (graph_router.get_graphs, {}, graph_router.knowledge_base, "get_knowledge_bases_by_uid"),
         (
             knowledge_dashboard_router.read_knowledge_stats,
             {},
@@ -105,7 +105,7 @@ async def test_document_submission_preserves_http_exception(monkeypatch, pending
         "kb_id": "kb-1",
         "params": {},
         "operator_id": "user-1",
-        "db_info": SimpleNamespace(name="测试知识库", pending_parse_count=1),
+        "kb_info": SimpleNamespace(name="测试知识库", pending_parse_count=1),
         "action": "parse",
     }
 
@@ -122,9 +122,9 @@ async def test_document_submission_preserves_http_exception(monkeypatch, pending
 async def test_document_download_preserves_inner_http_exception(monkeypatch):
     """下载内层不能将 HTTP 拒绝改成 StorageError 再转换为 500。"""
     error = HTTPException(404, "对象不存在")
-    monkeypatch.setattr(knowledge_router, "_ensure_database_supports_documents", AsyncMock())
+    monkeypatch.setattr(knowledge_router, "_ensure_knowledge_base_supports_documents", AsyncMock())
     monkeypatch.setattr(
-        knowledge_router.knowledge_base,
+        knowledge_router.knowledge_base_manager,
         "get_file_basic_info",
         AsyncMock(return_value={"meta": {"path": "http://minio:9000/documents/file.txt"}}),
     )
@@ -155,7 +155,7 @@ def test_graph_configuration_error_response(monkeypatch, error, status_code, det
     app.dependency_overrides[knowledge_router.require_knowledge_base_manage] = lambda: SimpleNamespace(uid="user-1")
     monkeypatch.setattr(knowledge_router.MilvusGraphService, "configure", AsyncMock(side_effect=error))
 
-    response = TestClient(app).post("/knowledge/databases/kb-1/graph-build/config", json={})
+    response = TestClient(app).post("/knowledge/knowledge-bases/kb-1/graph-build/config", json={})
 
     assert response.status_code == status_code
     assert response.json() == {"detail": detail}
@@ -166,8 +166,8 @@ def test_graph_configuration_error_response(monkeypatch, error, status_code, det
 @pytest.mark.parametrize(
     ("path", "method", "asynchronous"),
     [
-        ("/knowledge/databases", "get_databases_by_uid", True),
-        ("/knowledge/databases/accessible", "get_databases_by_uid", True),
+        ("/knowledge/knowledge-bases", "get_knowledge_bases_by_uid", True),
+        ("/knowledge/knowledge-bases/accessible", "get_knowledge_bases_by_uid", True),
         ("/knowledge/types", "get_supported_kb_types", False),
         ("/knowledge/stats", "get_statistics", True),
     ],
@@ -180,7 +180,7 @@ def test_knowledge_read_failure_is_not_empty_success(monkeypatch, path, method, 
     app.dependency_overrides[knowledge_router.get_admin_user] = lambda: user
     app.dependency_overrides[knowledge_router.get_required_user] = lambda: user
     mock_type = AsyncMock if asynchronous else Mock
-    monkeypatch.setattr(knowledge_router.knowledge_base, method, mock_type(side_effect=RuntimeError("storage down")))
+    monkeypatch.setattr(knowledge_router.knowledge_base_manager, method, mock_type(side_effect=RuntimeError("storage down")))
 
     response = TestClient(app).get(path)
 

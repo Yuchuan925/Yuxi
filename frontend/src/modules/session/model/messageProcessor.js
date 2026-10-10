@@ -99,18 +99,18 @@ export class MessageProcessor {
   /**
    * 提取一轮对话中所有知识库检索块
    * @param {Object} group - 单轮对话
-   * @param {Array} databases - 知识库列表
+   * @param {Array} knowledgeBases - 知识库列表
    * @returns {Array} 归一化后的检索块
    */
-  static extractKnowledgeChunksFromMessageGroup(group, databases = []) {
+  static extractKnowledgeChunksFromMessageGroup(group, knowledgeBases = []) {
     if (!group || !Array.isArray(group.messages) || group.messages.length === 0) return []
 
-    const databaseNames = new Set(
-      (databases || [])
-        .map((db) => db?.name)
+    const knowledgeBaseNames = new Set(
+      (knowledgeBases || [])
+        .map((kb) => kb?.name)
         .filter((name) => typeof name === 'string' && name.trim())
     )
-    if (databaseNames.size === 0) return []
+    if (knowledgeBaseNames.size === 0) return []
 
     const normalizedChunks = []
     const dedupSet = new Set()
@@ -147,7 +147,7 @@ export class MessageProcessor {
 
       for (const toolCall of msg.tool_calls) {
         const kbName = toolCall?.name || toolCall?.function?.name
-        if (!databaseNames.has(kbName)) continue
+        if (!knowledgeBaseNames.has(kbName)) continue
 
         const content = toolCall?.tool_call_result?.content
         const parsed = parseToolResultContent(content)
@@ -234,16 +234,16 @@ export class MessageProcessor {
   /**
    * 提取单个消息中的来源
    * @param {Object} message - 消息对象
-   * @param {Array} databases - 知识库列表
+   * @param {Array} knowledgeBases - 知识库列表
    * @returns {{knowledgeChunks: Array, webSources: Array}}
    */
-  static extractSourcesFromMessage(message, databases = []) {
+  static extractSourcesFromMessage(message, knowledgeBases = []) {
     if (!message || message.type !== 'ai') return { knowledgeChunks: [], webSources: [] }
 
     // 复用提取逻辑，通过构建临时对话对象
     const messageGroup = { messages: [message] }
     return {
-      knowledgeChunks: MessageProcessor.extractKnowledgeChunksFromMessageGroup(messageGroup, databases),
+      knowledgeChunks: MessageProcessor.extractKnowledgeChunksFromMessageGroup(messageGroup, knowledgeBases),
       webSources: MessageProcessor.extractWebSourcesFromMessageGroup(messageGroup)
     }
   }
@@ -251,12 +251,12 @@ export class MessageProcessor {
   /**
    * 提取一轮对话中的全部来源（知识库+网络搜索）
    * @param {Object} group - 单轮对话
-   * @param {Array} databases - 知识库列表
+   * @param {Array} knowledgeBases - 知识库列表
    * @returns {{knowledgeChunks: Array, webSources: Array}}
    */
-  static extractSourcesFromMessageGroup(group, databases = []) {
+  static extractSourcesFromMessageGroup(group, knowledgeBases = []) {
     return {
-      knowledgeChunks: MessageProcessor.extractKnowledgeChunksFromMessageGroup(group, databases),
+      knowledgeChunks: MessageProcessor.extractKnowledgeChunksFromMessageGroup(group, knowledgeBases),
       webSources: MessageProcessor.extractWebSourcesFromMessageGroup(group)
     }
   }

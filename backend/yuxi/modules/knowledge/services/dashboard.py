@@ -31,7 +31,7 @@ FILE_TYPE_MAPPING = {
     "7z": "7Z压缩包",
 }
 
-DATABASE_TYPE_MAPPING = {
+KNOWLEDGE_BASE_TYPE_MAPPING = {
     "faiss": "FAISS",
     "milvus": "Milvus",
     "dify": "Dify",
@@ -44,18 +44,18 @@ DATABASE_TYPE_MAPPING = {
 async def get_knowledge_stats() -> dict[str, Any]:
     """通过单批 SQL 聚合高效汇总知识库、文件类型与存储大小统计。"""
 
-    databases_by_type: dict[str, int] = {}
+    knowledge_bases_by_type: dict[str, int] = {}
     files_by_type: dict[str, int] = {}
-    total_databases = 0
+    total_knowledge_bases = 0
     total_files = 0
     total_nodes = 0
     total_storage_size = 0
 
     for kb_type, count in await KnowledgeBaseRepository().count_by_type():
-        db_type = kb_type.lower()
-        display_type = DATABASE_TYPE_MAPPING.get(db_type, kb_type or "未知类型")
-        databases_by_type[display_type] = databases_by_type.get(display_type, 0) + count
-        total_databases += count
+        kb_type_normalized = kb_type.lower()
+        display_type = KNOWLEDGE_BASE_TYPE_MAPPING.get(kb_type_normalized, kb_type or "未知类型")
+        knowledge_bases_by_type[display_type] = knowledge_bases_by_type.get(display_type, 0) + count
+        total_knowledge_bases += count
 
     for file_type, count, size, nodes in await KnowledgeFileRepository().aggregate_dashboard_stats():
         ext = file_type.lower()
@@ -69,10 +69,10 @@ async def get_knowledge_stats() -> dict[str, Any]:
         total_nodes += nodes
 
     return {
-        "total_databases": total_databases,
+        "total_knowledge_bases": total_knowledge_bases,
         "total_files": total_files,
         "total_nodes": total_nodes,
         "total_storage_size": total_storage_size,
-        "databases_by_type": databases_by_type,
+        "knowledge_bases_by_type": knowledge_bases_by_type,
         "file_type_distribution": files_by_type,
     }

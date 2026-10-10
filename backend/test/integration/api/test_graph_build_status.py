@@ -3,15 +3,15 @@ import pytest
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_graph_build_status_and_failed_chunk_samples(test_client, admin_headers, knowledge_database):
-    kb_id = knowledge_database["kb_id"]
+async def test_graph_build_status_and_failed_chunk_samples(test_client, admin_headers, knowledge_base_resource):
+    kb_id = knowledge_base_resource["kb_id"]
 
     status_response = await test_client.get(
-        f"/api/knowledge/databases/{kb_id}/graph-build/status",
+        f"/api/knowledge/knowledge-bases/{kb_id}/graph-build/status",
         headers=admin_headers,
     )
     samples_response = await test_client.get(
-        f"/api/knowledge/databases/{kb_id}/graph-build/failed-chunks?limit=10",
+        f"/api/knowledge/knowledge-bases/{kb_id}/graph-build/failed-chunks?limit=10",
         headers=admin_headers,
     )
 

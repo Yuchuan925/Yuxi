@@ -10,66 +10,66 @@ from yuxi.modules.knowledge.utils.security import redact_sensitive_params
 from yuxi.shared.datetime import utc_isoformat
 
 
-def _knowledge_base_stats(database: KnowledgeBaseSummary) -> dict[str, int]:
+def _knowledge_base_stats(knowledge_base: KnowledgeBaseSummary) -> dict[str, int]:
     """组装兼容现有接口的嵌套统计字段。"""
     return {
-        "file_count": database.file_count,
-        "folder_count": database.folder_count,
-        "row_count": database.row_count,
-        "total_size": database.total_size,
-        "chunk_count": database.chunk_count,
-        "token_count": database.token_count,
-        "pending_parse_count": database.pending_parse_count,
-        "pending_index_count": database.pending_index_count,
-        "processing_count": database.processing_count,
+        "file_count": knowledge_base.file_count,
+        "folder_count": knowledge_base.folder_count,
+        "row_count": knowledge_base.row_count,
+        "total_size": knowledge_base.total_size,
+        "chunk_count": knowledge_base.chunk_count,
+        "token_count": knowledge_base.token_count,
+        "pending_parse_count": knowledge_base.pending_parse_count,
+        "pending_index_count": knowledge_base.pending_index_count,
+        "processing_count": knowledge_base.processing_count,
     }
 
 
 def serialize_knowledge_base(
-    database: KnowledgeBaseSummary,
+    knowledge_base: KnowledgeBaseSummary,
     *,
     permission: ResourcePermission | None = None,
     redact_secrets: bool = False,
 ) -> dict[str, Any]:
     """转换单个知识库读取模型为 HTTP 响应。"""
-    stats = _knowledge_base_stats(database)
-    additional_params = dict(database.additional_params)
+    stats = _knowledge_base_stats(knowledge_base)
+    additional_params = dict(knowledge_base.additional_params)
     if redact_secrets:
         additional_params = redact_sensitive_params(additional_params)
 
     response = {
-        "kb_id": database.kb_id,
-        "name": database.name,
-        "description": database.description,
-        "kb_type": database.kb_type,
-        "embedding_model_spec": database.embedding_model_spec,
-        "llm_model_spec": database.llm_model_spec,
-        "query_params": dict(database.query_params),
+        "kb_id": knowledge_base.kb_id,
+        "name": knowledge_base.name,
+        "description": knowledge_base.description,
+        "kb_type": knowledge_base.kb_type,
+        "embedding_model_spec": knowledge_base.embedding_model_spec,
+        "llm_model_spec": knowledge_base.llm_model_spec,
+        "query_params": dict(knowledge_base.query_params),
         "metadata": dict(additional_params),
-        "created_by": database.created_by,
-        "created_at": utc_isoformat(database.created_at) if database.created_at else None,
+        "created_by": knowledge_base.created_by,
+        "created_at": utc_isoformat(knowledge_base.created_at) if knowledge_base.created_at else None,
         "status": "已连接",
         "stats": stats,
-        "row_count": database.row_count,
-        "share_config": database.share_config,
+        "row_count": knowledge_base.row_count,
+        "share_config": knowledge_base.share_config,
         "additional_params": additional_params,
     }
 
-    effective_permission = permission or database.effective_permission
+    effective_permission = permission or knowledge_base.effective_permission
     if effective_permission is not None:
         response["effective_permission"] = effective_permission.value
         response["can_manage"] = effective_permission == ResourcePermission.MANAGE
 
-    if isinstance(database, KnowledgeBaseDetail):
-        response["sample_questions"] = list(database.sample_questions)
-        if database.files is not None:
-            response["files"] = database.files
-            response["files_truncated"] = database.files_truncated
-            response["files_page_size"] = database.files_page_size
+    if isinstance(knowledge_base, KnowledgeBaseDetail):
+        response["sample_questions"] = list(knowledge_base.sample_questions)
+        if knowledge_base.files is not None:
+            response["files"] = knowledge_base.files
+            response["files_truncated"] = knowledge_base.files_truncated
+            response["files_page_size"] = knowledge_base.files_page_size
 
     return response
 
 
-def serialize_knowledge_base_list(databases: list[KnowledgeBaseSummary]) -> dict[str, list[dict[str, Any]]]:
+def serialize_knowledge_base_list(knowledge_bases: list[KnowledgeBaseSummary]) -> dict[str, list[dict[str, Any]]]:
     """转换知识库摘要列表为现有列表接口响应。"""
-    return {"databases": [serialize_knowledge_base(database) for database in databases]}
+    return {"knowledge_bases": [serialize_knowledge_base(knowledge_base) for knowledge_base in knowledge_bases]}

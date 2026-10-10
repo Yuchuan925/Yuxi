@@ -96,7 +96,7 @@ import { computed } from 'vue'
 import BaseToolCall from '../BaseToolCall.vue'
 import { getToolCallStatus } from '../toolRegistry'
 import KbResultGroupedList from '@/modules/knowledge/ui/KbResultGroupedList.vue'
-import { useDatabaseStore } from '@/modules/knowledge/model/database'
+import { useKnowledgeBaseStore } from '@/modules/knowledge/model/knowledgeBase'
 import { parseToolCallArgs } from '../toolRegistry'
 
 const props = defineProps({
@@ -106,14 +106,14 @@ const props = defineProps({
   }
 })
 
-const databaseStore = useDatabaseStore()
+const knowledgeBaseStore = useKnowledgeBaseStore()
 
 const args = computed(() => parseToolCallArgs(props.toolCall))
 
 const operationLabel = computed(() => '搜索知识库')
 
 const resourceLabel = computed(
-  () => args.value.kb_name || databaseStore.getDatabaseNameById(args.value.kb_id)
+  () => args.value.kb_name || knowledgeBaseStore.getKnowledgeBaseNameById(args.value.kb_id)
 )
 const queryText = computed(() => args.value.query_text || '')
 

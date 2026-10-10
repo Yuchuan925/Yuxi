@@ -49,10 +49,10 @@ test('布局导航不等待品牌或知识库，卸载后清理状态同步计�
     app.provide(ssrContextKey, { modules: new Set() })
     app.use(pinia)
     app.use(createRouter({ history: createMemoryHistory(), routes: [] }))
-    const { useDatabaseStore } = await server.ssrLoadModule('/src/modules/knowledge/model/database.js')
-    const database = app.runWithContext(() => useDatabaseStore())
-    t.mock.method(database, 'loadDatabases', () => {
-      calls.push('loadDatabases')
+    const { useKnowledgeBaseStore } = await server.ssrLoadModule('/src/modules/knowledge/model/knowledgeBase.js')
+    const knowledgeBase = app.runWithContext(() => useKnowledgeBaseStore())
+    t.mock.method(knowledgeBase, 'loadKnowledgeBases', () => {
+      calls.push('loadKnowledgeBases')
       return new Promise(() => {})
     })
     const interval = t.mock.method(globalThis, 'setInterval', () => 123)
@@ -60,7 +60,7 @@ test('布局导航不等待品牌或知识库，卸载后清理状态同步计�
     app.mount({})
     await Promise.resolve()
     assert.ok(calls.includes('loadInfoConfig'))
-    assert.ok(calls.includes('loadDatabases'))
+    assert.ok(calls.includes('loadKnowledgeBases'))
     assert.ok(calls.includes('loadThreads'))
     assert.ok(calls.includes('loadProjects'))
     assert.ok(calls.includes('refreshConfig'))

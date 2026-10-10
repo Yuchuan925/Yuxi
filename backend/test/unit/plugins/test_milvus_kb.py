@@ -238,7 +238,7 @@ def make_chunk(index: int, content: str = "content") -> dict:
     }
 
 
-async def test_cleanup_database_resources_offloads_milvus_cleanup(monkeypatch):
+async def test_cleanup_knowledge_base_resources_offloads_milvus_cleanup(monkeypatch):
     kb = MilvusKB.__new__(MilvusKB)
     kb.connection_alias = "test-alias"
     event_loop_thread = threading.get_ident()
@@ -274,9 +274,9 @@ async def test_cleanup_database_resources_offloads_milvus_cleanup(monkeypatch):
         calls.append("delete_base")
         return {"message": "删除成功"}
 
-    monkeypatch.setattr(KnowledgeBase, "cleanup_database_resources", delete_base)
+    monkeypatch.setattr(KnowledgeBase, "cleanup_knowledge_base_resources", delete_base)
 
-    result = await kb.cleanup_database_resources("db")
+    result = await kb.cleanup_knowledge_base_resources("db")
 
     assert result == {"message": "删除成功"}
     assert calls == ["has_collection", "drop_collection", "graph_init", "drop_graph_collections", "delete_base"]
@@ -579,7 +579,7 @@ async def test_delete_file_commits_invisibility_without_external_cleanup(monkeyp
     chunk_repo.delete_by_file_id.assert_not_awaited()
 
 
-async def test_database_cleanup_stops_when_collection_drop_fails(monkeypatch):
+async def test_knowledge_base_cleanup_stops_when_collection_drop_fails(monkeypatch):
     """集合删除失败时不能继续清理并报告知识库已删除。"""
     error = RuntimeError("Milvus unavailable")
     monkeypatch.setattr(milvus_module.utility, "has_collection", lambda *args, **kwargs: True)
@@ -590,12 +590,12 @@ async def test_database_cleanup_stops_when_collection_drop_fails(monkeypatch):
         lambda: types.SimpleNamespace(drop_graph_collections=graph_cleanup),
     )
     base_cleanup = AsyncMock(return_value={"message": "success"})
-    monkeypatch.setattr(KnowledgeBase, "cleanup_database_resources", base_cleanup)
+    monkeypatch.setattr(KnowledgeBase, "cleanup_knowledge_base_resources", base_cleanup)
     kb = make_kb(FakeCollection())
     kb.connection_alias = "test-connection"
 
     with pytest.raises(RuntimeError) as caught:
-        await kb.cleanup_database_resources("db")
+        await kb.cleanup_knowledge_base_resources("db")
 
     assert caught.value is error
     graph_cleanup.assert_not_called()

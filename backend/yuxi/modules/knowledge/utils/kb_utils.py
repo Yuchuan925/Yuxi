@@ -67,7 +67,7 @@ async def prepare_item_metadata(item: str, content_type: str, kb_id: str, params
     Args:
         item: MinIO URL
         content_type: 内容类型，目前仅支持 "file"
-        kb_id: 数据库ID
+        kb_id: 知识库ID
         params: 处理参数，可选
     """
     # 检查是否有预处理信息 (针对 URL 转 HTML 文件的情况)
@@ -233,4 +233,4 @@ def build_kb_image_proxy_url(object_name: str) -> str:
     kb_id, separator, relative_path = object_name.partition("/")
     if not kb_id or not separator or not relative_path.startswith("kb-images/"):
         raise ValueError("知识库图片对象名必须符合 {kb_id}/kb-images/{filename} 格式")
-    return f"/api/knowledge/databases/{kb_id}/images/{quote(relative_path, safe='/')}"
+    return f"/api/knowledge/knowledge-bases/{kb_id}/images/{quote(relative_path, safe='/')}"

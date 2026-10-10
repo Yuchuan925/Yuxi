@@ -68,7 +68,7 @@ test('侧栏预览离开缓存页面后不因零宽度变成弹窗，返回时�
 
   state.workspaceMainWidth.value = 1200
   await nextTick()
-  state.activeSourceKey.value = 'database:test-kb'
+  state.activeSourceKey.value = 'knowledge-base:test-kb'
   hooks.deactivated?.()
   state.workspaceMainWidth.value = 0
   state.workspaceMainRef.value.clientWidth = 700

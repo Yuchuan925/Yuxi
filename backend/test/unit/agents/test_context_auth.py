@@ -179,7 +179,7 @@ async def test_resolve_agent_resource_options_empty_fields_loads_nothing(monkeyp
     monkeypatch.setitem(
         sys.modules,
         "yuxi.modules.knowledge.runtime",
-        types.SimpleNamespace(knowledge_base=types.SimpleNamespace(get_databases_by_user=fail_if_loaded)),
+        types.SimpleNamespace(knowledge_base=types.SimpleNamespace(get_knowledge_bases_by_user=fail_if_loaded)),
     )
 
     assert await context_module.resolve_agent_resource_options(set(), db=object(), user=object()) == {}
@@ -187,7 +187,7 @@ async def test_resolve_agent_resource_options_empty_fields_loads_nothing(monkeyp
 
 @pytest.mark.asyncio
 async def test_normalize_agent_context_config_defaults_mcps_off_and_filters_explicit_lists(monkeypatch):
-    async def fake_get_databases_by_user(_user):
+    async def fake_get_knowledge_bases_by_user(_user):
         return [_knowledge_summary("kb-a"), _knowledge_summary("kb-b")]
 
     async def fake_get_all_mcp_servers(_db):
@@ -219,7 +219,7 @@ async def test_normalize_agent_context_config_defaults_mcps_off_and_filters_expl
     monkeypatch.setitem(
         sys.modules,
         "yuxi.modules.knowledge.runtime",
-        types.SimpleNamespace(knowledge_base=types.SimpleNamespace(get_databases_by_user=fake_get_databases_by_user)),
+        types.SimpleNamespace(knowledge_base=types.SimpleNamespace(get_knowledge_bases_by_user=fake_get_knowledge_bases_by_user)),
     )
     monkeypatch.setitem(
         sys.modules,
@@ -318,7 +318,7 @@ async def test_prepare_agent_runtime_context_filters_resources_and_derives_runti
 
     monkeypatch.setattr(context_module, "_load_workspace_agent_context", lambda uid: "workspace policy")
 
-    async def fake_get_databases_by_user(_user):
+    async def fake_get_knowledge_bases_by_user(_user):
         return [_knowledge_summary("kb-a"), _knowledge_summary("kb-b")]
 
     async def fake_get_all_mcp_servers(_db):
@@ -408,7 +408,7 @@ async def test_prepare_agent_runtime_context_filters_resources_and_derives_runti
     monkeypatch.setitem(
         sys.modules,
         "yuxi.modules.knowledge.runtime",
-        types.SimpleNamespace(knowledge_base=types.SimpleNamespace(get_databases_by_user=fake_get_databases_by_user)),
+        types.SimpleNamespace(knowledge_base=types.SimpleNamespace(get_knowledge_bases_by_user=fake_get_knowledge_bases_by_user)),
     )
     monkeypatch.setitem(
         sys.modules,

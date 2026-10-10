@@ -45,13 +45,13 @@ export const getKbTypeColor = (type) => {
 
 const READ_ONLY_KB_TYPES = new Set(['dify', 'notion'])
 
-export const isReadOnlyDatabase = (database, kbTypes = {}) => {
+export const isReadOnlyKnowledgeBase = (knowledgeBase, kbTypes = {}) => {
   const kbType = (
-    typeof database === 'string' ? database : database?.kb_type || 'milvus'
+    typeof knowledgeBase === 'string' ? knowledgeBase : knowledgeBase?.kb_type || 'milvus'
   ).toLowerCase()
 
-  if (database?.supports_documents !== undefined) {
-    return database.supports_documents === false
+  if (knowledgeBase?.supports_documents !== undefined) {
+    return knowledgeBase.supports_documents === false
   }
   if (kbTypes[kbType]?.supports_documents !== undefined) {
     return kbTypes[kbType].supports_documents === false
@@ -63,5 +63,5 @@ export const kbUtils = {
   getKbTypeLabel,
   getKbTypeIcon,
   getKbTypeColor,
-  isReadOnlyDatabase
+  isReadOnlyKnowledgeBase
 }

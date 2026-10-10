@@ -122,7 +122,7 @@ async def test_operation_refresh_ignores_cached_stats(stats_store, tmp_path, fai
         assert row.additional_params["stats"]["chunk_count"] == 158
         assert row.additional_params["stats"]["token_count"] == 900
         assert row.additional_params["stats"]["pending_index_count"] == 0
-    summaries = await manager.get_databases()
+    summaries = await manager.get_knowledge_bases()
     assert len(summaries) == 1
     assert summaries[0].chunk_count == 158
     assert summaries[0].pending_index_count == 0
@@ -136,7 +136,7 @@ async def test_refresh_queries_after_acquiring_row_lock(stats_store, tmp_path):
     async with sessions.begin() as blocker:
         await blocker.execute(select(KnowledgeBase).with_for_update())
         blocker_pid = await blocker.scalar(text("SELECT pg_backend_pid()"))
-        task = asyncio.create_task(manager._refresh_database_stats(kb_id))
+        task = asyncio.create_task(manager._refresh_knowledge_base_stats(kb_id))
         try:
             async with asyncio.timeout(10):
                 while True:
@@ -167,7 +167,7 @@ async def test_refresh_queries_after_acquiring_row_lock(stats_store, tmp_path):
 
 
 async def test_retired_stats_repair_route_cannot_mutate_persisted_facts(stats_store):
-    """退役的统计修复入口返回 404，保留数据库事实与读缓存。"""
+    """退役的统计修复入口返回 404，保留知识库事实与读缓存。"""
     kb_id, sessions, redis = stats_store
     cached = await KnowledgeFileRepository().get_kb_file_stats(kb_id)
     await redis.expire(f"yuxi:kb_file_stats:{kb_id}", 300)
@@ -189,7 +189,7 @@ async def test_retired_stats_repair_route_cannot_mutate_persisted_facts(stats_st
                         serving.result()
                     await asyncio.sleep(0.01)
             async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{listener.getsockname()[1]}") as client:
-                response = await client.post(f"/api/knowledge/databases/{kb_id}/stats/repair")
+                response = await client.post(f"/api/knowledge/knowledge-bases/{kb_id}/stats/repair")
             assert response.status_code == 404, response.text
         finally:
             server.should_exit = True
@@ -204,7 +204,7 @@ async def test_retired_stats_repair_route_cannot_mutate_persisted_facts(stats_st
     assert await KnowledgeFileRepository().get_kb_file_stats(kb_id) == cached
 
 
-async def test_database_list_returns_fresh_persisted_stats(stats_store, tmp_path, monkeypatch):
+async def test_knowledge_base_list_returns_fresh_persisted_stats(stats_store, tmp_path, monkeypatch):
     """文件操作刷新后，真实 HTTP 列表读取持久投影而非旧统计缓存。"""
     kb_id, sessions, redis = stats_store
     cached = await KnowledgeFileRepository().get_kb_file_stats(kb_id)
@@ -222,8 +222,8 @@ async def test_database_list_returns_fresh_persisted_stats(stats_store, tmp_path
 
     await manager._run_with_stats_refresh(kb_id, operation())
     # 本用例验证统计的 HTTP 投影；身份与可见性由知识库权限 integration 验证。
-    monkeypatch.setattr(manager, "get_databases_by_uid", lambda _uid: manager.get_databases())
-    monkeypatch.setattr(knowledge_router, "knowledge_base", manager)
+    monkeypatch.setattr(manager, "get_knowledge_bases_by_uid", lambda _uid: manager.get_knowledge_bases())
+    monkeypatch.setattr(knowledge_router, "knowledge_base_manager", manager)
     app = FastAPI()
     app.include_router(knowledge_router.knowledge, prefix="/api")
     app.dependency_overrides[knowledge_router.get_admin_user] = lambda: SimpleNamespace(uid="stats-viewer")
@@ -238,14 +238,14 @@ async def test_database_list_returns_fresh_persisted_stats(stats_store, tmp_path
                         serving.result()
                     await asyncio.sleep(0.01)
             async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{listener.getsockname()[1]}") as client:
-                response = await client.get("/api/knowledge/databases")
+                response = await client.get("/api/knowledge/knowledge-bases")
             assert response.status_code == 200, response.text
-            databases = response.json()["databases"]
+            knowledge_bases = response.json()["knowledge_bases"]
         finally:
             server.should_exit = True
             await asyncio.wait_for(serving, timeout=10)
-    assert len(databases) == 1
-    result = databases[0]
+    assert len(knowledge_bases) == 1
+    result = knowledge_bases[0]
     assert result["kb_id"] == kb_id
     assert result["stats"]["chunk_count"] == 7
     assert result["stats"]["token_count"] == 42

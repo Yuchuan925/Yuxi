@@ -18,7 +18,7 @@ async def visible_knowledge_bases(
 
     from yuxi.modules.knowledge.runtime import knowledge_base
 
-    summaries = await knowledge_base.get_databases_by_uid(uid)
+    summaries = await knowledge_base.get_knowledge_bases_by_uid(uid)
     selected_ids = None if selection == "all" else {kb_id.strip() for kb_id in selection}
     return [
         {"kb_id": item.kb_id, "name": item.name, "description": item.description, "kb_type": item.kb_type}

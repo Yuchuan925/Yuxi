@@ -378,9 +378,9 @@ test('四个 API 模块复用查询参数边界并保持 endpoint 问号语义',
       '/api/projects/history-candidates?limit=0&offset=0',
       '/api/viewer/filesystem/search?thread_id=thread-1',
       '/api/workspace/knowledge/tree?kb_id=kb-1&page=0&page_size=false&recursive=false&files_only=false',
-      '/api/knowledge/databases/kb-1/documents?page=0&page_size=false',
-      '/api/knowledge/databases/kb-1/documents',
-      '/api/knowledge/databases/kb-1/documents/exists?'
+      '/api/knowledge/knowledge-bases/kb-1/documents?page=0&page_size=false',
+      '/api/knowledge/knowledge-bases/kb-1/documents',
+      '/api/knowledge/knowledge-bases/kb-1/documents/exists?'
     ])
   })
 })

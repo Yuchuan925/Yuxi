@@ -7,7 +7,7 @@ function readSource(relativePath) {
 }
 
 test('知识库详情将评估基准和近期评估收敛到同一个评估工作台', () => {
-  const detailSource = readSource('../../src/pages/DataBaseInfoView.vue')
+  const detailSource = readSource('../../src/pages/KnowledgeBaseInfoView.vue')
   const workspaceSource = readSource(
     '../../src/modules/knowledge/ui/KnowledgeEvaluationWorkspace.vue'
   )
@@ -17,7 +17,7 @@ test('知识库详情将评估基准和近期评估收敛到同一个评估工�
   assert.match(detailSource, /key: 'evaluation', label: '评估', icon: BarChart3/)
   assert.match(detailSource, /<KnowledgeEvaluationWorkspace/)
   assert.match(detailSource, /route\.query\.section/)
-  assert.match(detailSource, /:can-manage="canManageDatabase"/)
+  assert.match(detailSource, /:can-manage="canManageKnowledgeBase"/)
   assert.match(extensionsSource, /<router-view v-else :key="route\.path" \/>/)
   assert.match(
     apiSource,
@@ -39,7 +39,7 @@ test('评估基准和近期评估使用语义按钮导航到可深链接三级�
   )
   const routerSource = readSource('../../src/app/router/index.js')
 
-  assert.match(routerSource, /path: 'knowledgebase\/:kbId\/evaluation\/:datasetId'/)
+  assert.match(routerSource, /path: 'knowledge-bases\/:kbId\/evaluation\/:datasetId'/)
   assert.match(routerSource, /name: 'ExtensionEvaluationBenchmarkDetail'/)
   assert.match(routerSource, /import\('\.\.\/\.\.\/pages\/EvaluationBenchmarkDetailView\.vue'\)/)
   assert.match(workspaceSource, /v-for="dataset in datasets"/)

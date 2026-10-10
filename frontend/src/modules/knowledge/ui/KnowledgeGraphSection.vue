@@ -376,7 +376,7 @@
 
 <script setup>
 import { ref, computed, watch, nextTick, onUnmounted, reactive } from 'vue'
-import { useDatabaseStore } from '@/modules/knowledge/model/database'
+import { useKnowledgeBaseStore } from '@/modules/knowledge/model/knowledgeBase'
 import { useBackgroundJobsStore } from '@/modules/background-jobs/model/jobs'
 import { useConfigStore } from '@/modules/settings/model/config'
 import {
@@ -411,12 +411,12 @@ const props = defineProps({
   }
 })
 
-const store = useDatabaseStore()
+const store = useKnowledgeBaseStore()
 const jobsStore = useBackgroundJobsStore()
 const configStore = useConfigStore()
 
 const kbId = computed(() => store.kbId)
-const kbType = computed(() => store.database.kb_type)
+const kbType = computed(() => store.knowledgeBase.kb_type)
 const kbTypeLabel = computed(() => getKbTypeLabel(kbType.value || 'milvus'))
 const isMilvus = computed(() => kbType.value?.toLowerCase() === MILVUS_KB_TYPE)
 
@@ -585,11 +585,11 @@ const getErrorDetail = (e, fallback) => {
 const loadGraphBuildStatus = async () => {
   if (!kbId.value || !isMilvus.value) return
   const requestSeq = ++graphStatusRequestSeq
-  const currentDatabaseId = kbId.value
+  const currentKnowledgeBaseId = kbId.value
   graphBuildLoading.value = true
   try {
-    const status = await graphBuildApi.getStatus(currentDatabaseId)
-    if (requestSeq === graphStatusRequestSeq && currentDatabaseId === kbId.value) {
+    const status = await graphBuildApi.getStatus(currentKnowledgeBaseId)
+    if (requestSeq === graphStatusRequestSeq && currentKnowledgeBaseId === kbId.value) {
       graphBuildStatus.value = status
     }
   } catch (e) {
@@ -740,14 +740,14 @@ const loadGraph = async () => {
   if (!kbId.value || !isGraphSupported.value) return
 
   const requestSeq = ++graphLoadRequestSeq
-  const currentDatabaseId = kbId.value
+  const currentKnowledgeBaseId = kbId.value
   graph.fetching = true
   if (!hasGraphNodes.value) {
     graphLoaded.value = false
   }
   try {
     const res = await unifiedApi.getSubgraph({
-      kb_id: currentDatabaseId,
+      kb_id: currentKnowledgeBaseId,
       node_label: searchInput.value || '*',
       max_nodes: subgraphParams.maxNodes,
       max_depth: subgraphParams.maxDepth,
@@ -756,7 +756,7 @@ const loadGraph = async () => {
 
     if (
       requestSeq === graphLoadRequestSeq &&
-      currentDatabaseId === kbId.value &&
+      currentKnowledgeBaseId === kbId.value &&
       res.success &&
       res.data
     ) {

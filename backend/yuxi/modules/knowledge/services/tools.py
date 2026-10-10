@@ -128,7 +128,7 @@ async def search_file(
         if not target_kbs:
             raise KnowledgeToolError(f"知识库 '{kb_name}' 不存在或当前会话未启用", not_found=True)
     service = kb_service or knowledge_base
-    searchable = [kb for kb in target_kbs if service.database_type_supports_documents(kb.get("kb_type"))]
+    searchable = [kb for kb in target_kbs if service.knowledge_base_type_supports_documents(kb.get("kb_type"))]
     if not searchable:
         raise KnowledgeToolError("当前匹配的知识库只支持检索，不支持文件搜索")
     return await service.search_document_files(searchable, query=query, offset=offset, limit=limit)

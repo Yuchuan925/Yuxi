@@ -107,11 +107,11 @@ async def test_knowledge_stats_matches_runtime_capability(test_client, admin_hea
 
     assert response.status_code == 200, response.text
     assert set(response.json()) == {
-        "total_databases",
+        "total_knowledge_bases",
         "total_files",
         "total_nodes",
         "total_storage_size",
-        "databases_by_type",
+        "knowledge_bases_by_type",
         "file_type_distribution",
     }
 

@@ -57,17 +57,17 @@ async def _create_failed_dataset(*, kb_id: str, dataset_id: str, name: str) -> N
         )
 
 
-async def test_resume_dataset_generation_enqueues_job(test_client, admin_headers, knowledge_database):
+async def test_resume_dataset_generation_enqueues_job(test_client, admin_headers, knowledge_base_resource):
     dataset_id = f"dataset_{uuid.uuid4().hex[:8]}"
     await _create_failed_dataset(
-        kb_id=knowledge_database["kb_id"],
+        kb_id=knowledge_base_resource["kb_id"],
         dataset_id=dataset_id,
         name="Pytest Resume Dataset",
     )
 
     try:
         response = await test_client.post(
-            f"/api/evaluation/databases/{knowledge_database['kb_id']}/datasets/{dataset_id}/resume",
+            f"/api/evaluation/knowledge-bases/{knowledge_base_resource['kb_id']}/datasets/{dataset_id}/resume",
             headers=admin_headers,
         )
         assert response.status_code == 200, response.text
@@ -86,11 +86,11 @@ async def test_resume_dataset_generation_enqueues_job(test_client, admin_headers
                 break
 
 
-async def test_resume_dataset_generation_concurrent_calls_share_job(knowledge_database):
+async def test_resume_dataset_generation_concurrent_calls_share_job(knowledge_base_resource):
     """并发恢复调用共享同一任务（真实 DB + 真实 job_tracker，测试进程未启动 worker，任务保持 pending，时序确定）。"""
     dataset_id = f"dataset_{uuid.uuid4().hex[:8]}"
     await _create_failed_dataset(
-        kb_id=knowledge_database["kb_id"],
+        kb_id=knowledge_base_resource["kb_id"],
         dataset_id=dataset_id,
         name="Pytest Resume Concurrent Dataset",
     )
@@ -98,8 +98,8 @@ async def test_resume_dataset_generation_concurrent_calls_share_job(knowledge_da
     try:
         service = EvaluationService()
         results = await asyncio.gather(
-            service.resume_dataset_generation(knowledge_database["kb_id"], dataset_id, "admin"),
-            service.resume_dataset_generation(knowledge_database["kb_id"], dataset_id, "admin"),
+            service.resume_dataset_generation(knowledge_base_resource["kb_id"], dataset_id, "admin"),
+            service.resume_dataset_generation(knowledge_base_resource["kb_id"], dataset_id, "admin"),
         )
         job_ids = {result["job_id"] for result in results}
         assert len(job_ids) == 1

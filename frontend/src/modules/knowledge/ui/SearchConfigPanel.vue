@@ -61,7 +61,7 @@
 
 <script setup>
 import { ref, reactive, computed, watch } from 'vue'
-import { useDatabaseStore } from '@/modules/knowledge/model/database'
+import { useKnowledgeBaseStore } from '@/modules/knowledge/model/knowledgeBase'
 import { message } from 'ant-design-vue'
 import { queryApi } from '@/apis/knowledge_api'
 import { createSearchConfigSnapshot, searchConfigChanged } from '@/modules/knowledge/model/searchConfig'
@@ -75,7 +75,7 @@ const props = defineProps({
 
 const emit = defineEmits(['save'])
 
-const store = useDatabaseStore()
+const store = useKnowledgeBaseStore()
 
 const loading = ref(false)
 const error = ref('')
