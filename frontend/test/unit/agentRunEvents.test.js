@@ -308,8 +308,8 @@ test('协作等待保留 SSE，自动恢复的 Run 重新允许 steer 并接收�
       content: text
     }),
     resetOngoingRunGroup: () => h.state.runStreamAbortController?.abort(),
+    submitSessionInput: async () => ({ input_id: 'queued-input', turn_id: null, run_id: null }),
     agentApi: {
-      sendThreadMessage: async () => ({ input_id: 'queued-input', turn_id: null, run_id: null }),
       getThreadInput: async () => ({ items: [] })
     },
     mergeItemSnapshot() {},
