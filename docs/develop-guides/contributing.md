@@ -62,6 +62,8 @@ docker compose logs --tail=100 api
 - 修复 Bug 时先补一个能稳定复现原问题的回归测试，再改实现。
 - 新增函数或类使用简洁中文 docstring；注释只说明时序、Owner、安全边界和调用义务。
 
+知识库现有管理和 executor 调度从 `KnowledgeBaseManager` 开始，后台处理与 Agent 工具从知识库 `services` 开始。修改前按[知识库源码定位](../mechanisms/knowledge-base.md#源码定位与验证)选择当前用例 Owner，再追踪具体 executor 和 repository。
+
 ### 后端
 
 后端代码位于 `backend/`。新增测试放在 `backend/test/unit`、`backend/test/integration` 或 `backend/test/e2e`，按测试实际依赖选择层级。测试分层、fixture 和 skip 规则见[测试规范](./testing-guidelines.md)。
