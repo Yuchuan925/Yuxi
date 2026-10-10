@@ -908,6 +908,7 @@ import HumanApprovalModal from '@/modules/session/ui/HumanApprovalModal.vue'
 import { useApproval } from '@/modules/session/model/useApproval'
 import { IDLE_QUEUE_SNAPSHOT } from '@/modules/session/model/useAgentThreadState'
 import { useSessionRuntimeStore } from '@/modules/session/model/sessionRuntime'
+import { submitSessionInput, resumeSessionWaitpoint } from '@/modules/session/model/sessionCommands'
 import { useSessionCooperation } from '@/modules/session/model/useSessionCooperation'
 import CooperationTree from '@/modules/session/ui/CooperationTree.vue'
 import { useAgentMentionConfig } from '@/modules/session/model/useAgentMentionConfig'
@@ -3132,14 +3133,8 @@ const handleSendMessage = async ({ images = [], mode = 'follow_up', retry = fals
   }
   pendingSends.value[threadId] = { text, images, attachments: pendingAttachments, data }
   try {
-    let accepted
-    if (retry) {
-      try { accepted = await agentApi.getSessionReceipt(threadId, clientKey) }
-      catch (error) { if (error.status !== 404) throw error }
-    }
-    accepted ||= await agentApi.sendThreadMessage(threadId, data)
+    const accepted = await submitSessionInput(threadId, data, { retry })
     acceptedInputId = accepted.input_id
-    if (!acceptedInputId) throw new Error('Public API 未返回 input_id')
     messageAccepted = true
     delete pendingSends.value[threadId]
     if (acceptedInputId !== clientKey) {
@@ -3349,57 +3344,14 @@ const handleApprovalWithStream = async (answer) => {
 
   try {
     const turnId = threadState.currentTurnId
-    if (!turnId) throw new Error('当前线程没有等待中的 Turn')
-    const turn = await agentApi.getThreadTurn(threadId, turnId)
-    const waitpoint = turn.yuxi.waitpoint
-    if (
-      turn.status !== 'requires_action' ||
-      turn.yuxi.current_run_id !== interruptedRunId ||
-      !waitpoint?.id ||
-      waitpoint.run_id !== interruptedRunId
-    ) {
-      throw new Error('当前审批所属 Turn 已变化，请刷新后重试')
-    }
-    let response
-    if (approvalState.kind === 'tool_approval') {
-      const calls = waitpoint.calls || []
-      const selected = answer?.decisions || []
-      if (!calls.length || calls.length !== selected.length) {
-        throw new Error('审批请求已变化，请刷新后重试')
-      }
-      response = {
-        type: 'approval',
-        decisions: calls.map((call, index) => ({
-          call_id: call.call_id,
-          decision: selected[index].type
-        }))
-      }
-    } else {
-      const questions = waitpoint.questions || []
-      if (
-        !questions.length ||
-        questions.some((question) => !Object.hasOwn(answer || {}, question.question_id))
-      ) {
-        throw new Error('请回答全部问题后再提交')
-      }
-      response = {
-        type: 'answer',
-        answers: questions.map((question) => ({
-          question_id: question.question_id,
-          answer: answer[question.question_id]
-        }))
-      }
-    }
-    const accepted = await agentApi.resumeThreadTurn(threadId, {
-      turn_id: turnId,
-      waitpoint_id: waitpoint.id,
-      response,
-      idempotency_key: `resume-${waitpoint.id}`
+    const accepted = await resumeSessionWaitpoint({
+      threadId,
+      turnId,
+      runId: interruptedRunId,
+      kind: approvalState.kind,
+      answer
     })
-    const runId = accepted?.run_id
-    if (!runId) {
-      throw new Error('恢复已接收但未创建 Run，请刷新后查看 Turn 状态')
-    }
+    const runId = accepted.run_id
     invalidateAgentStateRequest(threadId)
     hideApprovalState()
     threadState.pendingInterrupt = null

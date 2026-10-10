@@ -6,7 +6,7 @@ async (page) => {
   const settings = await page.evaluate(() => window.__YUXI_SESSION_STATUS_TEST__)
   const check = (value, message) => { if (!value) throw new Error(message) }
   check(settings?.questionAgent && settings?.approvalAgent && settings?.output, '缺少确定性 Agent 配置')
-  const origin = new URL(page.url()).origin
+  const origin = await page.evaluate(() => window.location.origin)
   const read = async (path, body) => page.evaluate(async ({ path, body }) => {
     const response = await fetch(`/api/v1/agents${path}`, {
       method: body ? 'POST' : 'GET',
@@ -26,7 +26,12 @@ async (page) => {
       agent_id: settings[`${kind}Agent`], title: `YUXI_TEST_SESSION_public_status_${kind}`
     })
     sessions.push(session.id)
+    const loaded = page.waitForResponse(response =>
+      response.url().endsWith(`/sessions/${session.id}/queue`) && response.ok()
+    )
     await page.goto(`${origin}/agent/${session.id}`)
+    await loaded
+    await page.locator('.chat-loading').waitFor({ state: 'hidden' })
     const input = page.locator('[role="textbox"][contenteditable="true"]')
     await input.fill(`${settings.output} ${kind} browser` + (kind === 'question' ? ' DETERMINISTIC_ASK_USER' : ''))
     await page.getByRole('button', { name: '发送消息', exact: true }).click()
@@ -54,10 +59,17 @@ async (page) => {
     check(response.waitpoint_id === turn.yuxi.waitpoint.id, '恢复请求指向了其他 waitpoint')
     check(turn.yuxi.waitpoint.run_id === turn.yuxi.current_run_id, '等待内容不属于当前 Run')
     await page.getByText(settings.output, { exact: true }).waitFor({ timeout: 60000 })
-    const completed = await read(`/sessions/${session.id}/turns/${turn.id}`)
+    let completed
+    const deadline = Date.now() + 60000
+    do {
+      completed = await read(`/sessions/${session.id}/turns/${turn.id}`)
+      if (['completed', 'failed', 'cancelled'].includes(completed.status)) break
+      await page.waitForTimeout(200)
+    } while (Date.now() < deadline)
     check(completed.status === 'completed', '恢复后没有得到持久最终结果')
     check(completed.yuxi.result_run_id !== turn.yuxi.current_run_id, '恢复没有创建新的执行段')
     check(completed.yuxi.output.some(item => item.yuxi.run_id === completed.yuxi.result_run_id), '最终输出不属于 result_run_id')
+    await page.getByRole('button', { name: '停止回答', exact: true }).waitFor({ state: 'hidden', timeout: 60000 })
   }
   return { sessions, question: 'completed', approval: 'completed' }
 }
