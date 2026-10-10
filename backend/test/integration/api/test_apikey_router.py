@@ -215,6 +215,7 @@ async def test_user_delete_oidc_restore_cannot_republish_or_enable_old_api_key(t
                 deleted_user,
                 {"name": f"restored_{suffix}", "username": f"restored_{suffix}", "sub": f"test:{suffix}"},
             )
+            await db.commit()
 
         list_response = await test_client.get(API_KEYS_PATH, headers=admin_headers)
         assert list_response.status_code == 200, list_response.text

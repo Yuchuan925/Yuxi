@@ -9,9 +9,9 @@ from yuxi.modules.identity.oidc import (
     FRONTEND_CALLBACK_PATH,
     FRONTEND_LOGIN_PATH,
     OIDCUtils,
-    build_oidc_login_response,
     oidc_config,
 )
+from yuxi.modules.identity.services.oidc import build_oidc_login_response
 
 
 def _redirect_to_callback(exchange_code: str) -> RedirectResponse:
