@@ -48,7 +48,7 @@ metadata 可以定义展示名称、说明、控件类型、选项和角色权�
 
 `metadata.auth` 只限制修改权限：`admin` 字段允许管理员和超级管理员修改，`superadmin` 字段只允许超级管理员修改。普通用户读取有权访问的智能体时，可以读到这些已保存值，运行也使用这些值；不可修改的字段不进入其编辑表单，后端明确拒绝越权提交的字段；省略字段保留已保存值。`auth` 不提供字段保密能力，Context 配置不得存放凭据。
 
-例如管理员将 `max_execution_steps` 设置为 50，普通用户运行该智能体时的 `recursion_limit` 也为 50。已经固化运行快照的 Run 保留自己的配置；后续新 Run 读取保存的配置。知识库、Skills 等资源仍按运行用户的访问权限筛选。
+例如管理员将 `max_execution_steps` 设置为 50，普通用户新建该智能体的会话时，`recursion_limit` 也为 50。会话创建时固化配置快照；已有会话的后续输入与 Run 继续使用该快照，修改智能体配置后需新建会话才能使用新值。知识库、Skills 等资源仍按运行用户的访问权限筛选。
 
 ## 基础字段
 
@@ -64,7 +64,10 @@ metadata 可以定义展示名称、说明、控件类型、选项和角色权�
 | `preload_skills` | 从首轮请求加载完整说明和依赖的 Skill 子集 |
 | `summary_threshold`、`summary_keep_messages` | 上下文压缩的唯一压力阈值和摘要后保留消息数 |
 | `summary_prompt`、`summary_tool_result_token_limit` | 摘要提示词和工具结果预览上限 |
-| `max_execution_steps`、`model_retry_times` | 单次运行步数和模型重试次数 |
+| `max_execution_steps` | 单次运行的 LangGraph 执行步数上限，默认 2000，对应 `recursion_limit` |
+| `model_retry_times` | 模型重试次数，默认 2 |
+
+遇到 `Recursion limit ... reached` 时，管理员可在智能体的高级配置中调整“最大执行步数”并保存，再新建会话。已保存的显式值优先于默认值；保存为 300 的智能体需要将该字段改为 2000。已有会话继续使用创建时的配置快照。提高上限允许更长的执行；如果任务反复执行相同步骤，还需检查循环的停止条件。
 
 ## 资源选择语义
 

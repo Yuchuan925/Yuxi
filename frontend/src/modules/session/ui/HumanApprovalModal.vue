@@ -629,8 +629,8 @@ const formattedToolArgs = computed(() => formatToolApprovalArgs(activeToolReques
     width: 100%;
     max-width: none;
     min-width: 0;
-    margin: 0;
-    border-radius: 24px;
+    margin: 0 0 12px;
+    border-radius: 12px;
     box-shadow: 0 6px 18px var(--shadow-1);
   }
 
@@ -968,7 +968,7 @@ const formattedToolArgs = computed(() => formatToolApprovalArgs(activeToolReques
   min-height: 40px;
   padding: 4px 8px;
   border: 1px solid transparent;
-  border-radius: 7px;
+  border-radius: 12px;
   color: var(--color-text);
   font-size: 14px;
   cursor: pointer;
