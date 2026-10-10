@@ -69,9 +69,10 @@ export const useSessionRuntimeStore = defineStore('sessionRuntime', () => {
         const paging = historyPages[threadId] ||= { after: null, hasMore: false, loading: false }
         paging.loading = true
         let after = more ? paging.after : undefined
+        let pagesRead = 0
         const [session, initialPage] = await Promise.all([
           agentApi.getPublicThread(threadId),
-          agentApi.getSessionItems(threadId, { after, turnId })
+          agentApi.getSessionItems(threadId, { after, turnId, limit: 100 })
         ])
         if (!isCurrent(threadId, state)) return
         let page = initialPage
@@ -82,10 +83,11 @@ export const useSessionRuntimeStore = defineStore('sessionRuntime', () => {
           mergeItemSnapshot(state.ongoingRunGroup, page.data)
           for (const run of page.yuxi.runs) runs.set(run.id, run)
           after = page.last_id
+          pagesRead++
           // 恢复目标轮次读取完整页；Session 刷新读到已加载区域即可。
           const recoverGap = !more && previousIds.size && !page.data.some((item) => previousIds.has(item.id))
-          if (!page.has_more || (!turnId && !recoverGap)) break
-          page = await agentApi.getSessionItems(threadId, { after, turnId })
+          if (!page.has_more || (!turnId && !recoverGap && pagesRead >= 3)) break
+          page = await agentApi.getSessionItems(threadId, { after, turnId, limit: 100 })
         }
         const target = turnId || session.yuxi.current_turn?.id
         if (target && !more) {
@@ -259,6 +261,7 @@ export const useSessionRuntimeStore = defineStore('sessionRuntime', () => {
     resumeQueuedInputs,
     startInputMonitor: queue.startInputMonitor,
     cancelInput: queue.cancelInput,
+    promoteInput: queue.promoteInput,
     continueQueue: queue.continueQueue
   }
 })

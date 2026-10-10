@@ -5,6 +5,7 @@
       class="approval-modal"
       :class="{ 'is-tool-approval': isToolApproval, 'is-question-dialog': !isToolApproval }"
       role="dialog"
+      tabindex="-1"
       :aria-labelledby="isToolApproval ? 'tool-approval-question' : 'question-dialog-title'"
       :aria-describedby="isToolApproval ? 'tool-approval-summary' : undefined"
     >
@@ -628,8 +629,8 @@ const formattedToolArgs = computed(() => formatToolApprovalArgs(activeToolReques
     width: 100%;
     max-width: none;
     min-width: 0;
-    margin: 0;
-    border-radius: 24px;
+    margin: 0 0 12px;
+    border-radius: 12px;
     box-shadow: 0 6px 18px var(--shadow-1);
   }
 
@@ -745,12 +746,12 @@ const formattedToolArgs = computed(() => formatToolApprovalArgs(activeToolReques
   margin: 0 0 10px;
   color: var(--color-text);
   font-size: 16px;
-  font-weight: 600;
+  font-weight: 400;
   line-height: 1.55;
   overflow-wrap: anywhere;
 
   span {
-    font-weight: 600;
+    color: var(--color-text-secondary);
   }
 }
 
@@ -967,7 +968,7 @@ const formattedToolArgs = computed(() => formatToolApprovalArgs(activeToolReques
   min-height: 40px;
   padding: 4px 8px;
   border: 1px solid transparent;
-  border-radius: 7px;
+  border-radius: 12px;
   color: var(--color-text);
   font-size: 14px;
   cursor: pointer;

@@ -384,24 +384,80 @@ test('分页历史合并更早内容，刷新跨过断线缺口且保留已加�
   const { runtime } = setup(t)
   const detach = runtime.observeThread('thread', {})
   api.getPublicThread = async () => ({ id: 'thread', yuxi: { current_turn: null } })
-  const item = (id) => ({ id: String(id), type: 'message', role: 'user', status: 'completed', phase: null,
-    content: [{ type: 'input_text', text: `message ${id}` }], yuxi: { message_id: id } })
-  let latest = 3
+  const item = (id) => ({
+    id: String(id),
+    type: 'message',
+    role: 'user',
+    status: 'completed',
+    phase: null,
+    content: [{ type: 'input_text', text: `message ${id}` }],
+    yuxi: { message_id: id }
+  })
+  let latest = 9
   const calls = []
   api.getSessionItems = async (_id, { after }) => {
     calls.push(after)
     const index = after ? Number(after) - 1 : latest
-    const data = [index, index - 1].filter(id => id > 0).map(item)
+    const data = [index, index - 1].filter((id) => id > 0).map(item)
     return { data, last_id: data.at(-1)?.id || null, has_more: index > 2, yuxi: { runs: [] } }
   }
   await runtime.fetchThreadMessages({ threadId: 'thread' })
-  assert.deepEqual(runtime.threadMessages.thread.map(message => message.content), ['message 2', 'message 3'])
+  assert.deepEqual(
+    runtime.threadMessages.thread.map((message) => message.content),
+    Array.from({ length: 6 }, (_, index) => `message ${index + 4}`)
+  )
   assert.equal(runtime.historyPages.thread.hasMore, true)
   await runtime.fetchThreadMessages({ threadId: 'thread', more: true })
   assert.equal(runtime.threadMessages.thread[0].content, 'message 1')
-  latest = 7
+  latest = 17
   await runtime.fetchThreadMessages({ threadId: 'thread', fresh: true })
-  assert.deepEqual(runtime.threadMessages.thread.map(message => message.content), Array.from({ length: 7 }, (_, index) => `message ${index + 1}`))
-  assert.deepEqual(calls, [undefined, '2', undefined, '6', '4'])
+  assert.deepEqual(
+    runtime.threadMessages.thread.map((message) => message.content),
+    Array.from({ length: 17 }, (_, index) => `message ${index + 1}`)
+  )
+  assert.deepEqual(calls, [undefined, '8', '6', '4', '2', undefined, '16', '14', '12', '10'])
+  detach()
+})
+
+test('首次和追加各读取最多三页，短历史停止且并发追加共享同一窗口', async (t) => {
+  const { runtime } = setup(t)
+  const detach = runtime.observeThread('thread', {})
+  api.getPublicThread = async () => ({ id: 'thread', yuxi: { current_turn: null } })
+  const calls = []
+  api.getSessionItems = async (_id, { after, limit = 100 }) => {
+    calls.push({ after, limit })
+    const newest = after ? Number(after) - 1 : 650
+    const data = Array.from({ length: Math.min(limit, newest) }, (_, index) => {
+      const id = newest - index
+      return {
+        id: String(id),
+        type: 'message',
+        role: 'user',
+        status: 'completed',
+        content: [{ type: 'input_text', text: `message ${id}` }],
+        yuxi: { message_id: id }
+      }
+    })
+    return { data, last_id: data.at(-1).id, has_more: newest > limit, yuxi: { runs: [] } }
+  }
+  await runtime.fetchThreadMessages({ threadId: 'thread' })
+  assert.equal(runtime.threadMessages.thread.length, 300)
+  assert.equal(runtime.threadMessages.thread[0].content, 'message 351')
+  assert.equal(runtime.historyPages.thread.after, '351')
+  await Promise.all([
+    runtime.fetchThreadMessages({ threadId: 'thread', more: true }),
+    runtime.fetchThreadMessages({ threadId: 'thread', more: true })
+  ])
+  assert.equal(runtime.threadMessages.thread.length, 600)
+  assert.equal(runtime.historyPages.thread.after, '51')
+  await runtime.fetchThreadMessages({ threadId: 'thread', more: true })
+  assert.equal(runtime.threadMessages.thread.length, 650)
+  assert.equal(runtime.threadMessages.thread[0].content, 'message 1')
+  assert.equal(runtime.threadMessages.thread.at(-1).content, 'message 650')
+  assert.equal(runtime.historyPages.thread.hasMore, false)
+  assert.deepEqual(
+    calls,
+    [undefined, '551', '451', '351', '251', '151', '51'].map((after) => ({ after, limit: 100 }))
+  )
   detach()
 })

@@ -4,25 +4,27 @@
 
 ## 范围与事实
 
-队列按用户、APP、Agent 和 Thread 隔离。Thread 保存长期对话和独立的 `queue_paused`；Input 保存接收顺序、输入类型、消息成员、冻结的执行配置和消费归属；Receipt 保存事件接收、消费归属与幂等事实；Turn 保存一轮工作的状态和当前 Run；Run 保存执行段、owner、lease 和结果。PostgreSQL 拥有这些业务事实，Redis 负责 ARQ 投递、短期事件和取消加速。
+队列按用户、APP、Agent 和 Thread 隔离。Thread 保存长期对话和独立的 `queue_paused`；每次提交对应一个稳定 Input，永久保存有序 `messages` JSON、提交级 `attachment_file_ids`、接收序号、调度类型、冻结配置和消费归属；Receipt 固定保存消息或控制事件的幂等键、意图及命令目标。Turn 保存一轮工作的状态，Run 保存执行段、owner、lease 和结果。PostgreSQL 拥有这些业务事实，Redis 负责 ARQ 投递、短期事件和取消加速。
 
 ```text
-Thread A：Turn U / Run U1 运行中；队列：[Input (S1,S2)][Input F1][Input F2]
-          (S1,S2) 是唯一 pending steer 批次，F1/F2 是 follow-up FIFO
+Thread A：Turn U / Run U1 运行中；队列：[Input S1][Input S2][Input F1][Input F2]
+          S1/S2 独立接收和取消，消费时合批；F1/F2 各自 FIFO 执行
 Thread B：独立领取自己的优先队头
 ```
 
-接收事务依次校验完整作用域、锁定 Thread、重读 Receipt、验证 Turn 状态，并保存 Receipt、Input 与原始 Message。队列按数据库接收序号排序，不使用浏览器时间。相同幂等键和意图返回同一回执与批次，并反映已固定的消费归属；同键改变事件类型、模式或内容返回 `409`。HTTP request ID 不参与生命周期。
+接收事务依次校验完整作用域、锁定 Thread、重读 Receipt、验证 Turn 状态，并保存 Receipt、Input 和提交级附件绑定。接收不创建 Message。队列按数据库接收序号排序，不使用浏览器时间。相同幂等键和意图返回原回执及 Input ID；同键改变事件类型、模式、内容或附件列表返回 `409`。提交、转引导和取消输入的回执只指向 Input，执行归属从 Input 查询；消费不修改 Receipt。HTTP request ID 不参与生命周期。
+
+Message 是消费后的执行投影：`source_input_id + input_position` 唯一标识原始消息位置，`received_at` 保留接收时间，`created_at` 表示进入执行投影的时间。消费事务生成 Message，再把每个 Input 的全部附件绑定到该 Input 最后一条用户 Message；正文、逐消息元信息和提交级附件引用继续保留。附件复合外键保证消息来自同一 Input。取消的未消费输入没有 Message。正式历史、搜索和模型记忆只读取执行消息；队列预览读取 Input 原文。已消费证明输入进入执行记录，模型实际读取内容由调用审计证明。
 
 ## follow-up 与 steer
 
-`follow_up` 每次提交形成独立的持久 Input，彼此按接收顺序 FIFO。`steer` 位于所有 follow-up 前面，每个 Thread 只有一个 pending steer Input；多次提交追加有序消息到该批次，各自保留 Receipt 和幂等键。领取事务封闭批次，后到 steer 创建下一批，不修改已消费输入。合并依据是否已领取，不额外等待聚合时间。
+两种提交均形成独立持久 Input。`follow_up` 按接收顺序逐条 FIFO 领取；`steer` 优先于 follow-up，同类按原接收序号排序，领取连续附件就绪前缀，遇到未就绪输入立即停止。合批只发生在消费事务中，后到的输入留给下一次消费，不额外等待聚合时间。
 
-两类 pending Input 都不绑定 Turn。线程没有活跃 Turn 且队列未暂停时，调度器优先领取 steer，否则领取最早 follow-up，在同一事务创建 Turn 和首个 pending Run，并固定 Input、Receipt 与 Message 的消费归属。steer 在途期间旧 Turn 已结束时，仍以优先输入接收并调度。
+两类 pending Input 都不绑定 Turn。线程没有活跃 Turn 且队列未暂停时，调度器选择就绪优先队头，在同一 Session 锁和事务内创建 Turn 与首个 pending Run，按 Input 接收序号、消息位置创建 Message，并固定 Input 与附件的消费归属。任一步失败整体回滚；提交后才投递 ARQ。多个 Input 的 `consumed_run_id` 可指向同一 Run，Run 的有序 `input_ids` 由该关系派生。steer 在途期间旧 Turn 已结束时，仍以优先输入开启下一轮。
 
 普通消息的 `mode` 表达优先级和切入时机，发送方不指定目标 Turn，HTTP/SSE 接收回执不返回有效模式。未指定 mode 时，在 Thread 锁内按运行中 steer、空闲 follow-up 选择；幂等重试先读取原 Receipt，不重新入队。等待用户回答、审批或取消清理时拒绝普通消息；协作等待时默认为 follow-up，只进入 FIFO 队列。
 
-每个新 Input 在接收时复制会话的完整可配置 Context，随消息原子应用单次模型与审批覆盖，领取时不重新读取 Agent 定义或系统默认值。会话更新只影响之后接收的输入，运行身份与授权在执行边界重新取得。steer 不指定模型或审批配置；空闲领取时使用批次创建时冻结的会话配置，同 Turn 安全接管时继承当前 Run 的配置。
+每个 Input 在接收时复制会话的完整可配置 Context，随消息原子应用单次模型与审批覆盖，领取时不重新读取 Agent 定义或系统默认值。会话更新只影响之后接收的输入，运行身份与授权在执行边界重新取得。空闲合批使用批次首个 Input 的冻结配置和执行来源，同 Turn 安全接管继承当前 Run 配置；批次其余 Input 的配置和来源保留审计，不在同一 Run 中切换。
 
 当前模型调用和并行工具批次完成后，工具结果及 PostgreSQL checkpoint 先保存；`SteerMiddleware` 在下一次模型调用前，或无工具轮次的模型调用结束后，触发安全接管。旧 Run `yielded`，同一 Turn 创建下一 Run。首次模型调用前的让位允许 yielded Run 没有 AI 输出；真正 completed 的 Run 仍要求自身输出。没有 steer 的普通工具循环保持同一 Run。正在执行的外部工具不因 steer 被强制停止或撤销。
 
@@ -30,7 +32,11 @@ Thread B：独立领取自己的优先队头
 
 人工问题或审批使当前 Run `interrupted`、Turn `waiting`，等待点保存绑定的 Run、问题或工具调用 ID。等待期间已有 follow-up 保留，新普通消息被拒绝。客户端提交带 `turn_id`、`waitpoint_id` 和完整结构化回答或审批的恢复事件后，等待点只消费一次，并在同一 Turn 创建下一 Run。旧等待点不能恢复已经切换或取消的工作。
 
-排队 Input 可用 `cancel_input` 取消，消息保留取消事实。若模型前已因该批次让位，但输出事务锁定 Thread 时发现批次已取消，原 Run 保持 running，由同一 owner 从保存的 checkpoint 继续，不重放原始输入或已完成的工具；模型后已完成的轮次不额外调用模型。取消 Turn 先设置 `cancelling` 并暂停队列，所有未消费的 steer 和 follow-up 保留；worker 或等待清理 owner 收敛当前 Run 和 checkpoint 后，Turn 才到 `cancelled`。取消一个合并 Input 会取消整个未消费批次。`continue` 只在当前 Turn 已结束时解除暂停并领取优先队头，不复活取消的 Turn。未指定目标的取消在 owning transaction 中固定当前 Turn，重复取消返回原目标；已切换 Run 时可用 `expected_run_id` 拒绝陈旧操作。
+`yuxi.session.input.promote` 使用 `input_id` 和 `Idempotency-Key` 将 pending follow-up 原地转为 steer，保留 ID、正文、附件及接收顺序。同命令重试返回原 Receipt；新的命令遇到仍 pending 的 steer 视为已满足，不重复调度。已消费或取消、附件未就绪、等待回答/审批/协作、取消清理期间返回 `409`。空闲时可优先开启下一轮，队列暂停时可调整优先级但不解除暂停。
+
+`cancel_input` 仅取消选中的 pending Input，保留正文及附件归属，不生成 Message，也不释放附件供其他输入复用。若模型前已让位但事务内已无就绪引导，原 Run 保持 running，由同一 owner 从 checkpoint 继续，不重放原始输入或已完成工具；模型后已完成的轮次不额外调用模型。
+
+取消 Turn 先设置 `cancelling` 并暂停队列，未消费 Input 保留；worker 或等待清理 owner 收敛当前 Run 和 checkpoint 后，Turn 才到 `cancelled`。`continue` 只在当前 Turn 已结束时解除暂停并领取优先队头，不复活取消的 Turn。未指定目标的取消在 owning transaction 中固定当前 Turn，重复取消返回原目标；已切换 Run 时可用 `expected_run_id` 拒绝陈旧操作。
 
 等待取消通过原图的状态 API 清理 checkpoint：先合入已完成节点的 pending writes 并清除等待任务，再为当前 AI 的未完成调用补齐取消 ToolMessage，最后清除状态改写触发的待办节点。已完成工具结果与业务增量保留；当前 AI 之后的工具结果拥有完成事实，历史重复 call ID 不影响本批次。清理不执行模型或工具，进程在任一持久改写后失联时可幂等重试；失败仍保留 `cancelling` 由恢复扫描处理。
 

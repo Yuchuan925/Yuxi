@@ -14,6 +14,8 @@ from yuxi.modules.agents.services.public_items import serialize_public_items
 from yuxi.modules.agents.services.threads import get_queue_snapshot, require_thread
 from yuxi.modules.agents.services.scope import ActorScope
 from yuxi.modules.agents.models.inputs import AgentInput
+from yuxi.modules.agents.repositories.input import AgentInputRepository
+from yuxi.modules.agents.services.input_messages import build_chat_input_message, serialize_input_message
 from yuxi.modules.agents.models.runs import AgentRun
 from yuxi.modules.agents.models.turns import AgentTurn
 from yuxi.infrastructure.postgres.base import Base
@@ -84,13 +86,14 @@ def _turn_run(*, turn_id: str, run_id: str, created_at: datetime) -> tuple[Agent
     return turn, run
 
 
-async def test_history_shows_pending_input_and_later_binds_its_own_reply(session):
-    """排队消息可见；领取后仅与其自身 Turn/Run 和回复关联。"""
+async def test_history_only_shows_consumed_input_and_its_own_reply(session):
+    """队列正文不进入正式历史，消费后仅与自身 Turn/Run 关联。"""
     turn_a, run_a = _turn_run(turn_id="turn-a", run_id="run-a", created_at=STARTED_AT)
     session.add_all([turn_a, run_a])
     session.add(
         AgentInput(
             id="input-b",
+            messages=[serialize_input_message(build_chat_input_message("B"))],
             received_seq=2,
             thread_id="thread-1",
             uid="user-1",
@@ -125,38 +128,20 @@ async def test_history_shows_pending_input_and_later_binds_its_own_reply(session
                 delivery_status="complete",
                 created_at=STARTED_AT + timedelta(seconds=1),
             ),
-            Message(
-                id=3,
-                session_record_id=1,
-                role="user",
-                content="B",
-                delivery_status="queued",
-                extra_metadata={"input_id": "input-b"},
-                created_at=STARTED_AT + timedelta(seconds=2),
-            ),
         ]
     )
     await _register_visible(session)
     await session.commit()
 
     pending = await _read_items(session)
-    assert [item["content"][0]["text"] for item in pending] == ["A", "A reply", "B"]
-    assert pending[-1]["yuxi"]["run_id"] is None
+    assert [item["content"][0]["text"] for item in pending] == ["A", "A reply"]
     assert len((await get_queue_snapshot(db=session, scope=SCOPE, thread_id="thread-1"))["inputs"]) == 1
 
     turn_b, run_b = _turn_run(turn_id="turn-b", run_id="run-b", created_at=STARTED_AT + timedelta(seconds=3))
-    run_b.input_id = "input-b"
     session.add_all([turn_b, run_b])
-    queued_message = await session.get(Message, 3)
-    queued_message.turn_id = "turn-b"
-    queued_message.run_id = "run-b"
-    queued_message.delivery_status = "dispatched"
+    await session.flush()
     input_b = await session.get(AgentInput, "input-b")
-    input_b.status = "consumed"
-    input_b.turn_id = "turn-b"
-    input_b.consumed_run_id = "run-b"
-    input_b.cutoff_seq = 2
-    input_b.consumed_at = STARTED_AT + timedelta(seconds=3)
+    await AgentInputRepository(session).consume(inputs=[input_b], turn_id="turn-b", run_id="run-b")
     session.add(
         Message(
             id=4,

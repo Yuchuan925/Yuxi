@@ -49,10 +49,51 @@ test('交付物只归属于调用 present_artifacts 的对话', () => {
   }
 
   assert.deepEqual(MessageProcessor.extractArtifactsFromMessageGroup(artifactSession), [
-    '/home/gem/user-data/outputs/bubble_sort.py',
-    '/home/gem/user-data/outputs/bubble_sort.js'
+    { path: '/home/gem/user-data/outputs/bubble_sort.py', type: 'file' },
+    { path: '/home/gem/user-data/outputs/bubble_sort.js', type: 'file' }
   ])
   assert.deepEqual(MessageProcessor.extractArtifactsFromMessageGroup(laterSession), [])
+})
+
+test('交付物保留显式类型，同一路径采用最近成功调用，失败与待执行调用不展示', () => {
+  const group = {
+    messages: [
+      {
+        type: 'ai',
+        tool_calls: [
+          {
+            name: 'present_artifacts',
+            status: 'success',
+            args: { filepaths: ['/a.png', '/report.md'] }
+          },
+          {
+            function: {
+              name: 'present_artifacts',
+              arguments: JSON.stringify({ filepaths: ['/a.png'], type: 'image' })
+            },
+            status: 'success'
+          },
+          {
+            name: 'present_artifacts',
+            status: 'error',
+            args: { filepaths: ['/missing.png'], type: 'image' },
+            tool_call_result: { content: 'Error: 文件不存在' }
+          },
+          { name: 'present_artifacts', args: { filepaths: ['/pending.png'], type: 'image' } },
+          {
+            name: 'present_artifacts',
+            args: { filepaths: ['/failed.png'], type: 'image' },
+            tool_call_result: { status: 'error', content: 'Error: 文件不存在' }
+          },
+          { name: 'present_artifacts', status: 'success', args: '{invalid' }
+        ]
+      }
+    ]
+  }
+  assert.deepEqual(MessageProcessor.extractArtifactsFromMessageGroup(group), [
+    { path: '/a.png', type: 'image' },
+    { path: '/report.md', type: 'file' }
+  ])
 })
 
 test('知识库来源与历史消息保持独立的归一化语义', () => {

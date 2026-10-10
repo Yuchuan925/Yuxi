@@ -366,6 +366,5 @@ async def test_binding_rejects_input_owned_by_other_scope():
             db=object(),
             scope=ActorScope(uid="user", app_id="app-a"),
             input_item=SimpleNamespace(uid="user", app_id="app-b"),
-            receipt_id="receipt",
             file_ids=["file"],
         )

@@ -60,6 +60,22 @@ def normalize_image_contents(raw: object) -> list[str]:
     return images
 
 
+def serialize_input_message(message: AgentRunInputMessage) -> dict:
+    """以规范内容块保存原始消息及逐消息元信息。"""
+    content = message.require_langchain_message().content
+    metadata = dict(message.extra_metadata)
+    return {
+        "role": "user",
+        "content": [{"type": "text", "text": content}] if isinstance(content, str) else content,
+        "metadata": metadata,
+    }
+
+
+def deserialize_input_message(message: dict) -> AgentRunInputMessage:
+    """消费时从原始内容块恢复执行消息。"""
+    return build_chat_input_message_from_openai_content(message["content"]).with_metadata(message["metadata"])
+
+
 def build_chat_input_message(query: str, image_content: str | list[str] | None = None) -> AgentRunInputMessage:
     """按文本和图片构造模型输入，首图供 Message 投影，完整顺序留在原始消息。"""
     images = normalize_image_contents(image_content)

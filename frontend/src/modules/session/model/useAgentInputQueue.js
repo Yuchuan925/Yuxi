@@ -16,6 +16,13 @@ export function useAgentInputQueue({
   startRunStream,
   onStreamError
 }) {
+  const snapshotVersions = new Map()
+  const commandKeys = new Map()
+  const advanceSnapshot = (threadId) => {
+    const version = (snapshotVersions.get(threadId) || 0) + 1
+    snapshotVersions.set(threadId, version)
+    return version
+  }
   const stopInputQueueMonitor = (ts) => {
     if (!ts?.inputQueueMonitor) return
     clearTimeout(ts.inputQueueMonitor.timer)
@@ -67,6 +74,7 @@ export function useAgentInputQueue({
           })
           if (monitor.controller.signal.aborted) return
           if (input.status === 'consumed' && input.run_id) {
+            advanceSnapshot(threadId)
             const state = getThreadState(threadId)
             removeInput(state, currentInputId)
             stopInputMonitor(threadId, currentInputId)
@@ -81,6 +89,7 @@ export function useAgentInputQueue({
             continue
           }
           if (input.status === 'cancelled') {
+            advanceSnapshot(threadId)
             const state = getThreadState(threadId)
             removeInput(state, currentInputId)
             if (state?.ongoingRunGroup?.optimisticMessages) {
@@ -113,9 +122,10 @@ export function useAgentInputQueue({
     if (!isThreadActive(threadId)) return
     const ts = getThreadState(threadId)
     if (!ts) return
+    const version = advanceSnapshot(threadId)
     try {
       const snapshot = await agentApi.getThreadQueue(threadId)
-      if (!isThreadActive(threadId) || getThreadState(threadId) !== ts) return
+      if (!isThreadActive(threadId) || getThreadState(threadId) !== ts || snapshotVersions.get(threadId) !== version) return
       const inputs = snapshot?.inputs || []
       const knownIds = new Set(inputs.map((input) => input.input_id))
       ts.queuedInputs = [
@@ -142,7 +152,7 @@ export function useAgentInputQueue({
     if (threadId) await syncQueuedInputs(threadId)
   }
 
-  const cancelInput = async (threadId, inputId) => {
+  const changeInput = async (action, threadId, inputId) => {
     const ts = getThreadState(threadId)
     if (
       !ts ||
@@ -150,18 +160,33 @@ export function useAgentInputQueue({
       ts.queuedInputs?.some((input) => input.input_id === inputId && input.status === 'sending')
     )
       return false
+    const key = `${threadId}:${inputId}:${action}`
+    if (!commandKeys.has(key)) commandKeys.set(key, controlKey())
     try {
-      await agentApi.cancelThreadInput(threadId, inputId, controlKey())
-      stopInputMonitor(threadId, inputId)
-      removeInput(ts, inputId)
-      if (ts.ongoingRunGroup?.optimisticMessages)
-        delete ts.ongoingRunGroup.optimisticMessages[inputId]
+      const command = action === 'promote' ? agentApi.promoteThreadInput : agentApi.cancelThreadInput
+      await command(threadId, inputId, commandKeys.get(key))
+      commandKeys.delete(key)
+      advanceSnapshot(threadId)
+      if (action === 'cancel') {
+        stopInputMonitor(threadId, inputId)
+        removeInput(ts, inputId)
+        if (ts.ongoingRunGroup?.optimisticMessages)
+          delete ts.ongoingRunGroup.optimisticMessages[inputId]
+      }
+      await syncQueuedInputs(threadId)
       return true
     } catch (error) {
-      handleChatError(error, 'cancel')
+      if (error?.status === 409) {
+        commandKeys.delete(key)
+        await syncQueuedInputs(threadId)
+      }
+      handleChatError(error, action)
       return false
     }
   }
+
+  const cancelInput = (threadId, inputId) => changeInput('cancel', threadId, inputId)
+  const promoteInput = (threadId, inputId) => changeInput('promote', threadId, inputId)
 
   const continueQueue = async (threadId) => {
     const ts = getThreadState(threadId)
@@ -183,6 +208,7 @@ export function useAgentInputQueue({
     stopAllInputMonitors,
     startInputMonitor,
     cancelInput,
+    promoteInput,
     syncQueuedInputs,
     resumeQueuedInputs,
     continueQueue

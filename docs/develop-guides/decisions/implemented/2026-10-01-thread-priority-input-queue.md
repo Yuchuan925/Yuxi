@@ -14,13 +14,13 @@ follow-up 独立 FIFO；steer 是 Thread 级最高优先级 Input，所有 pendi
 
 ### 实现方案
 
-Input repository 与 PostgreSQL 约束拥有每 Thread 唯一 pending steer 和优先排序。inputs service 在 Thread 锁内接收与合并，scheduler 领取空闲优先队头，runs service 在保存 checkpoint 后消费 steer。Receipt、原始 Message 与消息成员保留独立幂等事实及接收顺序，Thread 快照返回两类输入的完整队列。
+Input repository 拥有 Thread 内优先排序。每次提交独立保存 Input 与 Receipt，scheduler 领取空闲优先队头，runs service 在保存 checkpoint 后消费 steer；正式 Message 在消费时生成。独立提交、连续就绪前缀合批、逐条取消及转引导由[输入投影分离决定](2026-10-10-input-message-projection.md)拥有，取代唯一 pending steer 和消息成员关系。
 
-每个新 Input 冻结用于新 Turn 的默认配置；同 Turn 接续继承当前 Run 配置。steer 不接受模型或审批配置。waiting/cancelling 的接收限制及 queue_paused 不被优先级绕过。失败、取消和租约失联暂停队列并保留 pending 输入，只有显式 cancel_input 取消整个未消费批次，显式 continue 解除暂停并优先领取。父重新委派遇子 Thread 暂停或已有 pending 输入时，在 Thread 锁内返回 busy，不写入委派、不解除暂停、不领取旧输入。
+每个新 Input 冻结用于新 Turn 的默认配置；同 Turn 接续继承当前 Run 配置。直接 steer 不接受模型或审批配置。waiting/cancelling 的接收限制及 queue_paused 不被优先级绕过。失败、取消和租约失联暂停队列并保留 pending 输入，显式 cancel_input 只取消选中的未消费 Input，显式 continue 解除暂停并优先领取。父重新委派遇子 Thread 暂停或已有 pending 输入时，在 Thread 锁内返回 busy，不写入委派、不解除暂停、不领取旧输入。
 
 SteerMiddleware 将模型前提前让位原因经 GraphExecutionResult 交给输出事务。首次模型前让位允许没有 AI 输出，真正 completed 仍要求同 Run 输出。若让位批次已取消，原 Run 保留 owner 并从已有 checkpoint 继续，不重放用户输入或已执行工具；模型后本已结束的轮次不额外调用模型。执行层在 recorder 与 adapter 之前将多个图段的 seq 衔接为 Run 内递增序列，保持公开事件 ID 唯一及持久审计顺序，不修改源事件对象、payload 和 namespace。
 
-Business schema version 为 12，遵循仅新库初始化契约，不自动升级现有数据库。接收与消费提交后才投递 ARQ；恢复扫描包含 steer-only 的空闲队列。
+Business Schema 的新库初始化和旧库拒绝边界由输入投影分离及后续附件简化决定拥有。消费提交后才投递 ARQ；恢复扫描包含 steer-only 的空闲队列。
 
 ## 替代方案
 
@@ -31,7 +31,7 @@ Business schema version 为 12，遵循仅新库初始化契约，不自动升�
 
 ## 后果
 
-这是持久 schema 与公开消息协议变更。旧客户端发送消息 turn_id 需要更新；旧数据库需部署方另行安排数据迁移，初始化入口不修改旧数据。持续 steer 可以延后 follow-up，取消合并 Input 会取消整个批次，均属于当前优先输入语义。
+这是持久 schema 与公开消息协议变更。旧客户端发送消息 turn_id 需要更新；旧数据库需部署方另行安排数据迁移，初始化入口不修改旧数据。持续 steer 可以延后 follow-up；独立取消不影响其他 pending Input。
 
 后端验收包含基本测试和完整 worker/SSE/真实 PostgreSQL checkpoint 的 E2E，不以低层级测试替代完整链路。前端 UI 验收由其 owning 变更负责，本记录不重复其审阅。
 

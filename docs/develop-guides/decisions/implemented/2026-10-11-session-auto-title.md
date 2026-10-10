@@ -40,4 +40,4 @@ Web 把首条消息截断后直接改名，缺少模型生成的主题标题，�
 - `docker compose exec -T api uv run --group test pytest test/unit -m 'not slow' -q`：2653 passed、55 skipped；skip 不作为产品链路通过证据。
 - 前端 `pnpm run lint:check` 和 `pnpm run build`、修改文件 Ruff、工程信任检查及其 64 项单测、文档 `pnpm run build` 和 `git diff --check` 通过。前端单测按辅助功能范围执行相关集合。
 
-真实 HTTP/worker/浏览器完整链路未验证：现有数据库 business Schema 8 与当前主干要求的 6 不匹配，API/worker 未就绪。真实模型调用未执行。独立 Reviewer 未发现阻塞问题；未把源码接线检查作为端到端通过证据。
+初次交付时真实 HTTP/worker 链路未验证：现有数据库 business Schema 8 与当时主干要求的 6 不匹配。2026-10-11 按用户确认补回主干遗漏提交后，Schema 8 输入消费与标题实现的合并通过独立审查；本次真实 PostgreSQL 输入集合 25 passed（包含上述 3 项标题用例），API/worker 生命周期四个场景通过，`/api/system/ready` 返回 200。详见[主干恢复验证](2026-10-10-input-message-projection.md#_2026-10-11-主干恢复验证)。这些生命周期场景使用显式标题，不证明真实自动命名模型可用；真实外部模型调用与浏览器完整链路仍未执行。

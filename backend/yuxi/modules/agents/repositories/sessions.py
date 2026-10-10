@@ -5,7 +5,7 @@
 import json
 import uuid as uuid_lib
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -384,17 +384,19 @@ class SessionRepository:
         }
 
     async def list_message_audits(self, session_record_id: int, *, limit: int) -> tuple[list[Message], bool]:
-        """返回有界审计时间线；operation_id 同时覆盖已发布的最终 Model。"""
+        """按持久顺序读取有界调试消息，保留未关联 Run 的输入。"""
         result = await self.db.execute(
             select(Message)
-            .join(AgentRun, AgentRun.id == Message.run_id)
+            .outerjoin(AgentRun, AgentRun.id == Message.run_id)
             .options(selectinload(Message.tool_calls))
-            .where(
-                Message.session_record_id == session_record_id,
-                Message.operation_id.is_not(None),
-                Message.role.in_(("assistant", "tool")),
+            .where(Message.session_record_id == session_record_id)
+            .order_by(
+                func.coalesce(AgentRun.created_at, Message.created_at).desc(),
+                AgentRun.id.desc().nulls_last(),
+                case((Message.run_id.is_not(None) & (Message.role == "user"), 0), else_=1).desc(),
+                Message.sequence.desc().nulls_first(),
+                Message.id.desc(),
             )
-            .order_by(AgentRun.created_at.desc(), AgentRun.id.desc(), Message.sequence.desc(), Message.id.desc())
             .limit(limit + 1)
         )
         messages = list(result.scalars().unique().all())

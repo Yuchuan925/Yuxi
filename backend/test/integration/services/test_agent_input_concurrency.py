@@ -26,6 +26,7 @@ from yuxi.modules.agents.models.inputs import AgentInput, AgentInputReceipt
 from yuxi.modules.agents.models.runs import AgentRun
 from yuxi.modules.agents.models.turns import AgentTurn
 from yuxi.modules.agents.models.messages import Message
+from yuxi.modules.agents.services.input_messages import build_chat_input_message, serialize_input_message
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
@@ -50,11 +51,11 @@ def cleanup_test_sandboxes():
 async def _queue_inputs(sessions, *, count: int) -> None:
     """接收多条持久输入，保持原始消息及 FIFO 序号。"""
     async with sessions() as db:
-        agent_session = await SessionRepository(db).get_session_by_thread_id("input-thread")
         for number in range(count):
             input_id = f"input-{number}"
             await AgentInputRepository(db).create(
                 input_id=input_id,
+                messages=[serialize_input_message(build_chat_input_message(f"message-{number}"))],
                 thread_id="input-thread",
                 uid="input-user",
                 app_id=None,
@@ -62,7 +63,7 @@ async def _queue_inputs(sessions, *, count: int) -> None:
                 kind="follow_up",
                 input_payload={"context_snapshot": {"model": "ci-replay:deterministic-chat", "tool_approval_mode": "default"}},
             )
-            receipt = await AgentInputReceiptRepository(db).create(
+            await AgentInputReceiptRepository(db).create(
                 receipt_id=f"receipt-{number}",
                 idempotency_key=f"key-{number}",
                 uid="input-user",
@@ -72,15 +73,6 @@ async def _queue_inputs(sessions, *, count: int) -> None:
                 intent_hash=f"intent-{number}",
                 input_id=input_id,
             )
-            message = Message(
-                session_record_id=agent_session.id,
-                role="user",
-                content=f"message-{number}",
-                delivery_status="queued",
-            )
-            db.add(message)
-            await db.flush()
-            await AgentInputRepository(db).add_messages(input_id=input_id, receipt_id=receipt.id, message_ids=[message.id])
         await db.commit()
 
 
@@ -127,7 +119,6 @@ async def test_concurrent_claims_consume_only_fifo_head() -> None:
             messages = list((await db.scalars(select(Message).order_by(Message.id))).all())
             assert [(message.content, message.delivery_status) for message in messages] == [
                 ("message-0", "dispatched"),
-                ("message-1", "queued"),
             ]
     finally:
         await _drop_schema(schema, admin_engine, engine)
@@ -163,7 +154,7 @@ async def test_recovery_republishes_committed_pending_run(monkeypatch) -> None:
         assert sent == [dispatch.run_id]
         async with sessions() as db:
             run = await db.get(AgentRun, dispatch.run_id)
-            assert run.status == "pending" and run.input_id == "input-0"
+            assert run.status == "pending" and (await db.get(AgentInput, "input-0")).consumed_run_id == run.id
     finally:
         await _drop_schema(schema, admin_engine, engine)
 

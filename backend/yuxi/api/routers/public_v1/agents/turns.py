@@ -42,7 +42,7 @@ async def list_public_session_items(
 ):
     """读取当前会话的用户消息、公开助手正文、函数调用与结果。
 
-    排队及取消的用户输入通过 yuxi.delivery_status 区分；内部 prompt、checkpoint 和完整审计不会返回。
+    未消费及取消的输入不进入正式历史；内部 prompt、checkpoint 和完整审计不会返回。
     用 last_id 作为下一页 after；has_more=false 表示当前快照已读完。
     Items 用于持久历史和断线恢复，最终输出仍按 Turn 的 result_run_id 确认。
     """

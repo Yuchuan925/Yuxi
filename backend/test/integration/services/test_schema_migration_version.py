@@ -165,28 +165,30 @@ async def test_fresh_business_schema_contains_input_lifecycle_without_request_ta
             "agent_runs",
             "agent_inputs",
             "agent_input_receipts",
-            "agent_input_messages",
         } <= tables
+        assert "agent_input_messages" not in tables
         assert "conversations" not in tables
         assert "agent_run_requests" not in tables
         assert "agent_session_input_receipts" not in tables
-        assert {"turn_id", "input_id", "resume_from_run_id", "session_record_id", "thread_id"} <= run_columns
+        assert {"turn_id", "resume_from_run_id", "session_record_id", "thread_id"} <= run_columns
         assert {"conversation_id", "conversation_thread_id"}.isdisjoint(run_columns)
         assert execution_seq_nullable == "NO"
         assert execution_seq_default and "nextval" in execution_seq_default
         assert "agent_runs_execution_seq" in execution_seq_default
+        assert "input_id" not in run_columns
+        assert "cutoff_seq" not in input_columns
         assert "request_id" not in run_columns
         assert {
             "kind",
             "status",
             "turn_id",
             "consumed_run_id",
-            "cutoff_seq",
+            "messages",
             "received_seq",
             "thread_id",
         } <= input_columns
         assert "conversation_thread_id" not in input_columns
-        assert BUSINESS_SCHEMA_VERSION == 5
+        assert BUSINESS_SCHEMA_VERSION == 8
         assert KNOWLEDGE_SCHEMA_VERSION == 3
     finally:
         await _drop_isolated_schema(schema, admin_engine, scoped_engine)
@@ -389,9 +391,11 @@ async def test_schema_version_is_persisted_and_runtime_validation_fails_closed()
             await require_current_schema(manager)
 
         await create_schema_version_table(manager)
-        await record_schema_version(manager, "business", BUSINESS_SCHEMA_VERSION + 1)
-        with pytest.raises(RuntimeError, match=f"business={BUSINESS_SCHEMA_VERSION + 1}"):
-            await require_current_schema(manager)
+        for incompatible_version in (7, BUSINESS_SCHEMA_VERSION + 1):
+            await record_schema_version(manager, "business", incompatible_version)
+            with pytest.raises(RuntimeError, match=f"business={incompatible_version}"):
+                await require_current_schema(manager)
+            assert (await get_schema_versions(manager))["business"] == incompatible_version
 
         await record_schema_version(manager, "business", BUSINESS_SCHEMA_VERSION)
         with pytest.raises(RuntimeError, match="knowledge=missing"):

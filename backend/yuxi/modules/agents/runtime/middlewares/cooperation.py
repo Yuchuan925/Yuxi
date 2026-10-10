@@ -144,6 +144,7 @@ class CooperationMiddleware(AgentMiddleware):
     async def awrap_model_call(self, request, handler):
         """按当前 Run 注入持久会话身份，后续模型调用复用固定身份。"""
         from yuxi.modules.agents.services.cooperation import SessionCooperationService, session_identity
+        from yuxi.modules.agents.repositories.input import AgentInputRepository
 
         context = request.runtime.context
         if self._identity_run_id != context.run_id:
@@ -155,7 +156,7 @@ class CooperationMiddleware(AgentMiddleware):
                     "role": "子会话" if caller.parent_thread_id else "根会话",
                     "run_id": run.id,
                     "turn_id": run.turn_id,
-                    "input_id": run.input_id,
+                    "input_ids": (await AgentInputRepository(db).input_ids_for_runs([run.id]))[run.id],
                 }
             self._identity_prompt = "## 当前协作身份（运行时提供）\n" + json.dumps(identity, ensure_ascii=False)
             self._identity_run_id = context.run_id

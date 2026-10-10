@@ -622,6 +622,9 @@ async def test_pending_cancel_is_terminal_without_fake_worker_expiry(session):
         input_message_id=message.id,
     )
 
+    message.run_id = run.id
+    message.turn_id = run.turn_id
+    await session.flush()
     cancelled, cancelled_ids = await repo.request_cancel_run(
         run_id=run.id,
         uid="user-1",

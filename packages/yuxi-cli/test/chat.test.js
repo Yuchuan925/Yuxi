@@ -13,7 +13,8 @@ test("当前 Turn 的增量保留换行，持久输出确认完成且重复事�
   const cursors = [];
   let count = 0;
   const client = {
-    async send() { return { turn_id: `turn-${++count}` }; },
+    async send() { return { input_id: `input-${++count}`, turn_id: null }; },
+    async input() { return { status: "consumed", turn_id: `turn-${count}` }; },
     async turn(_session, id) { return turn(id); },
     async *events(_session, cursor) {
       cursors.push(cursor);
@@ -40,7 +41,8 @@ test("当前 Turn 的增量保留换行，持久输出确认完成且重复事�
 
 test("事件过期且没有任何正文增量，仍取得目标轮的持久结果", async () => {
   const client = {
-    async send() { return { turn_id: "target" }; },
+    async send() { return { input_id: "input-target", turn_id: null }; },
+    async input() { return { status: "consumed", turn_id: "target" }; },
     async turn(_session, id) { assert.equal(id, "target"); return turn(id, "completed", "持久最终结果"); },
     async *events() { yield event("resync", "yuxi.session.resync", "target"); },
   };
@@ -65,7 +67,8 @@ test("目标 Input 排队时按消费归属找 Turn，断流后补齐最终正�
 
 test("相邻轮次已完成和事件断流都不能将目标轮结算", async () => {
   const client = {
-    async send() { return { turn_id: "target" }; },
+    async send() { return { input_id: "input-target", turn_id: null }; },
+    async input() { return { status: "consumed", turn_id: "target" }; },
     async turn(_session, id) { return turn(id, "running"); },
     async *events() { yield event("foreign", "agent.session.turn.completed", "neighbor"); },
   };
@@ -75,7 +78,8 @@ test("相邻轮次已完成和事件断流都不能将目标轮结算", async ()
 test("协作等待继续观察，用户问答等待交还控制", async () => {
   let reads = 0;
   const client = {
-    async send() { return { turn_id: "target" }; },
+    async send() { return { input_id: "input-target", turn_id: null }; },
+    async input() { return { status: "consumed", turn_id: "target" }; },
     async turn(_session, id) { const result = turn(id, ++reads === 1 ? "in_progress" : "requires_action"); return result; },
     async *events() { yield event("wait-1", "yuxi.session.turn.waiting", "target"); yield event("wait-2", "yuxi.session.turn.waiting", "target"); },
   };

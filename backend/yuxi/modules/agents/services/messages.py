@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.agents.models.messages import MODEL_AUDIT_MESSAGE_TYPE, Message
 from yuxi.modules.agents.models.runs import AgentRun, build_agent_run_timing
+from yuxi.modules.agents.repositories.attachments import AttachmentRepository
 from yuxi.modules.agents.repositories.input import AgentInputRepository
 from yuxi.modules.agents.repositories.model_audit import ModelMessageAuditRepository
 from yuxi.modules.agents.repositories.runs import AgentRunRepository
@@ -30,7 +31,7 @@ AGENT_RUN_TRACE_LIMIT = 500
 
 
 async def get_thread_audits(*, db: AsyncSession, scope: ActorScope, thread_id: str) -> dict:
-    """只允许无 API Key 的超级管理员读取模型和工具审计。"""
+    """只允许无 API Key 的超级管理员读取持久调试消息。"""
     if not scope.is_superadmin or scope.api_key_id is not None or scope.app_id is not None:
         raise HTTPException(status_code=403, detail="无权读取模型与工具审计")
     agent_session = await require_thread(db=db, scope=scope, thread_id=thread_id)
@@ -59,10 +60,20 @@ def _serialize_tool_call(tool_call: Any) -> dict[str, Any]:
 
 
 def _serialize_message_audit(message: Any) -> dict[str, Any]:
-    """将 Message 审计事实分派到显式 Model/Tool DTO。"""
+    """按真实角色序列化持久消息，模型和工具保留专有字段。"""
     if message.role == "tool":
         return _serialize_tool_audit(message)
-    return _serialize_model_audit(message)
+    if message.role == "assistant":
+        return _serialize_model_audit(message)
+    metadata = message.extra_metadata if isinstance(message.extra_metadata, dict) else {}
+    return {
+        **_serialize_audit_base(message, metadata),
+        "type": "human" if message.role == "user" else message.role,
+        "input_id": message.source_input_id,
+        "input_position": message.input_position,
+        "received_at": format_utc_datetime(message.received_at),
+        "delivery_status": message.delivery_status,
+    }
 
 
 def _serialize_run_trace(run: AgentRun) -> dict[str, Any]:
@@ -93,6 +104,8 @@ def _serialize_model_audit(message: Any) -> dict[str, Any]:
         "usage": dict(message.usage) if isinstance(message.usage, dict) else None,
         "model_run_id": model_run_id if isinstance(model_run_id, str) else None,
         "content_blocks": content_blocks if isinstance(content_blocks, list) else [],
+        "error_type": metadata.get("error_type"),
+        "error_message": metadata.get("error_message"),
         "tool_calls": [_serialize_tool_call(tool_call) for tool_call in message.tool_calls],
     }
 
@@ -412,12 +425,14 @@ async def save_messages_from_langgraph_state(
         if turn is None or turn.current_run_id != run_id:
             raise ValueError("AgentRun 不是当前 Turn 的执行段")
         pending_steer = None
-        if complete_run:
+        if complete_run and turn.status == "running" and not agent_session.queue_paused:
             pending_steer = await AgentInputRepository(session_repo.db).get_pending_steer(
                 thread_id=thread_id,
                 uid=agent_session.uid,
                 app_id=agent_session.app_id,
             )
+            if pending_steer is not None and await AttachmentRepository(session_repo.db).has_unready(pending_steer.id):
+                pending_steer = None
         continue_after_cancelled_steer = complete_run and steer_before_model and pending_steer is None
         if continue_after_cancelled_steer:
             complete_run = False

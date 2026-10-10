@@ -18,6 +18,7 @@ from e2e_helpers import (
     delete_agent,
     iter_public_thread_events,
     postgres_dsn,
+    wait_for_consumed_input,
 )
 
 from test.e2e.test_permission_revocation_e2e import remote_tool as remote_tool_fixture
@@ -196,8 +197,8 @@ async def test_bound_skill_is_preloaded_without_explicit_selection(
             },
         )
         assert run.status_code == 202, run.text
-        run_id = str(run.json()["run_id"])
-        turn_id = str(run.json()["turn_id"])
+        consumed = await wait_for_consumed_input(e2e_client, e2e_headers, run.json())
+        run_id, turn_id = consumed["run_id"], consumed["turn_id"]
         if edit_during_run:
             async with httpx.AsyncClient(base_url="http://localhost:8765", timeout=10) as replay:
                 async with asyncio.timeout(30):

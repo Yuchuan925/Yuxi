@@ -8,7 +8,7 @@ import asyncpg
 import httpx
 import pytest
 
-from test.e2e.e2e_helpers import delete_agent, postgres_dsn
+from test.e2e.e2e_helpers import delete_agent, postgres_dsn, wait_for_consumed_input
 from test.e2e.test_agent_lifecycle_e2e import MODEL, OUTPUT, _agent, _message, _provider, _turn
 from test.live_api_cleanup import make_test_session_title
 
@@ -126,7 +126,8 @@ async def test_session_snapshot_and_input_freeze_survive_definition_and_session_
             assert await conn.fetchval("SELECT count(*) FROM sessions WHERE agent_id=$1", slug) == 1
             await replay.get("/release-blocking", params={"token": gate})
 
-        first_turn = await _turn(e2e_client, e2e_headers, session_id, first["turn_id"])
+        first_input = await wait_for_consumed_input(e2e_client, e2e_headers, first)
+        first_turn = await _turn(e2e_client, e2e_headers, session_id, first_input["turn_id"])
         assert first_turn["status"] == "completed", first_turn
         for receipt in (before, after, override):
             async with asyncio.timeout(30):

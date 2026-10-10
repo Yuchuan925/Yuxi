@@ -3,7 +3,7 @@
 from sqlalchemy import exists, select
 
 from yuxi.modules.agents.models.attachments import AgentAttachment
-from yuxi.modules.agents.models.inputs import AgentInput, AgentInputMessage
+from yuxi.modules.agents.models.inputs import AgentInput
 from yuxi.shared.datetime import utc_now
 
 
@@ -44,17 +44,17 @@ class AttachmentRepository:
             )
         )
 
-    async def list_for_thread(self, thread_id, uid, app_id, *, model_input_id=None) -> list[AgentAttachment]:
+    async def list_for_thread(self, thread_id, uid, app_id, *, for_model=False) -> list[AgentAttachment]:
         """模型只看到本次输入及此前已消费输入的就绪文件。"""
         statement = (
             select(AgentAttachment)
             .join(AgentInput, AgentInput.id == AgentAttachment.input_id)
             .where(AgentInput.thread_id == thread_id, AgentAttachment.uid == uid, AgentAttachment.app_id == app_id)
         )
-        if model_input_id is not None:
+        if for_model:
             statement = statement.where(
                 AgentAttachment.status == "ready",
-                (AgentInput.id == model_input_id) | (AgentInput.status == "consumed"),
+                AgentInput.status == "consumed",
             )
         return list(await self.db.scalars(statement.order_by(AgentAttachment.created_at, AgentAttachment.id)))
 
@@ -81,12 +81,11 @@ class AttachmentRepository:
         return result
 
     async def for_messages(self, message_ids) -> dict[int, list[AgentAttachment]]:
-        """按 Receipt 关系批量读取原始消息的附件，避免 JSON 副本。"""
+        """按最终 Message 归属批量读取附件。"""
         result = {message_id: [] for message_id in message_ids}
         rows = await self.db.execute(
-            select(AgentInputMessage.message_id, AgentAttachment)
-            .join(AgentAttachment, AgentAttachment.receipt_id == AgentInputMessage.receipt_id)
-            .where(AgentInputMessage.message_id.in_(message_ids))
+            select(AgentAttachment.message_id, AgentAttachment)
+            .where(AgentAttachment.message_id.in_(message_ids))
             .order_by(AgentAttachment.created_at, AgentAttachment.id)
         )
         for message_id, attachment in rows:

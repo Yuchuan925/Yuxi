@@ -36,6 +36,9 @@ async def should_yield_for_steer(run_id: str) -> bool:
         run = await AgentRunRepository(db).get_run(run_id)
         if run is None or run.status != "running":
             return False
+        agent_session = await SessionRepository(db).get_session_by_thread_id(run.thread_id)
+        if agent_session is None or agent_session.queue_paused:
+            return False
         turn = await AgentTurnRepository(db).get(run.turn_id)
         if turn is None or turn.status != "running" or turn.current_run_id != run_id:
             return False
@@ -76,7 +79,7 @@ async def settle_checkpoint(
     if agent_session is None or agent_session.uid != run.uid or agent_session.app_id != run.app_id:
         raise ValueError("Run 的 Thread 归属不一致")
 
-    if status == "completed" and turn.status == "running":
+    if status == "completed" and turn.status == "running" and not agent_session.queue_paused:
         pending = await input_repo.get_pending_steer(
             thread_id=run.thread_id,
             uid=run.uid,
@@ -160,7 +163,8 @@ async def get_run_snapshot(*, db: AsyncSession, scope: ActorScope, thread_id: st
         raise HTTPException(status_code=404, detail="Run 不存在")
     from yuxi.modules.agents.services.public_items import serialize_public_run
 
-    result = serialize_public_run(run)
+    input_ids = await AgentInputRepository(db).input_ids_for_runs([run.id])
+    result = serialize_public_run(run, input_ids[run.id])
     if run.output_message_id is not None:
         from yuxi.modules.agents.models.messages import Message
 
@@ -168,7 +172,7 @@ async def get_run_snapshot(*, db: AsyncSession, scope: ActorScope, thread_id: st
         if message is None or message.run_id != run.id or message.turn_id != run.turn_id:
             raise ValueError("Run 输出消息归属不一致")
         await db.refresh(message, attribute_names=["tool_calls"])
-        from yuxi.modules.agents.services.public_items import serialize_public_items, serialize_public_run
+        from yuxi.modules.agents.services.public_items import serialize_public_items
 
         result["output"] = serialize_public_items(message, run, turn.result_run_id)
     else:
@@ -195,10 +199,9 @@ async def get_run_langfuse_link(*, db: AsyncSession, scope: ActorScope, thread_i
 async def _consume_steer(*, db: AsyncSession, agent_session: Session, turn: AgentTurn, previous: AgentRun, pending) -> str:
     """消费 Thread 优先批次，在当前 Turn 建立下一执行段。"""
     input_repo = AgentInputRepository(db)
-    messages = await input_repo.list_messages(pending.id)
-    cutoff_seq = await input_repo.get_latest_receive_seq(pending.id)
-    if not messages or cutoff_seq is None:
-        raise ValueError("Steer Input 缺少已接收消息")
+    batch = await input_repo.ready_batch(thread_id=previous.thread_id, uid=previous.uid, app_id=previous.app_id)
+    if not batch or batch[0].id != pending.id or batch[0].kind != "steer":
+        raise ValueError("Steer 队头已变化或尚未就绪")
     run_id = str(uuid.uuid4())
     await AgentRunRepository(db).create_run(
         run_id=run_id,
@@ -207,7 +210,6 @@ async def _consume_steer(*, db: AsyncSession, agent_session: Session, turn: Agen
         agent_slug=previous.agent_slug,
         uid=previous.uid,
         turn_id=turn.id,
-        input_id=pending.id,
         app_id=previous.app_id,
         api_key_id=pending.api_key_id,
         input_payload=previous.input_payload or {},
@@ -221,6 +223,6 @@ async def _consume_steer(*, db: AsyncSession, agent_session: Session, turn: Agen
         created_by_run_id=previous.created_by_run_id,
     )
     await AgentTurnRepository(db).set_current(turn, run_id=run_id)
-    await input_repo.consume(input_id=pending.id, turn_id=turn.id, run_id=run_id, cutoff_seq=cutoff_seq)
+    messages = await input_repo.consume(inputs=batch, turn_id=turn.id, run_id=run_id)
     await AgentRunRepository(db).set_input_message(run_id, messages[0].id)
     return run_id

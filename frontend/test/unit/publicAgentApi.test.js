@@ -60,14 +60,19 @@ test('产品创建、消息、等待恢复和队列控制仅使用 Public Thread
     const message = JSON.parse(calls[1].options.body).events[0]
     assert.equal(message.type, 'agent.session.input.message')
     assert.equal(message.yuxi.mode, 'follow_up')
+    assert.deepEqual(message.yuxi.attachment_file_ids, ['file-1'])
+    assert.equal('yuxi' in message.input[0], false)
     assert.equal(message.input[0].content[1].image_url, 'data:image/png;base64,iVBORw0KGgo=')
 
     await agentApi.sendThreadMessage('thread-1', {
       idempotency_key: 'steer-key', query: '改成英文',
-      mode: 'steer', turn_id: 'turn-1'
+      mode: 'steer', turn_id: 'turn-1',
+      image_content: ['data:image/png;base64,iVBORw0KGgo='], attachment_file_ids: ['file-2']
     })
     assert.equal(JSON.parse(calls[2].options.body).events[0].yuxi.mode, 'steer')
     assert.ok(!('turn_id' in JSON.parse(calls[2].options.body).events[0].yuxi))
+    assert.equal(JSON.parse(calls[2].options.body).events[0].input[0].content[1].type, 'input_image')
+    assert.deepEqual(JSON.parse(calls[2].options.body).events[0].yuxi.attachment_file_ids, ['file-2'])
 
     await agentApi.resumeThreadTurn('thread-1', {
       turn_id: 'turn-1', waitpoint_id: 'wait-1',
@@ -122,6 +127,12 @@ test('产品创建、消息、等待恢复和队列控制仅使用 Public Thread
 
     await threadApi.createThread('agent-1', null, {}, { requestId: 'auto-title' })
     assert.equal(JSON.parse(calls.at(-1).options.body).title, null)
+
+    await agentApi.promoteThreadInput('thread-1', 'input-2', 'promote-key')
+    assert.deepEqual(JSON.parse(calls.at(-1).options.body).events[0], {
+      type: 'yuxi.session.input.promote', input_id: 'input-2'
+    })
+    assert.equal(calls.at(-1).options.headers['Idempotency-Key'], 'promote-key')
 
   } finally {
     await server.close()

@@ -14,7 +14,7 @@ import asyncpg
 import httpx
 import pytest
 
-from test.e2e.e2e_helpers import delete_agent, postgres_dsn
+from test.e2e.e2e_helpers import delete_agent, postgres_dsn, wait_for_consumed_input
 from test.live_api_cleanup import make_test_session_title
 from test.support.openai_replay_server import ReplayHandler
 from test.support.public_events import read_events
@@ -172,7 +172,8 @@ async def test_public_session_initial_text_stream_and_saved_items(e2e_client, e2
             assert response.status_code == 201, response.text
             session = response.json()
         session_id = session["id"]
-        turn_id = session["yuxi"]["receipt"]["turn_id"]
+        consumed = await wait_for_consumed_input(e2e_client, e2e_headers, session["yuxi"]["receipt"])
+        turn_id = consumed["turn_id"]
         assert session["object"] == "agent.session" and session["agent"]["model"] == MODEL
         assert isinstance(session["created_at"], int)
         replay = await e2e_client.post(
@@ -324,15 +325,15 @@ async def test_first_input_and_follow_up_fifo_cross_worker(e2e_client, e2e_heade
             },
         )
         assert created.status_code == 201, created.text
-        first = created.json()["yuxi"]["receipt"]
-        assert first["input_id"] and first["turn_id"] and first["run_id"]
+        receipt = created.json()["yuxi"]["receipt"]
+        first = await wait_for_consumed_input(e2e_client, e2e_headers, receipt)
         thread_id = first["session_id"]
         recovered = await e2e_client.get(
             f"/api/v1/agents/sessions/{thread_id}/receipt",
             headers=e2e_headers,
             params={"idempotency_key": creation_key},
         )
-        assert recovered.status_code == 200 and recovered.json() == first
+        assert recovered.status_code == 200 and recovered.json() == receipt
         replay = await e2e_client.post(
             "/api/v1/agents/sessions",
             headers={**e2e_headers, "Idempotency-Key": creation_key},
@@ -378,10 +379,7 @@ async def test_first_input_and_follow_up_fifo_cross_worker(e2e_client, e2e_heade
             assert [item["input_id"] for item in queue.json()["inputs"]] == [next_input["input_id"]]
             history = await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/items?order=asc&limit=100", headers=e2e_headers)
             assert history.status_code == 200, history.text
-            assert any(
-                item["yuxi"].get("input_id") == next_input["input_id"] and item["yuxi"]["delivery_status"] == "queued"
-                for item in history.json()["data"]
-            )
+            assert not any(item["yuxi"].get("input_id") == next_input["input_id"] for item in history.json()["data"])
             changed = await e2e_client.post(
                 f"/api/v1/agents/sessions/{thread_id}",
                 headers=e2e_headers,
@@ -416,7 +414,8 @@ async def test_first_input_and_follow_up_fifo_cross_worker(e2e_client, e2e_heade
         conn = await asyncpg.connect(postgres_dsn())
         try:
             model_facts = await conn.fetch(
-                "SELECT id, message_type, operation_id, usage FROM messages WHERE run_id = $1 AND role = 'assistant' AND operation_id IS NOT NULL ORDER BY id",
+                "SELECT id, message_type, operation_id, usage FROM messages WHERE run_id = $1 AND role = "
+                "'assistant' AND operation_id IS NOT NULL ORDER BY id",
                 first["run_id"],
             )
             tool_count = await conn.fetchval(
@@ -469,9 +468,9 @@ async def test_first_input_and_follow_up_fifo_cross_worker(e2e_client, e2e_heade
                     break
         terminal_events = [event for event in streamed if event["type"] == "agent.session.turn.completed"]
         assert [event["turn_id"] for event in terminal_events] == [first_turn["id"], second_turn["id"]]
-        assert [event["input_id"] for event in streamed if event["type"] == "yuxi.session.run.created"] == [
-            first["input_id"],
-            next_input["input_id"],
+        assert [event["input_ids"] for event in streamed if event["type"] == "yuxi.session.run.created"] == [
+            [first["input_id"]],
+            [next_input["input_id"]],
         ]
         resumed = []
         async with e2e_client.stream(
@@ -564,7 +563,7 @@ async def test_tool_cycle_without_steer_stays_in_one_run(e2e_client, e2e_headers
             },
         )
         assert created.status_code == 201, created.text
-        accepted = created.json()["yuxi"]["receipt"]
+        accepted = await wait_for_consumed_input(e2e_client, e2e_headers, created.json()["yuxi"]["receipt"])
         completed = await _turn(e2e_client, e2e_headers, accepted["session_id"], accepted["turn_id"])
         assert completed["status"] == "completed", completed
         assert completed["yuxi"]["result_run_id"] == accepted["run_id"]
@@ -579,7 +578,8 @@ async def test_tool_cycle_without_steer_stays_in_one_run(e2e_client, e2e_headers
             )
             output_message_id = await conn.fetchval("SELECT output_message_id FROM agent_runs WHERE id = $1", accepted["run_id"])
             tool_audit = await conn.fetchrow(
-                "SELECT execution_status, turn_id FROM messages WHERE run_id = $1 AND message_type = 'tool_audit' AND operation_id = 'call-large-tool-result'",
+                "SELECT execution_status, turn_id FROM messages WHERE run_id = $1 AND message_type = "
+                "'tool_audit' AND operation_id = 'call-large-tool-result'",
                 accepted["run_id"],
             )
         finally:
@@ -626,7 +626,7 @@ async def test_steer_aggregates_and_yields_into_same_turn(e2e_client, e2e_header
             },
         )
         assert created.status_code == 201, created.text
-        initial = created.json()["yuxi"]["receipt"]
+        initial = await wait_for_consumed_input(e2e_client, e2e_headers, created.json()["yuxi"]["receipt"])
         thread_id = initial["session_id"]
         async with httpx.AsyncClient(base_url="http://api:8765", timeout=5) as replay_client:
             for _ in range(100):
@@ -653,7 +653,19 @@ async def test_steer_aggregates_and_yields_into_same_turn(e2e_client, e2e_header
             )
             assert follow_up.status_code == 202, follow_up.text
             follow_up_id = follow_up.json()["input_id"]
+            second_follow_up = await e2e_client.post(
+                f"/api/v1/agents/sessions/{thread_id}/events",
+                headers={**e2e_headers, "Idempotency-Key": f"second-follow-up-{uuid.uuid4().hex}"},
+                json={
+                    "events": [
+                        {"type": "agent.session.input.message", "input": [_message(f"{OUTPUT} queued F2")], "yuxi": {"mode": "follow_up"}}
+                    ]
+                },
+            )
+            assert second_follow_up.status_code == 202, second_follow_up.text
+            second_follow_id = second_follow_up.json()["input_id"]
 
+            steer_ids = []
             for text in ("STEER 一：请按新要求回答", "STEER 二：保留之前工具结果"):
                 response = await e2e_client.post(
                     f"/api/v1/agents/sessions/{thread_id}/events",
@@ -669,24 +681,23 @@ async def test_steer_aggregates_and_yields_into_same_turn(e2e_client, e2e_header
                     },
                 )
                 assert response.status_code == 202, response.text
-                if text.startswith("STEER 一"):
-                    steer_input_id = response.json()["input_id"]
-                else:
-                    assert response.json()["input_id"] == steer_input_id
+                steer_ids.append(response.json()["input_id"])
+            assert len(set(steer_ids)) == 2
+            steer_input_id = steer_ids[0]
             pending = await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/inputs/{steer_input_id}", headers=e2e_headers)
             assert pending.status_code == 200, pending.text
             assert pending.json()["status"] == "pending"
             assert pending.json()["turn_id"] is None
+            assert pending.json()["items"] == []
             assert [
-                "".join(part["text"] for part in message["content"] if part["type"] == "input_text") for message in pending.json()["items"]
+                "".join(part["text"] for part in message["content"] if part["type"] == "text") for message in pending.json()["messages"]
             ] == [
                 "STEER 一：请按新要求回答",
-                "STEER 二：保留之前工具结果",
             ]
             queue = await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/queue", headers=e2e_headers)
             assert queue.status_code == 200, queue.text
-            assert [item["input_id"] for item in queue.json()["inputs"]] == [steer_input_id, follow_up_id]
-            assert [item["kind"] for item in queue.json()["inputs"]] == ["steer", "follow_up"]
+            assert [item["input_id"] for item in queue.json()["inputs"]] == [*steer_ids, follow_up_id, second_follow_id]
+            assert [item["kind"] for item in queue.json()["inputs"]] == ["steer", "steer", "follow_up", "follow_up"]
             released = await replay_client.get("/release-blocking", params={"token": gate})
             assert released.status_code == 200
 
@@ -707,6 +718,10 @@ async def test_steer_aggregates_and_yields_into_same_turn(e2e_client, e2e_header
         replacement = await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/runs/{replacement_id}", headers=e2e_headers)
         assert replacement.status_code == 200, replacement.text
         assert replacement.json()["resume_from_run_id"] == initial["run_id"]
+        assert replacement.json()["input_ids"] == steer_ids
+        second_steer = await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/inputs/{steer_ids[1]}", headers=e2e_headers)
+        assert second_steer.json()["run_id"] == replacement_id
+        assert second_steer.json()["status"] == "consumed"
         turn = await _turn(e2e_client, e2e_headers, thread_id, initial["turn_id"])
         assert turn["status"] == "completed", turn
         assert turn["yuxi"]["result_run_id"] == replacement_id
@@ -724,6 +739,31 @@ async def test_steer_aggregates_and_yields_into_same_turn(e2e_client, e2e_header
         assert next_turn["status"] == "completed", next_turn
         assert next_turn["yuxi"]["result_run_id"] == next_input.json()["run_id"]
         assert OUTPUT in output_text(next_turn["yuxi"]["output"])
+        async with asyncio.timeout(30):
+            while True:
+                last_input = (
+                    await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/inputs/{second_follow_id}", headers=e2e_headers)
+                ).json()
+                if last_input["status"] == "consumed":
+                    break
+                await asyncio.sleep(0.1)
+        last_turn = await _turn(e2e_client, e2e_headers, thread_id, last_input["turn_id"])
+        assert last_turn["status"] == "completed"
+        assert last_input["turn_id"] not in {initial["turn_id"], next_input.json()["turn_id"]}
+        conn = await asyncpg.connect(postgres_dsn())
+        try:
+            projected = await conn.fetch(
+                "SELECT source_input_id, created_at, received_at FROM messages WHERE source_input_id=ANY($1::varchar[]) ORDER BY id",
+                [initial["input_id"], *steer_ids, follow_up_id, second_follow_id],
+            )
+            assert [row["source_input_id"] for row in projected] == [initial["input_id"], *steer_ids, follow_up_id, second_follow_id]
+            assert all(row["created_at"] >= row["received_at"] for row in projected)
+            old_output = await conn.fetchval(
+                "SELECT m.created_at FROM messages m JOIN agent_runs r ON r.output_message_id=m.id WHERE r.id=$1", initial["run_id"]
+            )
+            assert old_output is not None and old_output <= projected[1]["created_at"]
+        finally:
+            await conn.close()
     finally:
         try:
             async with httpx.AsyncClient(base_url="http://api:8765", timeout=5) as replay_client:
@@ -755,7 +795,7 @@ async def test_waiting_turn_requires_complete_answers_and_resumes_same_turn(e2e_
             },
         )
         assert created.status_code == 201, created.text
-        initial = created.json()["yuxi"]["receipt"]
+        initial = await wait_for_consumed_input(e2e_client, e2e_headers, created.json()["yuxi"]["receipt"])
         thread_id = initial["session_id"]
         turn_id = initial["turn_id"]
         for _ in range(100):
@@ -860,7 +900,8 @@ async def test_waiting_turn_requires_complete_answers_and_resumes_same_turn(e2e_
             try:
                 turn_trace = await conn.fetchrow("SELECT langfuse_root_observation_id FROM agent_turns WHERE id = $1", turn_id)
                 traced_runs = await conn.fetch(
-                    "SELECT id, langfuse_trace_id, langfuse_observation_id FROM agent_runs WHERE turn_id = $1 AND run_type IN ('chat', 'resume') ORDER BY execution_seq",
+                    "SELECT id, langfuse_trace_id, langfuse_observation_id FROM agent_runs WHERE turn_id = $1 "
+                    "AND run_type IN ('chat', 'resume') ORDER BY execution_seq",
                     turn_id,
                 )
             finally:
@@ -945,7 +986,7 @@ async def test_invalid_question_parameters_return_tool_error_without_waitpoint(e
             },
         )
         assert created.status_code == 201, created.text
-        accepted = created.json()["yuxi"]["receipt"]
+        accepted = await wait_for_consumed_input(e2e_client, e2e_headers, created.json()["yuxi"]["receipt"])
         for _ in range(150):
             response = await e2e_client.get(
                 f"/api/v1/agents/sessions/{accepted['session_id']}/turns/{accepted['turn_id']}",
@@ -964,7 +1005,8 @@ async def test_invalid_question_parameters_return_tool_error_without_waitpoint(e
         conn = await asyncpg.connect(postgres_dsn())
         try:
             audit = await conn.fetchrow(
-                "SELECT execution_status, content, turn_id FROM messages WHERE run_id = $1 AND message_type = 'tool_audit' AND operation_id = 'call-ask-user'",
+                "SELECT execution_status, content, turn_id FROM messages WHERE run_id = $1 AND message_type = "
+                "'tool_audit' AND operation_id = 'call-ask-user'",
                 accepted["run_id"],
             )
         finally:
@@ -999,7 +1041,7 @@ async def test_cancel_waiting_turn_pauses_queue_until_continue(e2e_client, e2e_h
             },
         )
         assert created.status_code == 201, created.text
-        initial = created.json()["yuxi"]["receipt"]
+        initial = await wait_for_consumed_input(e2e_client, e2e_headers, created.json()["yuxi"]["receipt"])
         thread_id, turn_id = initial["session_id"], initial["turn_id"]
         async with httpx.AsyncClient(base_url="http://api:8765", timeout=5) as replay_client:
             async with asyncio.timeout(30):
@@ -1135,11 +1177,8 @@ async def test_cancel_running_model_closes_audit_without_foreign_output(e2e_clie
             },
         )
         assert created.status_code == 201, created.text
-        thread_id, turn_id, run_id = (
-            created.json()["id"],
-            created.json()["yuxi"]["receipt"]["turn_id"],
-            created.json()["yuxi"]["receipt"]["run_id"],
-        )
+        consumed = await wait_for_consumed_input(e2e_client, e2e_headers, created.json()["yuxi"]["receipt"])
+        thread_id, turn_id, run_id = consumed["session_id"], consumed["turn_id"], consumed["run_id"]
         async with httpx.AsyncClient(base_url="http://localhost:8765", timeout=5) as replay:
             for _ in range(100):
                 started = await replay.get("/blocking-started", params={"token": token})
@@ -1229,7 +1268,8 @@ async def test_attachment_survives_run_runtime_recreation(e2e_client, e2e_header
         conn = await asyncpg.connect(postgres_dsn())
         try:
             workdir_path = await conn.fetchval(
-                "SELECT project.workdir_path FROM sessions AS thread JOIN projects AS project ON project.id = thread.project_id WHERE thread.thread_id = $1",
+                "SELECT project.workdir_path FROM sessions AS thread JOIN projects AS project ON project.id = "
+                "thread.project_id WHERE thread.thread_id = $1",
                 thread_id,
             )
         finally:
@@ -1256,7 +1296,9 @@ async def test_attachment_survives_run_runtime_recreation(e2e_client, e2e_header
             },
         )
         assert accepted.status_code == 202, accepted.text
-        completed = await _turn(e2e_client, e2e_headers, thread_id, accepted.json()["turn_id"])
+        assert accepted.json()["turn_id"] is None and accepted.json()["run_id"] is None
+        consumed = await wait_for_consumed_input(e2e_client, e2e_headers, accepted.json())
+        completed = await _turn(e2e_client, e2e_headers, thread_id, consumed["turn_id"])
         assert completed["status"] == "completed", completed
         [attachment] = (await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/attachments", headers=e2e_headers)).json()["attachments"]
         path = str(attachment["original_path"])
@@ -1272,7 +1314,7 @@ async def test_attachment_survives_run_runtime_recreation(e2e_client, e2e_header
         user_item = received.json()["items"][0]
         assert user_item["yuxi"]["attachments"][0]["file_id"] == attachment["file_id"]
         assert user_item["yuxi"]["attachments"][0]["input_id"] == accepted.json()["input_id"]
-        completed = await _turn(e2e_client, e2e_headers, thread_id, accepted.json()["turn_id"])
+        completed = await _turn(e2e_client, e2e_headers, thread_id, received.json()["turn_id"])
         assert completed["status"] == "completed", completed
         history = (await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/items?order=asc&limit=100", headers=e2e_headers)).json()
         restored = next(item for item in history["data"] if item["id"] == user_item["id"])
@@ -1285,6 +1327,19 @@ async def test_attachment_survives_run_runtime_recreation(e2e_client, e2e_header
         removed = await e2e_client.delete(f"/api/v1/agents/sessions/{thread_id}/attachments/{attachment['file_id']}", headers=e2e_headers)
         assert removed.status_code == 200, removed.text
         assert recreated.read(path).file_data is None
+        deleted_input = await e2e_client.get(
+            f"/api/v1/agents/sessions/{thread_id}/inputs/{accepted.json()['input_id']}",
+            headers=e2e_headers,
+        )
+        assert deleted_input.status_code == 200, deleted_input.text
+        assert deleted_input.json()["attachment_file_ids"] == [attachment["file_id"]]
+        assert deleted_input.json()["attachments"] == []
+        assert not deleted_input.json()["items"][0]["yuxi"].get("attachments")
+        deleted_history = await e2e_client.get(
+            f"/api/v1/agents/sessions/{thread_id}/items?order=asc&limit=100",
+            headers=e2e_headers,
+        )
+        assert not next(item for item in deleted_history.json()["data"] if item["id"] == user_item["id"])["yuxi"].get("attachments")
     finally:
         if thread_id and workdir_path:
             get_sandbox_provider().release(thread_id, uid=uid, workdir_path=workdir_path)
@@ -1313,8 +1368,8 @@ async def test_model_rate_limit_failure_preserves_error_and_queue_can_continue(e
         )
         assert created.status_code == 201, created.text
         thread_id = created.json()["id"]
-        first_turn_id = created.json()["yuxi"]["receipt"]["turn_id"]
-        first_run_id = created.json()["yuxi"]["receipt"]["run_id"]
+        consumed = await wait_for_consumed_input(e2e_client, e2e_headers, created.json()["yuxi"]["receipt"])
+        first_turn_id, first_run_id = consumed["turn_id"], consumed["run_id"]
         failed = await _turn(e2e_client, e2e_headers, thread_id, first_turn_id)
         assert failed["status"] == "failed", failed
         first_run = await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/runs/{first_run_id}", headers=e2e_headers)
@@ -1394,8 +1449,8 @@ async def test_large_tool_approval_resume_keeps_original_audit(e2e_client, e2e_h
             },
         )
         assert created.status_code == 201, created.text
-        thread_id, turn_id = created.json()["id"], created.json()["yuxi"]["receipt"]["turn_id"]
-        first_run_id = created.json()["yuxi"]["receipt"]["run_id"]
+        consumed = await wait_for_consumed_input(e2e_client, e2e_headers, created.json()["yuxi"]["receipt"])
+        thread_id, turn_id, first_run_id = consumed["session_id"], consumed["turn_id"], consumed["run_id"]
         for _ in range(100):
             pending = await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/turns/{turn_id}", headers=e2e_headers)
             assert pending.status_code == 200, pending.text
@@ -1413,7 +1468,8 @@ async def test_large_tool_approval_resume_keeps_original_audit(e2e_client, e2e_h
         conn = await asyncpg.connect(postgres_dsn())
         try:
             workdir_path = await conn.fetchval(
-                "SELECT project.workdir_path FROM sessions AS thread JOIN projects AS project ON project.id = thread.project_id WHERE thread.thread_id = $1",
+                "SELECT project.workdir_path FROM sessions AS thread JOIN projects AS project ON project.id = "
+                "thread.project_id WHERE thread.thread_id = $1",
                 thread_id,
             )
         finally:
@@ -1515,7 +1571,8 @@ async def test_thread_sse_releases_validation_transaction(e2e_client, e2e_header
         }
         created = await e2e_client.post("/api/v1/agents/sessions", headers={**e2e_headers, "Idempotency-Key": key}, json=body)
         assert created.status_code == 201, created.text
-        thread_id, turn_id = created.json()["id"], created.json()["yuxi"]["receipt"]["turn_id"]
+        consumed = await wait_for_consumed_input(e2e_client, e2e_headers, created.json()["yuxi"]["receipt"])
+        thread_id, turn_id = consumed["session_id"], consumed["turn_id"]
         async with httpx.AsyncClient(base_url="http://localhost:8765", timeout=5) as replay:
             for _ in range(100):
                 started = await replay.get("/blocking-started", params={"token": token})

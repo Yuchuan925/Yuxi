@@ -313,20 +313,18 @@ async def test_thread_message_audits_return_persisted_facts_without_leaking_into
         },
     ]
     assert len(timeline) == 500
-    assert [audit["operation_id"] for audit in timeline[:2]] == ["call-1", "operation-2"]
-    assert [audit["type"] for audit in timeline[:2]] == ["tool", "ai"]
-    assert timeline[0]["tool_name"] == "search"
-    assert timeline[0]["tool_input"] == {"q": "Yuxi"}
-    assert timeline[0]["content"] == "查询结果"
-    assert timeline[0]["duration_ms"] == 400
-    assert timeline[1]["sequence"] == 7
-    assert timeline[1]["duration_ms"] == 1000
-    assert timeline[1]["started_at"] == "2026-08-30T01:00:02Z"
-    assert timeline[1]["finished_at"] == "2026-08-30T01:00:03Z"
-    assert timeline[1]["usage"]["total_tokens"] == 10
-    assert timeline[1]["content_blocks"] == [{"type": "text", "text": "第二次模型输出"}]
-    assert timeline[-1]["operation_id"] == "bounded-507"
-    assert timeline[-1]["sequence"] == 507
+    assert timeline[0]["operation_id"] == "operation-2"
+    assert timeline[0]["sequence"] == 7
+    assert timeline[0]["duration_ms"] == 1000
+    assert timeline[0]["started_at"] == "2026-08-30T01:00:02Z"
+    assert timeline[0]["finished_at"] == "2026-08-30T01:00:03Z"
+    assert timeline[0]["usage"]["total_tokens"] == 10
+    assert timeline[0]["content_blocks"] == [{"type": "text", "text": "第二次模型输出"}]
+    assert timeline[-2]["operation_id"] == "bounded-507"
+    assert timeline[-2]["sequence"] == 507
+    assert timeline[-1]["type"] == "human"
+    assert timeline[-1]["content"] == "会在审计前失败"
+    assert timeline[-1]["delivery_status"] == "failed"
     assert "private_internal_field" not in timeline_response.text
 
     retired_response = await test_client.get(
@@ -910,7 +908,7 @@ async def test_standard_user_restores_visible_function_items_without_internal_au
         OUTPUT,
         TOOL_RESULT,
     )
-    from test.e2e.e2e_helpers import archive_public_thread, delete_agent
+    from test.e2e.e2e_helpers import archive_public_thread, delete_agent, wait_for_consumed_input
 
     headers = standard_user["headers"]
     uid = str((await test_client.get("/api/auth/me", headers=headers)).json()["uid"])
@@ -930,7 +928,8 @@ async def test_standard_user_restores_visible_function_items_without_internal_au
             },
         )
         assert created.status_code == 201, created.text
-        thread_id, turn_id = created.json()["id"], created.json()["yuxi"]["receipt"]["turn_id"]
+        consumed = await wait_for_consumed_input(test_client, headers, created.json()["yuxi"]["receipt"])
+        thread_id, turn_id = created.json()["id"], consumed["turn_id"]
         assert (await _terminal_turn(test_client, headers, thread_id, turn_id))["status"] == "completed"
         history = await test_client.get(f"/api/v1/agents/sessions/{thread_id}/items?order=asc&limit=100", headers=headers)
         assert history.status_code == 200, history.text

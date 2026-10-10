@@ -13,6 +13,7 @@ from yuxi.api.routers.public_v1.agents.schemas import (
     ContinueEvent,
     EventAccepted,
     MessageEvent,
+    PromoteInputEvent,
     ResumeEvent,
     SessionEventCreate,
     ThreadEvent,
@@ -24,7 +25,7 @@ from yuxi.modules.agents.services.events import stream_thread_events, validate_e
 from yuxi.modules.agents.services.inputs import accept_message
 from yuxi.modules.agents.services.public_resources import event_receipt
 from yuxi.modules.agents.services.scope import ActorScope
-from yuxi.modules.agents.services.threads import cancel_input, continue_queue, require_thread
+from yuxi.modules.agents.services.threads import cancel_input, continue_queue, promote_input, require_thread
 from yuxi.modules.agents.services.turns import cancel_turn, resume_turn
 
 router = APIRouter(dependencies=[Depends(require_public_context)], responses=PUBLIC_ERRORS)
@@ -75,9 +76,9 @@ async def submit_thread_event(*, db: AsyncSession, scope: ActorScope, thread_id:
             idempotency_key=idempotency_key,
             mode=event.yuxi.mode,
             messages=input_messages_to_domain(event.input),
+            attachment_file_ids=event.yuxi.attachment_file_ids,
             model_spec=event.yuxi.model,
             tool_approval_mode=event.yuxi.tool_approval_mode,
-            attachment_file_ids=event.yuxi.attachment_file_ids,
         )
     elif isinstance(event, ResumeEvent):
         result = await resume_turn(
@@ -102,6 +103,8 @@ async def submit_thread_event(*, db: AsyncSession, scope: ActorScope, thread_id:
         result = await continue_queue(db=db, scope=scope, thread_id=thread_id, idempotency_key=idempotency_key)
     elif isinstance(event, CancelInputEvent):
         result = await cancel_input(db=db, scope=scope, thread_id=thread_id, input_id=event.input_id, idempotency_key=idempotency_key)
+    elif isinstance(event, PromoteInputEvent):
+        result = await promote_input(db=db, scope=scope, thread_id=thread_id, input_id=event.input_id, idempotency_key=idempotency_key)
     return result
 
 

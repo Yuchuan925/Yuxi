@@ -185,7 +185,7 @@ async function fixture() {
           message("input-1", "user", body.input[0].content[0].text),
           message("output-2", "assistant", "", "in_progress"),
         ];
-        receipts.set(key, { ...state.snapshot, yuxi: { ...state.snapshot.yuxi, receipt: { object: "yuxi.session.event.accepted", event_id: key, session_id: "thread-1", input_id: "input-1", turn_id: "turn-1", run_id: "run-1", status: "accepted" } } });
+        receipts.set(key, { ...state.snapshot, yuxi: { ...state.snapshot.yuxi, receipt: { object: "yuxi.session.event.accepted", event_id: key, session_id: "thread-1", input_id: "input-1", turn_id: null, run_id: null, status: "accepted" } } });
       }
       if (state.failNext) {
         state.failNext = false;
@@ -328,13 +328,17 @@ test("历史回读、流式正文、生成中追加消息和携带身份下载�
     result_run_id: "run-1",
     status: "completed",
   };
-  backend.state.artifacts = ["/home/gem/user-data/报告 #1.txt"];
+  backend.state.artifacts = [
+    { path: "/home/gem/user-data/报告 #1.txt", type: "file" },
+    "/home/gem/user-data/legacy.txt",
+  ];
   backend.emit({
     type: "agent.session.turn.item.done",
     item: backend.state.items[1],
   });
   backend.emit({ type: "agent.session.turn.completed" });
   await expect(page.getByLabel("对话消息")).toContainText("你好，已完成");
+  await expect(page.getByRole("button", { name: "legacy.txt 点击下载" })).toBeVisible();
   const downloading = page.waitForEvent("download");
   await page.getByRole("button", { name: "报告 #1.txt 点击下载" }).click();
   const file = await downloading;
@@ -764,7 +768,8 @@ test("附件上传不创建会话，PNG 直接输入；接收响应丢失时原�
   expect(posts).toHaveLength(2);
   expect(posts[1].headers["idempotency-key"]).toBe(posts[0].headers["idempotency-key"]);
   expect(posts[1].body).toEqual(posts[0].body);
-  expect(posts[0].body.attachment_file_ids).toEqual(["1234567890abcdef1234567890abcdef"]);
+  expect(posts[0].body.yuxi.attachment_file_ids).toEqual(["1234567890abcdef1234567890abcdef"]);
+  expect(posts[0].body.input[0].yuxi).toBeUndefined();
   expect(posts[0].body.input[0].content[1]).toEqual({ type: "input_image", image_url: `data:image/png;base64,${png.toString("base64")}` });
   await page.screenshot({ path: "/tmp/yuxi-draft-demo.png", fullPage: true });
 });

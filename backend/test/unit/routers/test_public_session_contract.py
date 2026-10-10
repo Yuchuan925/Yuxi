@@ -18,6 +18,24 @@ def test_initial_text_shorthand_has_same_domain_message_as_array():
     )
 
 
+@pytest.mark.parametrize("create", [False, True])
+def test_submission_attachments_reject_old_message_fields_and_enforce_total_limit(create):
+    """两个提交入口共享附件上限，逐消息旧协议明确拒绝。"""
+    from yuxi.api.routers.public_v1.agents.schemas import MessageEvent
+
+    model = SessionCreate if create else MessageEvent
+    base = {"agent_id": "agent"} if create else {"type": "agent.session.input.message"}
+    message = {"role": "user", "content": [{"type": "input_text", "text": "hello"}]}
+    files = [f"{index:032x}" for index in range(20)]
+    parsed = model.model_validate({**base, "input": [message], "yuxi": {"attachment_file_ids": files}})
+    assert parsed.yuxi.attachment_file_ids == files
+    assert input_messages_to_domain(parsed.input)[0].extra_metadata == {}
+    with pytest.raises(ValidationError):
+        model.model_validate({**base, "input": [{**message, "yuxi": {"attachment_file_ids": files}}]})
+    with pytest.raises(ValidationError):
+        model.model_validate({**base, "input": [message], "yuxi": {"attachment_file_ids": files + ["a" * 32]}})
+
+
 @pytest.mark.parametrize(
     "extra",
     [
@@ -146,7 +164,7 @@ def test_turn_http_core_matches_terminal_event_and_preserves_cancelling():
         input_id="input",
         created_by_run_id=None,
     )
-    event = _turn_event(None, run, turn, "completed", "completed", timestamp)
+    event = _turn_event(None, run, turn, "completed", "completed", timestamp, ["input"])
     assert event["turn"] == turn_core(turn, run, started_at=timestamp)
     assert event["turn"]["id"] == "turn" and event["turn"]["session_id"] == "session"
     turn.status = "cancelling"

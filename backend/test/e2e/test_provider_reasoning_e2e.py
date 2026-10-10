@@ -7,6 +7,7 @@ from uuid import uuid4
 
 import asyncpg
 import pytest
+from test.e2e.e2e_helpers import wait_for_consumed_input
 from e2e_helpers import (
     RUN_TIMEOUT_SECONDS,
     archive_public_thread,
@@ -95,8 +96,8 @@ async def test_reasoning_stream_matches_persisted_history(e2e_client, e2e_header
             },
         )
         assert response.status_code == 202, response.text
-        run_id = response.json()["run_id"]
-        turn_id = response.json()["turn_id"]
+        consumed = await wait_for_consumed_input(client, headers, response.json())
+        run_id, turn_id = consumed["run_id"], consumed["turn_id"]
 
         async def collect_reasoning() -> list[str]:
             """只收集本 Run 的 Public SSE 推理增量。"""

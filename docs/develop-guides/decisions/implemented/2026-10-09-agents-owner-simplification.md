@@ -12,7 +12,7 @@ Owner：backend/yuxi/modules/agents/services/attachments.py
 
 ### 实现方案
 
-附件 ORM 与 repository 拥有用户/APP、文件信息、Input 归属、准备状态和存储位置。上传只建立 draft；接收事务锁定附件行，绑定 Input、Receipt 与原始 Message。统一准备函数将已绑定文件写入 Workdir、提交就绪事实并清理临时内容；现有恢复循环调用同一函数。调度器只领取附件全部就绪的输入，回执读取没有准备、派发或文件副作用。Message 通过 Input/Receipt 关系批量读取附件展示信息，Session 不保存附件副本。
+附件 ORM 与 repository 拥有用户/APP、文件信息、Input 归属、准备状态和存储位置。上传只建立 draft；接收事务锁定附件行并绑定 Input，消费事务再绑定该 Input 的最后一条正式 Message。统一准备函数将已绑定文件写入 Workdir、提交就绪事实并清理临时内容；现有恢复循环调用同一函数。调度器只领取附件全部就绪的输入，回执读取没有准备、派发或文件副作用。Message 通过附件的 message_id 批量读取展示信息，Session 不保存附件副本。输入与附件关联由[输入投影分离决定](2026-10-10-input-message-projection.md)和[提交级附件简化](2026-10-10-input-attachment-simplification.md)更新；Receipt 不再拥有附件归属。
 
 Session repository 批量读取当前 Turn、Run、输入数量、已读标记和活动时间；单一资源投影直接生成 HTTP/SSE 使用的 Session。列表、搜索、详情和更新后的读取复用该投影，搜索仅附加命中片段。删除旧 Thread 响应拼装与时间字符串往返转换。
 
@@ -62,4 +62,4 @@ docker exec yuxi-owner-api uv run --no-sync --group test pytest test/e2e/test_se
 
 附件表增加明确的 Schema 维护成本，并删除对象 manifest、JSON 归属反查、多处记录补写和文件 advisory lock。准备期间保留临时内容；就绪提交后删除来源，清理失败由现有恢复循环重试。跨存储不具有原子事务，持久准备状态和 ready 消费门禁拥有恢复边界。Workdir 修改不会被重复准备覆盖，草稿不承担正式内容的永久备份。
 
-business Schema 6 由 schema-init 拥有，支持新库及 v5→v6 添加附件表；不导入历史 JSON，不转换缺失快照。需要历史数据支持时单独进行一次性转换。Session 默认配置更新只影响后续普通输入，已接收配置与当前 Run 保持各自时间快照。协作等待继续执行，人工等待要求响应，未读标记单独展示。
+business Schema 由 schema-init 拥有；当前 Schema 8 只初始化新库并拒绝旧版本，输入投影分离决定撤下 v5→v6 升级入口。不导入历史 JSON，不转换缺失快照。需要历史数据支持时单独进行一次性转换。Session 默认配置更新只影响后续普通输入，已接收配置与当前 Run 保持各自时间快照。协作等待继续执行，人工等待要求响应，未读标记单独展示。

@@ -86,7 +86,7 @@ async def test_base_agent_passes_callbacks_metadata_and_tags():
     graph = await agent.get_graph()
     assert graph.last_events_config == {
         "configurable": {"thread_id": "thread-1", "uid": "user-1"},
-        "recursion_limit": 300,
+        "recursion_limit": 2000,
         "callbacks": ["handler-1"],
         "metadata": {"langfuse_user_id": "user-1"},
         "tags": ["yuxi"],
@@ -94,16 +94,18 @@ async def test_base_agent_passes_callbacks_metadata_and_tags():
 
 
 @pytest.mark.asyncio
-async def test_base_agent_uses_configured_max_execution_steps():
+@pytest.mark.parametrize("limit", [42, 2000])
+async def test_base_agent_uses_configured_max_execution_steps(limit):
+    """显式步数配置覆盖默认值并传入图执行。"""
     agent = _TestAgent()
 
     await _collect(
         agent,
-        context=BaseContext(**{"uid": "user-1", "thread_id": "thread-1", "max_execution_steps": 42}),
+        context=BaseContext(**{"uid": "user-1", "thread_id": "thread-1", "max_execution_steps": limit}),
     )
 
     graph = await agent.get_graph()
-    assert graph.last_events_config["recursion_limit"] == 42
+    assert graph.last_events_config["recursion_limit"] == limit
 
 
 @pytest.mark.asyncio

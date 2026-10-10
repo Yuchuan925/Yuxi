@@ -63,7 +63,7 @@
 
     <div v-if="auditLoadError" class="audit-error" role="alert">
       <TriangleAlert :size="14" aria-hidden="true" />
-      <span>审计读取失败，当前仍展示已有消息。</span>
+      <span>数据库记录读取失败，当前保留上次读取的数据。</span>
       <button type="button" @click="refreshMessageAudits">重试</button>
     </div>
 
@@ -197,7 +197,7 @@
     >
       <section class="records-pane" aria-label="调试记录">
         <div class="record-table-header" aria-hidden="true">
-          <span></span>
+          <span>类型</span>
           <span>记录</span>
           <span class="column-time">时间</span>
           <span class="column-duration">耗时</span>
@@ -220,16 +220,7 @@
               :aria-label="runRowAriaLabel(group)"
               @click="selectRun(group)"
             >
-              <span class="record-icon" :class="recordIconClassForRun(group)">
-                <LoaderCircle
-                  v-if="isRunActiveStatus(runStatus(group))"
-                  :size="15"
-                  class="spinning"
-                  aria-hidden="true"
-                />
-                <Bot v-else-if="runStatus(group)" :size="15" aria-hidden="true" />
-                <Workflow v-else :size="15" aria-hidden="true" />
-              </span>
+              <span class="record-kind kind-run">{{ group.runId ? '运行' : '输入' }}</span>
               <span class="record-summary run-summary">
                 <strong>{{ runTitle(group) }}</strong>
                 <span>{{ runSummary(group) }}</span>
@@ -252,14 +243,9 @@
               :aria-label="itemRowAriaLabel(item)"
               @click="selectItem(group, item)"
             >
-              <span class="record-icon" :class="recordIconClass(item)">
-                <component
-                  :is="recordIcon(item)"
-                  :size="15"
-                  :class="{ spinning: item.executionStatus === 'running' }"
-                  aria-hidden="true"
-                />
-              </span>
+              <span class="record-kind" :class="`kind-${item.role}`">{{
+                roleNames[item.role] || '其他'
+              }}</span>
               <span class="record-summary" :title="item.displaySummary">{{
                 item.displaySummary
               }}</span>
@@ -404,7 +390,6 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
-  Bot,
   Check,
   ChevronRight,
   Clock,
@@ -413,11 +398,7 @@ import {
   LoaderCircle,
   RefreshCw,
   Search,
-  Settings2,
   TriangleAlert,
-  User,
-  Workflow,
-  Wrench,
   X
 } from '@lucide/vue'
 import { message } from 'ant-design-vue'
@@ -433,7 +414,6 @@ import {
   formatMessageDebugContent,
   isMessageDebugEntryInTimeRange,
   isMessageDebugTimelineMarkSelected,
-  mergeMessageDebugAudits,
   mergeMessageDebugRunGroups,
   resolveLangfuseRunUrl
 } from '@/modules/session/model/messageDebug'
@@ -450,8 +430,6 @@ import {
 import { formatDateTime } from '@/shared/lib/time'
 
 const props = defineProps({
-  messages: { type: Array, default: () => [] },
-  runs: { type: Array, default: () => [] },
   threadId: { type: String, default: null },
   active: { type: Boolean, default: false },
   activeRunId: { type: String, default: null },
@@ -614,7 +592,7 @@ const formatTokens = (usage) => {
 }
 
 const timelineItems = computed(() =>
-  buildMessageDebugEntries(mergeMessageDebugAudits(props.messages, messageAudits.value)).map(
+  buildMessageDebugEntries(messageAudits.value).map(
     (item) => {
       const tokenCounts = usageTokenCounts(item.usage)
       const displaySummary =
@@ -630,21 +608,9 @@ const timelineItems = computed(() =>
     }
   )
 )
-const runTraceById = computed(() => {
-  const result = new Map(props.runs.map((run) => [run.run_id, run]))
-  runTraces.value.forEach((run) => {
-    result.set(run.run_id, { ...result.get(run.run_id), ...run })
-  })
-  return result
-})
-const combinedRuns = computed(() =>
-  [...runTraceById.value.values()].sort((left, right) =>
-    (left.timing?.created_at || '').localeCompare(right.timing?.created_at || '') ||
-    left.run_id.localeCompare(right.run_id)
-  )
-)
+const runTraceById = computed(() => new Map(runTraces.value.map((run) => [run.run_id, run])))
 const baseGroups = computed(() =>
-  mergeMessageDebugRunGroups(timelineItems.value, combinedRuns.value).map((group, index) => {
+  mergeMessageDebugRunGroups(timelineItems.value, runTraces.value).map((group, index) => {
     const runTrace = runTraceById.value.get(group.runId) || null
     const timing = runTrace?.timing
     return {
@@ -921,7 +887,6 @@ const emptyTimelineText = computed(() => {
 
 const runStatus = (group) => {
   if (group.runTrace?.status) return group.runTrace.status
-  if (props.runActive && props.activeRunId && group.runId === props.activeRunId) return 'running'
   if (!group.runId && group.inputId) {
     return group.items.find((item) => item.role === 'human')?.raw?.delivery_status || ''
   }
@@ -932,25 +897,6 @@ const runTitle = (group) => {
   if (group.inputId) return runStatus(group) ? formatExecutionStatus(runStatus(group)) : '输入'
   return '未关联运行'
 }
-const isRunActiveStatus = (status) =>
-  ['sending', 'queued', 'pending', 'running', 'cancel_requested'].includes(status)
-const isRunFailureStatus = (status) => ['failed', 'cancelled', 'interrupted'].includes(status)
-const recordIcon = (item) => {
-  if (item.executionStatus === 'running') return LoaderCircle
-  if (item.role === 'human') return User
-  if (item.role === 'tool') return Wrench
-  if (item.role === 'system') return Settings2
-  if (item.role === 'ai' || item.role === 'error') return Bot
-  return Clock
-}
-const recordIconClass = (item) => ({
-  error: item.role === 'error' || isFailureStatus(item.executionStatus),
-  active: item.executionStatus === 'running'
-})
-const recordIconClassForRun = (group) => ({
-  error: isRunFailureStatus(runStatus(group)),
-  active: isRunActiveStatus(runStatus(group))
-})
 const formatExecutionStatus = (status) => executionStatusLabels[status] || status || '状态未知'
 const itemRowAriaLabel = (item) => {
   const status = item.executionStatus ? `，${formatExecutionStatus(item.executionStatus)}` : ''
@@ -1042,9 +988,7 @@ const inspectorOverviewRows = computed(() => {
     ]
   }
   const item = selectedTarget.value.item
-  const content = ['human', 'ai', 'error'].includes(item.role)
-    ? formatMessageDebugContent(item.raw?.content)
-    : ''
+  const content = formatMessageDebugContent(item.raw?.content)
   return [
     { label: '类型', value: roleNames[item.role] || '其他' },
     {
@@ -1068,6 +1012,8 @@ const inspectorOverviewRows = computed(() => {
     { label: '单调耗时', value: formatAuditDuration(item.durationMs) },
     { label: '模型', value: item.model || '' },
     { label: 'Tokens', value: item.tokenTooltip || '' },
+    { label: '错误类型', value: item.raw?.error_type || '' },
+    { label: '错误信息', value: item.raw?.error_message || '', content: true },
     { label: 'Content', value: content, content: true }
   ].filter((row) => row.value)
 })
@@ -1662,7 +1608,7 @@ const copyAllTimelineJson = async () => {
 .record-table-header,
 .record-row {
   display: grid;
-  grid-template-columns: 28px minmax(160px, 1fr) 76px 66px 70px 20px;
+  grid-template-columns: 64px minmax(160px, 1fr) 76px 66px 70px 20px;
   align-items: center;
 }
 
@@ -1715,45 +1661,36 @@ const copyAllTimelineJson = async () => {
   background: var(--gray-25);
 }
 
-.message-row .record-icon {
-  position: relative;
-  padding-left: 5px;
-
-  &::before {
-    position: absolute;
-    top: -18px;
-    bottom: 9px;
-    left: -2px;
-    width: 7px;
-    border-bottom: 1px solid var(--gray-300);
-    border-left: 1px solid var(--gray-300);
-    content: '';
-  }
-}
-
-.record-icon {
+.record-kind {
   display: inline-flex;
+  justify-self: start;
   align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--gray-100);
   color: var(--gray-700);
-
-  &.active {
-    color: var(--main-color);
-  }
-
-  &.error {
-    color: var(--color-error-700);
-  }
+  font-size: 11px;
+  line-height: 18px;
+  white-space: nowrap;
 }
 
-.role-ai .record-icon {
+.kind-human {
+  background: var(--color-success-50);
+  color: var(--color-success-900);
+}
+
+.kind-ai {
+  background: var(--main-50);
   color: var(--main-700);
 }
 
-.role-tool .record-icon {
-  color: var(--second-700);
+.kind-tool {
+  background: var(--color-warning-50);
+  color: var(--color-warning-900);
 }
 
-.role-error .record-icon {
+.kind-error {
+  background: var(--color-error-50);
   color: var(--color-error-700);
 }
 
@@ -2042,7 +1979,7 @@ const copyAllTimelineJson = async () => {
 @container (max-width: 620px) {
   .record-table-header,
   .record-row {
-    grid-template-columns: 28px minmax(150px, 1fr) 64px 20px;
+    grid-template-columns: 64px minmax(150px, 1fr) 64px 20px;
   }
 
   .column-time,

@@ -9,7 +9,8 @@ function frame(id, type, turnId, delta, eventId = id) {
 test("reconnects from the last cursor after a clean stream interruption", async () => {
   let attempts = 0;
   const client = {
-    async send() { return { turn_id: "turn" }; },
+    async send() { return { input_id: "input", turn_id: null }; },
+    async input() { return { status: "consumed", turn_id: "turn" }; },
     async turn() { return { id: "turn", status: attempts < 2 ? "in_progress" : "completed", yuxi: { output: attempts < 2 ? null : [{ id: "final", type: "message", role: "assistant", content: [{ type: "output_text", text: "第一行\n第二行" }] }] } }; },
     async *events(_threadId, cursor) {
       attempts += 1;

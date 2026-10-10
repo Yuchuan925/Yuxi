@@ -146,6 +146,8 @@ async def test_get_thread_message_audits_view_serializes_model_and_tool_facts(mo
         "model_run_id": "langgraph-model-1",
         "content_blocks": [{"type": "text", "text": "模型输出"}],
         "reasoning_content": "",
+        "error_type": None,
+        "error_message": None,
         "tool_calls": [],
     }
     tool = result["audits"][1]

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import HTTPException
@@ -114,6 +115,7 @@ def owning_turn_boundary(monkeypatch):
 
     monkeypatch.setattr(message_svc, "AgentTurnRepository", TurnRepo)
     monkeypatch.setattr(message_svc, "AgentInputRepository", InputRepo)
+    monkeypatch.setattr(message_svc, "AttachmentRepository", lambda db: SimpleNamespace(has_unready=AsyncMock(return_value=False)))
 
     async def settle(**kwargs):
         repo = message_svc.AgentRunRepository(kwargs["db"])
@@ -160,6 +162,7 @@ class _FakeConvRepo:
                 agent_id="test-agent",
                 thread_id=thread_id,
                 status="active",
+                queue_paused=False,
                 parent_thread_id=None,
                 extra_metadata={},
             ),

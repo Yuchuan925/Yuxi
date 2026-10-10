@@ -58,7 +58,10 @@ async def list_session_items(
         )[0]
         for row in rows[:limit]
     ]
-    runs = {row.AgentRun.id: serialize_public_run(row.AgentRun) for row in rows[:limit] if row.AgentRun}
+    from yuxi.modules.agents.repositories.input import AgentInputRepository
+
+    input_ids = await AgentInputRepository(db).input_ids_for_runs([row.AgentRun.id for row in rows[:limit] if row.AgentRun])
+    runs = {row.AgentRun.id: serialize_public_run(row.AgentRun, input_ids[row.AgentRun.id]) for row in rows[:limit] if row.AgentRun}
     return {
         "object": "list",
         "data": page,
@@ -104,7 +107,9 @@ def serialize_public_items(
                 "phase": None,
                 "yuxi": {
                     "run_id": message.run_id,
-                    "input_id": (message.extra_metadata or {}).get("input_id"),
+                    "input_id": message.source_input_id,
+                    "input_position": message.input_position,
+                    "received_at": format_utc_datetime(message.received_at),
                     "message_id": message.id,
                     "delivery_status": message.delivery_status,
                     "created_at": format_utc_datetime(message.created_at),
@@ -127,7 +132,7 @@ def serialize_public_items(
     return sorted(items, key=lambda item: item["yuxi"]["output_index"])
 
 
-def serialize_public_run(run: AgentRun) -> dict:
+def serialize_public_run(run: AgentRun, input_ids: list[str]) -> dict:
     """公开快照只包含执行身份、可见状态和时间，不泄漏配置与 manifest。"""
     result = {
         key: getattr(run, key)
@@ -135,7 +140,6 @@ def serialize_public_run(run: AgentRun) -> dict:
             "id",
             "execution_seq",
             "turn_id",
-            "input_id",
             "thread_id",
             "agent_slug",
             "run_type",
@@ -158,6 +162,7 @@ def serialize_public_run(run: AgentRun) -> dict:
         "updated_at",
     )
     result.update({key: format_utc_datetime(getattr(run, key)) for key in timestamps})
+    result["input_ids"] = input_ids
     result["timing"] = build_agent_run_timing(
         created_at=run.created_at,
         started_at=run.started_at,

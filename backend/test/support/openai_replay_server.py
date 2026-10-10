@@ -51,6 +51,32 @@ def validate_request(authorization: str | None, request: dict) -> str | None:
     if bound_roots and f"BOUND_SKILL_{bound_roots[-1]}" not in serialized_messages:
         return "bound_root_snapshot_mismatch"
     user_messages = [message for message in messages if message.get("role") == "user"]
+    if "DETERMINISTIC_ATTACHMENT_BATCH" in serialized_messages:
+        batch = [message for message in user_messages if "DETERMINISTIC_ATTACHMENT_BATCH" in json.dumps(message.get("content"))]
+        markers = [re.findall(r"BATCH_INPUT_[01]_MESSAGE_[01]", json.dumps(message.get("content"))) for message in batch]
+        if markers != [[f"BATCH_INPUT_{input_index}_MESSAGE_{position}"] for input_index in range(2) for position in range(2)]:
+            return "attachment_batch_messages_missing_or_reordered"
+        for index, message in enumerate(batch):
+            content = message.get("content")
+            images = (
+                [part for part in content if isinstance(part, dict) and part.get("type") == "image_url"]
+                if isinstance(content, list)
+                else []
+            )
+            if len(images) != (1 if index % 2 == 0 else 0):
+                return "attachment_batch_image_position_mismatch"
+    for message in user_messages:
+        content = json.dumps(message.get("content"), ensure_ascii=False)
+        anchor = re.search(r"DETERMINISTIC_ATTACHMENT_ANCHOR:([a-z0-9.-]+)", content)
+        if anchor:
+            contexts = re.findall(r"<attachment_context>(.*?)</attachment_context>", content, re.DOTALL)
+            expected = anchor.group(1)
+            if expected == "none" and contexts:
+                return "attachment_on_non_anchor_message"
+            if expected != "none" and (len(contexts) != 1 or expected not in contexts[0]):
+                return "attachment_anchor_missing"
+            if expected != "none" and any(name != expected for name in re.findall(r"batch-[01]\.txt", contexts[0])):
+                return "attachment_cross_input_anchor"
     current_content = json.dumps(user_messages[-1].get("content"), ensure_ascii=False)
     forbidden = re.findall(r"DETERMINISTIC_ATTACHMENT_ABSENT:([a-z0-9.-]+)", current_content)
     contexts = re.findall(r"<attachment_context>(.*?)</attachment_context>", current_content, re.DOTALL)

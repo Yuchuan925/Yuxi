@@ -280,7 +280,9 @@ export function useDemo() {
     try {
       const result = await threadApi.state(state.threadId);
       if (current(owner) && request === artifactRequest)
-        state.artifacts = result.agent_state.artifacts || [];
+        state.artifacts = (result.agent_state.artifacts || []).map((artifact) =>
+          typeof artifact === "string" ? artifact : artifact.path,
+        );
     } catch (error) {
       showError(error, owner);
     }
@@ -448,7 +450,7 @@ export function useDemo() {
         agent_id: state.agentId,
         title: text.slice(0, 40),
         input,
-        attachment_file_ids: fileIds,
+        yuxi: { attachment_file_ids: fileIds },
       };
     }
     return runCommand(command);

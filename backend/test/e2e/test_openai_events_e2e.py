@@ -9,6 +9,7 @@ import pytest
 
 from e2e_helpers import archive_public_thread, delete_agent, postgres_dsn
 from test.e2e.test_agent_lifecycle_e2e import MODEL, OUTPUT, _agent, _message, _provider, _turn
+from test.e2e.e2e_helpers import wait_for_consumed_input
 from test.live_api_cleanup import make_test_session_title
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.e2e, pytest.mark.slow, pytest.mark.timeout(180)]
@@ -48,7 +49,7 @@ async def test_default_message_keeps_batch_across_concurrent_steer_and_retry(e2e
                 },
             )
             assert started.status_code == 202, started.text
-            turn_id = started.json()["turn_id"]
+            turn_id = (await wait_for_consumed_input(e2e_client, e2e_headers, started.json()))["turn_id"]
             async with asyncio.timeout(30):
                 while not (await replay.get("/blocking-started", params={"token": gate})).json()["started"]:
                     await asyncio.sleep(0.1)
@@ -61,7 +62,7 @@ async def test_default_message_keeps_batch_across_concurrent_steer_and_retry(e2e
             ]
             receipts = await asyncio.gather(*(e2e_client.post(url, headers=headers, json=body) for body, headers in requests))
             assert all(r.status_code == 202 for r in receipts), [r.text for r in receipts]
-            assert receipts[0].json()["input_id"] == receipts[1].json()["input_id"]
+            assert receipts[0].json()["input_id"] != receipts[1].json()["input_id"]
             assert all(r.json()["turn_id"] is None and "mode" not in r.json() for r in receipts)
             queued = await e2e_client.post(
                 url,
@@ -101,10 +102,8 @@ async def test_default_message_keeps_batch_across_concurrent_steer_and_retry(e2e
             for (body, headers), receipt in zip(requests, receipts):
                 retry = await e2e_client.post(url, headers=headers, json=body)
                 assert retry.status_code == 202, retry.text
-                assert {key: value for key, value in retry.json().items() if key not in {"turn_id", "run_id"}} == {
-                    key: value for key, value in receipt.json().items() if key not in {"turn_id", "run_id"}
-                }
-                assert retry.json()["turn_id"] == turn_id and retry.json()["run_id"] is not None
+                assert retry.json() == receipt.json()
+                assert retry.json()["turn_id"] is None and retry.json()["run_id"] is None
             changed = await e2e_client.post(
                 url,
                 headers=requests[0][1],
@@ -114,11 +113,13 @@ async def test_default_message_keeps_batch_across_concurrent_steer_and_retry(e2e
             conn = await asyncpg.connect(postgres_dsn())
             try:
                 modes = await conn.fetch(
-                    "SELECT i.kind, r.turn_id FROM agent_input_receipts r LEFT JOIN agent_inputs i ON i.id = r.input_id WHERE r.idempotency_key LIKE $1",
+                    "SELECT i.kind, i.turn_id, r.turn_id AS receipt_turn FROM agent_input_receipts r "
+                    "LEFT JOIN agent_inputs i ON i.id = r.input_id WHERE r.idempotency_key LIKE $1",
                     f"%{gate}%",
                 )
                 assert sum(row["kind"] == "steer" for row in modes) == 2
                 assert all(row["turn_id"] == turn_id for row in modes if row["kind"] == "steer")
+                assert all(row["receipt_turn"] is None for row in modes if row["kind"] == "steer")
             finally:
                 await conn.close()
             # 每个公开 item 独立分页，不能按 Message ID 截断同消息的工具 item。
@@ -167,7 +168,8 @@ async def test_default_cancel_target_is_fixed_for_idempotent_retry(e2e_client, e
                 },
             )
             assert created.status_code == 201, created.text
-            thread_id, turn_id = created.json()["id"], created.json()["yuxi"]["receipt"]["turn_id"]
+            consumed = await wait_for_consumed_input(e2e_client, e2e_headers, created.json()["yuxi"]["receipt"])
+            thread_id, turn_id = consumed["session_id"], consumed["turn_id"]
             async with asyncio.timeout(30):
                 while not (await replay.get("/blocking-started", params={"token": gate})).json()["started"]:
                     await asyncio.sleep(0.1)
@@ -189,10 +191,12 @@ async def test_default_cancel_target_is_fixed_for_idempotent_retry(e2e_client, e
                 headers={**e2e_headers, "Idempotency-Key": f"second-{gate}"},
                 json={"events": [{"type": "agent.session.input.message", "input": [_message(OUTPUT)]}]},
             )
-            assert second.status_code == 202 and second.json()["turn_id"] != turn_id, second.text
+            assert second.status_code == 202, second.text
+            second_input = await wait_for_consumed_input(e2e_client, e2e_headers, second.json())
+            assert second_input["turn_id"] != turn_id
             retried = await e2e_client.post(url, headers=headers, json=body)
             assert retried.status_code == 202 and retried.json() == cancelled.json(), retried.text
-            assert (await _turn(e2e_client, e2e_headers, thread_id, second.json()["turn_id"]))["status"] == "completed"
+            assert (await _turn(e2e_client, e2e_headers, thread_id, second_input["turn_id"]))["status"] == "completed"
         finally:
             await replay.get("/release-blocking", params={"token": gate})
             if thread_id:
@@ -222,7 +226,8 @@ async def test_cancel_preserves_displayed_partial_text_in_public_history(e2e_cli
                 },
             )
             assert created.status_code == 201, created.text
-            thread_id, turn_id = created.json()["id"], created.json()["yuxi"]["receipt"]["turn_id"]
+            consumed = await wait_for_consumed_input(e2e_client, e2e_headers, created.json()["yuxi"]["receipt"])
+            thread_id, turn_id = consumed["session_id"], consumed["turn_id"]
             async with asyncio.timeout(30):
                 async with e2e_client.stream("GET", f"/api/v1/agents/sessions/{thread_id}/events", headers=e2e_headers) as stream:
                     async for _, event in read_events(stream):

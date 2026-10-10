@@ -46,16 +46,12 @@ async def claim_next_input(*, db: AsyncSession, agent_session: Session, binding:
         return None
 
     input_repo = AgentInputRepository(db)
-    head = await input_repo.get_queue_head(thread_id=agent_session.thread_id, uid=agent_session.uid, app_id=agent_session.app_id)
-    if head is None or await AttachmentRepository(db).has_unready(head.id):
+    batch = await input_repo.ready_batch(thread_id=agent_session.thread_id, uid=agent_session.uid, app_id=agent_session.app_id)
+    if not batch:
         return None
+    head = batch[0]
     if binding is None:
         binding = await resolve_session_workdir_binding(agent_session=agent_session, uid=agent_session.uid, db=db)
-
-    messages = await input_repo.list_messages(head.id)
-    cutoff_seq = await input_repo.get_latest_receive_seq(head.id)
-    if not messages or cutoff_seq is None:
-        raise ValueError("队头 Input 缺少已接收消息")
 
     turn_id = str(uuid.uuid4())
     run_id = str(uuid.uuid4())
@@ -67,7 +63,6 @@ async def claim_next_input(*, db: AsyncSession, agent_session: Session, binding:
         agent_slug=head.agent_slug,
         uid=head.uid,
         turn_id=turn_id,
-        input_id=head.id,
         app_id=head.app_id,
         api_key_id=head.api_key_id,
         input_payload=head.input_payload or {},
@@ -80,7 +75,7 @@ async def claim_next_input(*, db: AsyncSession, agent_session: Session, binding:
         created_by_run_id=(head.origin_metadata or {}).get("created_by_run_id"),
     )
     await turn_repo.set_current(turn, run_id=run_id)
-    await input_repo.consume(input_id=head.id, turn_id=turn_id, run_id=run_id, cutoff_seq=cutoff_seq)
+    messages = await input_repo.consume(inputs=batch, turn_id=turn_id, run_id=run_id)
     await AgentRunRepository(db).set_input_message(run_id, messages[0].id)
     return Dispatch(run_id=run_id, binding=binding)
 

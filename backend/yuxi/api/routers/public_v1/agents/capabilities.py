@@ -45,8 +45,8 @@ async def upload_file(
 ):
     """上传不创建 Session 或 Workdir，单文件最多 5 MiB，有效期 24 小时。
 
-    将返回的 id 放入创建请求的 attachment_file_ids 或消息事件的
-    yuxi.attachment_file_ids。每个 draft 只提交给一个 Input；不要求选择 OCR 或提供存储路径。
+    将返回的 id 放入创建请求或消息事件的提交级 yuxi.attachment_file_ids。
+    每个 draft 只提交给一个 Input；不要求选择 OCR 或提供存储路径。
     """
     if not file.filename:
         raise HTTPException(status_code=400, detail="无法识别的文件名")

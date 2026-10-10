@@ -8,14 +8,14 @@
 
 Yuxi 是一个面向 RAG、知识图谱和多智能体工作流的知识库平台。用户通过 Vue 前端管理智能体、知识库、模型、工具、Skills、MCP 与协作会话；前端通过 `/api` 调用 FastAPI；后端服务层协调 PostgreSQL、Redis、MinIO、Milvus、Neo4j、LangGraph 和沙盒。
 
-普通智能体消息先在 PostgreSQL 中保存为 Input、回执和 Message。线程调度器在空闲时领取优先队头，创建 Turn 与首个 Run；steer 优先于 follow-up，运行中在安全边界接续当前 Turn。人工等待恢复沿用当前 Turn，产生下一段 Run。提交事务后，pending Run 通过 Redis/ARQ 交给独立 worker 执行。Redis Stream 保存短期增量，PostgreSQL 保存执行和业务终态，前端通过 Thread SSE 观察整轮工作。
+普通智能体消息先在 PostgreSQL Input 中保存原始内容，Receipt 保存幂等接收事实。调度器消费就绪输入时原子创建正式 Message、Turn 与首个 Run；steer 优先于 follow-up，运行中在安全边界接续当前 Turn。人工等待恢复沿用当前 Turn，产生下一段 Run。消费事务提交后，pending Run 通过 Redis/ARQ 交给独立 worker 执行。Redis Stream 保存短期增量，PostgreSQL 保存执行和业务终态，前端分别显示待处理队列和正式消息历史。
 
 核心开发服务包括：
 
 - `frontend`：Vue 3 / Vite 前端，挂载 `frontend/src` 并热重载。
 - `api`：FastAPI API 服务，挂载 `backend/yuxi` 和测试目录并热重载。
 - `worker`：ARQ worker，执行已经派发的 AgentRun 与注册的 后台作业，并周期触发用户自建 Agent 定时任务；三者分别使用 PostgreSQL 中的运行租约、任务租约和调度锁闭合并发与恢复。
-- `schema-init`：Compose 中唯一修改 Yuxi 数据库 Schema 的一次性初始化进程，为全新部署建立当前 Schema，并拥有显式支持的结构升级；当前支持 business 5→6 添加附件表。API 与 worker 等待其成功后只校验 Schema 版本。
+- `schema-init`：Compose 中唯一修改 Yuxi 数据库 Schema 的一次性初始化进程，为全新部署建立 business Schema 8；旧版本明确拒绝启动，不提供自动升级或清库。API 与 worker 等待其成功后只校验 Schema 版本。
 - `sandbox-provisioner`：为智能体工具执行提供隔离沙盒。
 - `postgres`：业务数据、知识库元数据、持久 Input 队列、Turn/Run 与 LangGraph checkpoint。
 - `redis`：ARQ 投递、运行事件、取消信号以及跨进程配置和模型缓存。
@@ -79,8 +79,8 @@ Yuxi 始终交付完整知识能力。API 注册知识库、图谱、评估、Da
 一次普通智能体输入经过以下边界：
 
 1. `AgentView` 装配 `SessionWorkspace`，后者收集文本、图片、附件、模型与审批配置，`frontend/src/apis/agent_api.js` 调用 Public Session API。Repository 批量读取事实，由唯一 Session 投影生成详情、列表、搜索和更新响应。
-2. `api/routers/public_v1/agents` 将 JWT 或 API Key 身份转为完整 ActorScope，并把有序消息和配置交给 `modules/agents/services/inputs.py`。接入事务锁定 Thread，验证作用域与幂等回执，保存 Input、Message 和 Receipt；配置在接收时冻结。
-3. `modules/agents/services/scheduler.py` 在线程锁下领取未暂停队列的优先队头，原子创建 Turn 与首个 pending Run。follow-up 彼此 FIFO；每个 Thread 的 pending steer 聚合为唯一优先批次。排队 Input 不绑定 Turn，消费时固定 Turn/Run 归属；等待回答或审批时拒绝普通消息。
+2. `api/routers/public_v1/agents` 将 JWT 或 API Key 身份转为完整 ActorScope，并把有序消息和配置交给 `modules/agents/services/inputs.py`。接入事务锁定 Thread，验证作用域与幂等回执，保存独立 Input 原始内容、提交级文件引用和 Receipt，并绑定附件到 Input；配置在接收时冻结，正文与原始文件 ID 永久保留。
+3. `modules/agents/services/scheduler.py` 在线程锁下领取未暂停队列的就绪优先队头，原子创建 Turn、首个 pending Run 和正式 Message。follow-up 单条 FIFO；steer 按原接收序号消费连续就绪前缀，各 Input 保持独立。消费固定 Input 的执行归属，并将各 Input 附件挂到自己的最后一条 Message；Receipt 保持接收时的命令目标，不回填执行归属。Message 的 received_at 保留接收时间，created_at 表示进入执行投影的时间。等待回答或审批时拒绝普通消息。
 4. owning transaction 提交后才向 ARQ 投递 pending Run。恢复扫描可补投未成功投递的同一个 Run，不自动重试已经失败的工作。
 5. `worker` 中的 `modules/agents/services/runner.py` 使用进程 identity 与 job-attempt token 取得 Run lease；未取得 ownership 的重复任务不会执行。Heartbeat 在独立事务中续租，再加载运行上下文执行 LangGraph。Langfuse 使用 Turn 级 trace 与 Run 级 observation；远端观测不拥有业务终态。
 6. 所有 Session 通过同一 Agent 后端与 middleware 组合 Workdir、Skills、MCP、审批、摘要及协作能力。协作成员拥有独立上下文、Thread/Input/Turn/Run，以父关系和树内名称关联；不继承父历史。全树共享 Project Workdir、实际 Sandbox 和四个执行名额，等待释放 worker 与执行名额。PostgreSQL 拥有协作消息、等待与终态事实；普通取消只影响指定 Turn，用户明确停止才停止整树。各 Run 的 lease、结果和终态发布独立，沙盒由树级空闲回收负责；具体行为见[会话协作](docs/agents/session-cooperation.md)。
@@ -93,8 +93,8 @@ Yuxi 始终交付完整知识能力。API 注册知识库、图谱、评估、Da
 
 - Docker Compose 是开发环境的事实来源。开发时先检查容器、日志和热重载，不默认要求本地裸跑服务。
 - HTTP 路由保持薄；用例流程放在各业务域 `services`，持久化查询放在同域 `repositories`。
-- 输入接入与 Run 执行是两个阶段：先提交 PostgreSQL 的 Message、Input、Receipt 和 pending Run，再投递 ARQ，不能让队列消息先于数据库状态可见。
-- 同一用户、APP、智能体和 Thread 的 follow-up Input 按 FIFO 串行领取，pending steer 合并为唯一优先节点；运行中在安全边界消费 steer，空闲时领取优先队头。Input、Turn 和 Run 分别表达投递、一轮工作和执行段，不共用业务状态模型。
+- 接收事务保存 Input 原始内容和 Receipt；消费事务原子生成正式 Message、执行与附件归属，提交后投递 ARQ。未消费取消不生成消息；数据库唯一来源约束防止重复投影。
+- 同一用户、APP、智能体和 Thread 的 follow-up Input 按 FIFO 单条领取，steer 优先并在消费时合并连续就绪前缀；未就绪队头阻止越过领取。每次提交身份独立，运行中在安全边界消费 steer；多个 Input 通过 consumed_run_id 归属于同一 Run。
 - PostgreSQL 保存业务事实状态；Redis 承担投递、事件、取消和缓存，不作为 AgentRun 最终状态的唯一来源。
 - `pending` Run 是持久化投递意图；`running` / `cancel_requested` Run 必须由唯一 attempt lease 拥有。Heartbeat 只能由当前 owner 续租，终态或 retry publication 清除 lease，过期 ownership 不能被另一个执行者静默接管。
 - Turn 结果以 `result_run_id` 指向的顶层 Run 及其 `output_message_id` 为权威；消息、事件和 artifact 均绑定明确的 Input/Turn/Run，禁止从未完成、其他 Turn 的子 Run 或相邻 Run 猜测输出。每个子任务的 Turn 结果只属于自身 Run。

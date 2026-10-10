@@ -1,5 +1,6 @@
 """公开 Session 的请求与响应模型，分别保留输入校验与持久响应约束。"""
 
+from datetime import datetime
 from typing import Annotated, Any, Literal
 
 from fastapi import HTTPException
@@ -21,7 +22,7 @@ class WireModel(BaseModel):
 class FileResponse(BaseModel):
     """隔离文件草稿的公开引用。"""
 
-    id: str = Field(description="稳定文件 ID，随消息 attachment_file_ids 提交。")
+    id: str = Field(description="稳定文件 ID，通过提交级 yuxi.attachment_file_ids 引用。")
     object: Literal["file"] = "file"
     filename: str = Field(description="服务端规范化的原文件名称。")
     bytes: int = Field(description="原文件字节数，上限 5 MiB。")
@@ -43,6 +44,12 @@ class InputImagePart(WireModel):
 
     type: Literal["input_image"]
     image_url: str = Field(min_length=1)
+
+
+class InputAttachmentOptions(WireModel):
+    """提交级附件引用，保持原始顺序。"""
+
+    attachment_file_ids: list[Annotated[str, Field(min_length=32, max_length=32)]] = Field(default_factory=list, max_length=20)
 
 
 class InputMessage(WireModel):
@@ -81,6 +88,7 @@ class SessionCreate(WireModel):
     )
 
     agent_id: str = Field(min_length=1, max_length=64, description="可见的已保存 Agent slug，先从 Agent 目录查询。")
+    yuxi: InputAttachmentOptions = Field(default_factory=InputAttachmentOptions)
     agent: SessionAgentOverride | None = Field(default=None, description="仅支持 model 覆盖；其他官方 Agent 配置当前不支持。")
     input: (
         Annotated[str, Field(min_length=1, max_length=32768)] | Annotated[list[InputMessage], Field(min_length=1, max_length=20)] | None
@@ -92,18 +100,6 @@ class SessionCreate(WireModel):
     project_id: str | None = Field(default=None, description="Yuxi 扩展：当前用户的 Project；省略时创建隐式 Project。")
     title: str | None = Field(default=None, max_length=255, description="Yuxi 扩展：会话展示标题。")
     tool_approval_mode: str | None = Field(default=None, description="Yuxi 扩展：后续输入默认工具审批模式。")
-    attachment_file_ids: list[Annotated[str, Field(min_length=32, max_length=32)]] = Field(
-        default_factory=list,
-        max_length=20,
-        description="Yuxi 扩展：/files 上传返回的 draft ID，随初始输入提交到 Workdir。",
-    )
-
-    @model_validator(mode="after")
-    def require_input_for_attachments(self):
-        """附件只随实际输入提交。"""
-        if self.attachment_file_ids and self.input is None:
-            raise ValueError("attachment_file_ids 必须同时提供 input")
-        return self
 
 
 class SessionUpdateOptions(WireModel):
@@ -128,7 +124,7 @@ class SessionUpdate(WireModel):
         return self
 
 
-class MessageOptions(WireModel):
+class MessageOptions(InputAttachmentOptions):
     """普通输入的优先级、执行配置与附件。"""
 
     mode: Literal["follow_up", "steer"] | None = Field(
@@ -137,11 +133,6 @@ class MessageOptions(WireModel):
     )
     model: str | None = Field(default=None, min_length=1, description="本次 follow_up 的模型覆盖，与消息原子接收；steer 禁止覆盖。")
     tool_approval_mode: str | None = None
-    attachment_file_ids: list[Annotated[str, Field(min_length=32, max_length=32)]] = Field(
-        default_factory=list,
-        max_length=20,
-        description="/files 上传返回的 draft ID；消息接收时提交，文件就绪后才执行。",
-    )
 
 
 class MessageEvent(WireModel):
@@ -217,6 +208,13 @@ class ContinueEvent(WireModel):
     type: Literal["yuxi.session.input.continue"]
 
 
+class PromoteInputEvent(WireModel):
+    """将待消费输入原地转为引导。"""
+
+    type: Literal["yuxi.session.input.promote"]
+    input_id: str = Field(min_length=1)
+
+
 class CancelInputEvent(WireModel):
     """移除尚未领取的 Input 批次。"""
 
@@ -231,7 +229,7 @@ class TreeControlEvent(WireModel):
 
 
 ThreadEvent = Annotated[
-    MessageEvent | ResumeEvent | CancelEvent | ContinueEvent | CancelInputEvent | TreeControlEvent,
+    MessageEvent | ResumeEvent | CancelEvent | ContinueEvent | PromoteInputEvent | CancelInputEvent | TreeControlEvent,
     Field(discriminator="type"),
 ]
 
@@ -459,7 +457,10 @@ class InputResponse(BaseModel):
     turn_id: str | None = Field(description="排队时为空，消费后固定。")
     run_id: str | None
     received_seq: int
-    cutoff_seq: int | None
+    messages: list[dict[str, Any]]
+    attachment_file_ids: list[str]
+    attachments: list[dict[str, Any]]
+    received_at: datetime
     items: list[MessageItem]
     attachment_status: Literal["preparing", "ready"] = Field(description="ready 表示本次附件已写入 Workdir；preparing 时禁止消费。")
     attachment_error: str | None = Field(description="最近一次准备失败，恢复会重试同一 Input。")

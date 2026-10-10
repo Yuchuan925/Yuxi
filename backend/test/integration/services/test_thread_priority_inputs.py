@@ -177,6 +177,152 @@ async def _start(sessions, *, running: bool = True):
         return run
 
 
+async def test_promote_keeps_original_identity_and_priority_while_paused(sessions):
+    """转换只改类型；接收内容、顺序与暂停标记保持不变。"""
+    first = await _send(sessions, "B", "follow_up")
+    await _send(sessions, "C", "follow_up")
+    later = await _send(sessions, "D", "steer")
+    async with sessions() as db:
+        original = await db.get(AgentInput, first["input_id"])
+        before = (original.messages, original.received_seq, original.input_payload, original.created_at)
+        promoted = await threads.promote_input(
+            db=db,
+            scope=SCOPE,
+            thread_id="input-thread",
+            input_id=original.id,
+            idempotency_key="promote-B",
+        )
+        replay = await threads.promote_input(
+            db=db,
+            scope=SCOPE,
+            thread_id="input-thread",
+            input_id=original.id,
+            idempotency_key="promote-B",
+        )
+        assert replay == promoted and promoted["input_id"] == first["input_id"]
+        await threads.promote_input(
+            db=db,
+            scope=SCOPE,
+            thread_id="input-thread",
+            input_id=original.id,
+            idempotency_key="promote-B-again",
+        )
+        await db.refresh(original)
+        assert (original.messages, original.received_seq, original.input_payload, original.created_at) == before
+        assert original.kind == "steer" and original.status == "pending"
+        assert (await SessionRepository(db).get_session_by_thread_id("input-thread")).queue_paused
+        assert await db.scalar(select(func.count()).select_from(Message)) == 0
+        queue = await threads.get_queue_snapshot(db=db, scope=SCOPE, thread_id="input-thread")
+        assert [item["content"] for item in queue["inputs"]] == ["B", "D", "C"]
+        accepted = await threads.continue_queue(db=db, scope=SCOPE, thread_id="input-thread", idempotency_key="continue-batch")
+        ids = await AgentInputRepository(db).input_ids_for_runs([accepted["run_id"]])
+        assert ids[accepted["run_id"]] == [first["input_id"], later["input_id"]]
+        with pytest.raises(HTTPException) as error:
+            await threads.promote_input(db=db, scope=SCOPE, thread_id="input-thread", input_id=original.id, idempotency_key="too-late")
+        assert error.value.status_code == 409
+
+
+@pytest.mark.parametrize("waiting", ["answer", "approval", "cooperation", "cancelling"])
+async def test_promote_rejects_waiting_or_cleanup(sessions, waiting):
+    """等待和取消边界拒绝转换并保留原始队列事实。"""
+    current = await _start(sessions)
+    queued = await _send(sessions, "pending", "follow_up")
+    async with sessions() as db:
+        turn = await db.get(AgentTurn, current.turn_id)
+        turn.status = "cancelling" if waiting == "cancelling" else "waiting"
+        turn.waitpoint = None if waiting == "cancelling" else {"kind": waiting, "run_id": current.id}
+        await db.commit()
+        with pytest.raises(HTTPException) as error:
+            await threads.promote_input(
+                db=db, scope=SCOPE, thread_id="input-thread", input_id=queued["input_id"], idempotency_key="blocked"
+            )
+        assert error.value.status_code == 409
+        await db.rollback()
+        assert (await db.get(AgentInput, queued["input_id"])).kind == "follow_up"
+
+
+async def test_cancel_one_steer_does_not_cancel_other_submissions(sessions):
+    """取消仅针对选中 Input，未消费提交从不生成正式历史。"""
+    first = await _send(sessions, "D")
+    second = await _send(sessions, "E")
+    async with sessions() as db:
+        await threads.cancel_input(db=db, scope=SCOPE, thread_id="input-thread", input_id=first["input_id"], idempotency_key="cancel-D")
+        snapshot = await inputs.get_input_snapshot(db=db, scope=SCOPE, thread_id="input-thread", input_id=first["input_id"])
+        assert snapshot["status"] == "cancelled" and snapshot["items"] == []
+        assert snapshot["messages"][0]["content"][0]["text"] == "D"
+        assert (await db.get(AgentInput, second["input_id"])).status == "pending"
+        assert await db.scalar(select(func.count()).select_from(Message)) == 0
+        with pytest.raises(HTTPException) as error:
+            await threads.promote_input(
+                db=db, scope=SCOPE, thread_id="input-thread", input_id=first["input_id"], idempotency_key="promote-cancelled"
+            )
+        assert error.value.status_code == 409
+
+
+async def test_promote_after_completion_opens_next_turn(sessions):
+    """已结束的旧 Turn 不限制仍 pending 输入的优先调度。"""
+    current = await _start(sessions)
+    queued = await _send(sessions, "next", "follow_up")
+    async with sessions() as db:
+        await SessionRepository(db).lock_session_by_thread_id("input-thread")
+        run = await db.get(AgentRun, current.id)
+        output = Message(session_record_id=run.session_record_id, role="assistant", content="finished", run_id=run.id, turn_id=run.turn_id)
+        db.add(output)
+        await db.flush()
+        run.output_message_id = output.id
+        await runs.settle_checkpoint(db=db, run=run, worker_id="owner", status="completed", token_usage=None)
+        await db.commit()
+        accepted = await threads.promote_input(
+            db=db, scope=SCOPE, thread_id="input-thread", input_id=queued["input_id"], idempotency_key="next-turn"
+        )
+        assert accepted["run_id"] is None and accepted["turn_id"] is None
+        consumed = await inputs.get_input_snapshot(db=db, scope=SCOPE, thread_id="input-thread", input_id=queued["input_id"])
+        assert consumed["run_id"] and consumed["turn_id"] != current.turn_id
+        projected = await AgentInputRepository(db).list_messages(queued["input_id"])
+        assert len(projected) == 1 and projected[0].run_id == consumed["run_id"]
+
+
+async def test_cancel_and_promote_race_keeps_one_submission(sessions):
+    """同一 Session 的控制竞争不复制输入或创建取消消息。"""
+    queued = await _send(sessions, "race", "follow_up")
+
+    async def control(action):
+        """使用独立连接竞争同一会话锁。"""
+        async with sessions() as db:
+            return await action(db=db, scope=SCOPE, thread_id="input-thread", input_id=queued["input_id"], idempotency_key=action.__name__)
+
+    results = await asyncio.gather(control(threads.cancel_input), control(threads.promote_input), return_exceptions=True)
+    assert isinstance(results[0], dict)
+    if isinstance(results[1], HTTPException):
+        assert results[1].status_code == 409
+    else:
+        assert isinstance(results[1], dict)
+    async with sessions() as db:
+        assert (await db.get(AgentInput, queued["input_id"])).status == "cancelled"
+        assert await db.scalar(select(func.count()).select_from(AgentInput)) == 1
+        assert await db.scalar(select(func.count()).select_from(Message)) == 0
+
+
+async def test_consume_failure_rolls_back_projection_and_ownership(sessions):
+    """投影中途失败回滚全部消息和消费归属，原始输入仍可恢复。"""
+    first = await _send(sessions, "D")
+    second = await _send(sessions, "E")
+    async with sessions() as db:
+        item = await db.get(AgentInput, second["input_id"])
+        item.messages = [{"content": [{"type": "unsupported"}], "metadata": {}, "yuxi": {"attachment_file_ids": []}}]
+        await db.commit()
+    async with sessions() as db:
+        session = await SessionRepository(db).lock_session_by_thread_id("input-thread")
+        session.queue_paused = False
+        with pytest.raises(ValueError, match="不支持"):
+            await scheduler.claim_next_input(db=db, agent_session=session, binding=_binding())
+        await db.rollback()
+    async with sessions() as db:
+        assert await db.scalar(select(func.count()).select_from(Message)) == 0
+        assert await db.scalar(select(func.count()).select_from(AgentRun)) == 0
+        assert (await db.get(AgentInput, first["input_id"])).status == "pending"
+
+
 async def test_empty_session_freezes_system_default_before_first_input(sessions, monkeypatch):
     """创建后的默认模型与 Agent 修改不影响首个输入，投递前事务已提交。"""
     from unittest.mock import AsyncMock
@@ -216,7 +362,8 @@ async def test_empty_session_freezes_system_default_before_first_input(sessions,
             messages=[build_chat_input_message("first input")],
         )
     async with sessions() as db:
-        run = await db.get(AgentRun, accepted["run_id"])
+        consumed = await db.get(AgentInput, accepted["input_id"])
+        run = await db.get(AgentRun, consumed.consumed_run_id)
         assert run.input_payload["context_snapshot"]["model"] == "test:original-default"
         assert run.input_payload["context_snapshot"] == snapshot
         assert (await db.get(Session, run.session_record_id)).config_snapshot == snapshot
@@ -227,7 +374,7 @@ async def test_empty_session_freezes_system_default_before_first_input(sessions,
             thread_id="default-snapshot-thread",
             idempotency_key="default-snapshot-input",
         )
-        assert receipt.input_id == accepted["input_id"] and receipt.run_id == run.id
+        assert receipt.input_id == accepted["input_id"] and receipt.run_id is None and receipt.turn_id is None
 
 
 async def test_idle_steer_batch_precedes_fifo_and_is_sealed_on_claim(sessions):
@@ -235,13 +382,14 @@ async def test_idle_steer_batch_precedes_fifo_and_is_sealed_on_claim(sessions):
     await _queue_inputs(sessions, count=2)
     first = await _send(sessions, "S1")
     second = await _send(sessions, "S2")
-    assert first["input_id"] == second["input_id"]
+    assert first["input_id"] != second["input_id"]
     assert first["turn_id"] is None and first["run_id"] is None
     assert "mode" not in first
     async with sessions() as db:
         snapshot = await threads.get_queue_snapshot(db=db, scope=SCOPE, thread_id="input-thread")
         assert [(item["kind"], item["content"]) for item in snapshot["inputs"]] == [
-            ("steer", "S1\nS2"),
+            ("steer", "S1"),
+            ("steer", "S2"),
             ("follow_up", "message-0"),
             ("follow_up", "message-1"),
         ]
@@ -255,11 +403,11 @@ async def test_idle_steer_batch_precedes_fifo_and_is_sealed_on_claim(sessions):
         claimed_run = await db.get(AgentRun, accepted["run_id"])
         assert batch.turn_id == claimed_run.turn_id
         receipt = await db.get(AgentInputReceipt, accepted["event_id"])
-        assert receipt.turn_id == claimed_run.turn_id
+        assert receipt.input_id is None and receipt.turn_id == claimed_run.turn_id and receipt.run_id == claimed_run.id
         replay = await threads.continue_queue(db=db, scope=SCOPE, thread_id="input-thread", idempotency_key="continue")
         assert replay == accepted
         assert await db.scalar(select(func.count()).select_from(AgentRun)) == 1
-        messages = await AgentInputRepository(db).list_messages(batch.id)
+        messages = list(await db.scalars(select(Message).where(Message.run_id == claimed_run.id).order_by(Message.id)))
         assert [(item.content, item.run_id, item.delivery_status) for item in messages] == [
             ("S1", accepted["run_id"], "dispatched"),
             ("S2", accepted["run_id"], "dispatched"),
@@ -275,7 +423,7 @@ async def test_idle_steer_batch_precedes_fifo_and_is_sealed_on_claim(sessions):
             mode="steer",
             messages=[build_chat_input_message("S1")],
         )
-        assert retry["input_id"] == batch.id and retry["run_id"] == batch.consumed_run_id
+        assert retry == first and retry["input_id"] == batch.id and retry["run_id"] is None
         assert await db.scalar(select(func.count()).select_from(AgentInputReceipt).where(AgentInputReceipt.idempotency_key == "S1")) == 1
 
 
@@ -285,7 +433,7 @@ async def test_safe_handoff_consumes_batch_in_same_turn_with_current_config(sess
     follow = await _send(sessions, "F1", "follow_up")
     first = await _send(sessions, "S1")
     second = await _send(sessions, "S2")
-    assert first["input_id"] == second["input_id"]
+    assert first["input_id"] != second["input_id"]
     assert await runs.should_yield_for_steer(current.id)
     async with sessions() as db:
         await SessionRepository(db).lock_session_by_thread_id("input-thread")
@@ -301,7 +449,7 @@ async def test_safe_handoff_consumes_batch_in_same_turn_with_current_config(sess
         assert next_run.input_payload == current.input_payload
         assert next_run.input_payload["context_snapshot"]["model"] != "test:chat"
         assert (await db.get(AgentInput, follow["input_id"])).status == "pending"
-        messages = await AgentInputRepository(db).list_messages(next_run.input_id)
+        messages = list(await db.scalars(select(Message).where(Message.run_id == next_run.id).order_by(Message.id)))
         assert [message.content for message in messages] == ["S1", "S2"]
         turn = await db.get(AgentTurn, current.turn_id)
         assert turn.current_run_id == next_run.id and turn.result_run_id is None
@@ -332,7 +480,7 @@ async def test_terminal_failure_preserves_steer_for_explicit_continue(sessions, 
         assert agent_session.queue_paused
         batch = await db.get(AgentInput, steer["input_id"])
         assert batch.status == "pending" and batch.turn_id is None
-        assert (await AgentInputRepository(db).list_messages(batch.id))[0].delivery_status == "queued"
+        assert await AgentInputRepository(db).list_messages(batch.id) == []
         result = await threads.continue_queue(db=db, scope=SCOPE, thread_id="input-thread", idempotency_key="continue")
     async with sessions() as db:
         consumed = await db.get(AgentInput, steer["input_id"])
@@ -356,8 +504,8 @@ async def test_recovery_claims_idle_steer_without_any_follow_up(sessions):
         assert run.resume_from_run_id is None
 
 
-@pytest.mark.parametrize("cancel_batch", [False, True])
-async def test_steer_before_first_model_is_saved_as_yielded_not_failed(sessions, monkeypatch, cancel_batch):
+@pytest.mark.parametrize("cancel_batch,unready_tail", [(False, False), (True, False), (True, True)])
+async def test_steer_before_first_model_is_saved_as_yielded_not_failed(sessions, monkeypatch, cancel_batch, unready_tail):
     """模型前让位允许无输出；提交前取消批次则继续原 Run 而非失败。"""
     from langchain.messages import AIMessage
     from yuxi.modules.agents.runtime.middlewares.steer import SteerMiddleware
@@ -367,6 +515,27 @@ async def test_steer_before_first_model_is_saved_as_yielded_not_failed(sessions,
     context = SimpleNamespace(run_id=current.id)
     jumped = await SteerMiddleware().abefore_model({}, SimpleNamespace(context=context))
     assert jumped == {"jump_to": "end"} and context.steer_before_model
+    if unready_tail:
+        from yuxi.modules.agents.models.attachments import AgentAttachment
+        from yuxi.shared.datetime import utc_now
+
+        tail = await _send(sessions, "S4 preparing")
+        async with sessions() as db:
+            db.add(
+                AgentAttachment(
+                    id="unready-tail",
+                    uid=SCOPE.uid,
+                    app_id=None,
+                    filename="tail.txt",
+                    mime_type="text/plain",
+                    size_bytes=1,
+                    expires_at=utc_now(),
+                    status="preparing",
+                    input_id=tail["input_id"],
+                    object_name="tail-source",
+                )
+            )
+            await db.commit()
     if cancel_batch:
         async with sessions() as db:
             await threads.cancel_input(
@@ -381,7 +550,7 @@ async def test_steer_before_first_model_is_saved_as_yielded_not_failed(sessions,
         """投递时验证接续 Run 已提交，避免用通知冒充消费事实。"""
         async with sessions() as db:
             run = await db.get(AgentRun, run_id)
-            assert run.status == "pending" and run.input_id == steer["input_id"]
+            assert run.status == "pending" and (await db.get(AgentInput, steer["input_id"])).consumed_run_id == run.id
 
     monkeypatch.setattr(messages, "enqueue_agent_run", dispatch)
     async with sessions() as db:
@@ -508,7 +677,7 @@ async def test_cancelled_steer_continuation_preserves_wire_ids_and_audit_order(s
                     "run_id": current.id,
                     "turn_id": current.turn_id,
                     "worker_id": "owner",
-                    "input_id": current.input_id,
+                    "input_ids": ["input-0"],
                 },
                 current_user=SimpleNamespace(uid=SCOPE.uid),
                 db=db,
@@ -567,26 +736,28 @@ async def test_completion_winning_thread_lock_still_accepts_steer(sessions):
         return await _send(sessions, "late-steer")
 
     output_id, accepted = await asyncio.wait_for(asyncio.gather(finish(), send()), timeout=15)
-    assert accepted["turn_id"] != current.turn_id and accepted["run_id"]
+    assert accepted["turn_id"] is None and accepted["run_id"] is None
     async with sessions() as db:
+        consumed = await inputs.get_input_snapshot(db=db, scope=SCOPE, thread_id="input-thread", input_id=accepted["input_id"])
+        assert consumed["turn_id"] != current.turn_id and consumed["run_id"]
         old_turn = await db.get(AgentTurn, current.turn_id)
         old_run = await db.get(AgentRun, current.id)
         assert old_turn.status == "completed" and old_turn.result_run_id == current.id
         assert old_run.output_message_id == output_id
-        new_run = await db.get(AgentRun, accepted["run_id"])
+        new_run = await db.get(AgentRun, consumed["run_id"])
         assert new_run.resume_from_run_id is None and new_run.input_payload["context_snapshot"]["model"] == "test:chat"
 
 
 async def test_concurrent_steer_receipts_share_one_thread_batch(sessions):
     """并发接收由 Thread 锁串行化，消息顺序以持久接收序号为准。"""
     accepted = await asyncio.gather(*(_send(sessions, f"S{index}") for index in range(4)))
-    assert len({item["input_id"] for item in accepted}) == 1
+    assert len({item["input_id"] for item in accepted}) == 4
     async with sessions() as db:
         receipts = list(await db.scalars(select(AgentInputReceipt).order_by(AgentInputReceipt.receive_seq)))
-        messages = await AgentInputRepository(db).list_messages(accepted[0]["input_id"])
-        assert [message.content for message in messages] == [receipt.idempotency_key for receipt in receipts]
-        assert len(messages) == 4
-        assert await db.scalar(select(func.count()).select_from(AgentInput)) == 1
+        pending = list(await db.scalars(select(AgentInput).order_by(AgentInput.received_seq)))
+        assert [item.messages[0]["content"][0]["text"] for item in pending] == [receipt.idempotency_key for receipt in receipts]
+        assert await db.scalar(select(func.count()).select_from(Message)) == 0
+        assert len(pending) == 4
         assert await db.scalar(select(func.count()).select_from(AgentTurn)) == 0
 
 
@@ -625,7 +796,8 @@ async def test_http_steer_has_no_target_or_effective_mode_and_keeps_scope(sessio
     async with sessions() as db:
         persisted = await db.get(AgentInput, accepted["input_id"])
         assert persisted.kind == "steer" and persisted.status == "pending" and persisted.turn_id is None
-        assert [message.content for message in await AgentInputRepository(db).list_messages(persisted.id)] == ["S1"]
+        assert await AgentInputRepository(db).list_messages(persisted.id) == []
+        assert persisted.messages[0]["content"] == [{"type": "text", "text": "S1"}]
         with pytest.raises(HTTPException) as exc:
             await inputs.accept_message(
                 db=db,

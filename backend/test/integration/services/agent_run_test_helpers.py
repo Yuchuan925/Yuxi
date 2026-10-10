@@ -10,7 +10,7 @@ from sqlalchemy import delete, select, update
 
 from yuxi.modules.agents.models.cooperation import CooperationEvent, CooperationRuntime
 from yuxi.modules.agents.models.definitions import Agent
-from yuxi.modules.agents.models.inputs import AgentInput, AgentInputMessage, AgentInputReceipt
+from yuxi.modules.agents.models.inputs import AgentInput, AgentInputReceipt
 from yuxi.modules.agents.repositories.input import AgentInputRepository
 from yuxi.modules.agents.repositories.input_receipt import AgentInputReceiptRepository
 from yuxi.modules.agents.models.runs import AgentRun
@@ -20,6 +20,7 @@ from yuxi.modules.agents.models.messages import Message, ToolCall
 from yuxi.modules.workspace.models import Project
 from yuxi.modules.identity.models import User
 from yuxi.shared.datetime import utc_now
+from yuxi.modules.agents.services.input_messages import build_chat_input_message, serialize_input_message
 
 
 async def create_agent_run(
@@ -63,16 +64,17 @@ async def create_agent_run(
         db.add(agent_session)
         await db.flush()
         input_repo = AgentInputRepository(db)
-        await input_repo.create(
+        input_item = await input_repo.create(
             input_id=input_id,
             thread_id=thread_id,
             uid=uid,
             app_id=None,
             agent_slug="main",
             kind="follow_up",
+            messages=[serialize_input_message(build_chat_input_message(message_content))],
             input_payload=dict(input_payload),
         )
-        receipt = await AgentInputReceiptRepository(db).create(
+        await AgentInputReceiptRepository(db).create(
             receipt_id=str(uuid.uuid4()),
             idempotency_key=str(uuid.uuid4()),
             uid=uid,
@@ -82,15 +84,6 @@ async def create_agent_run(
             intent_hash="test-intent",
             input_id=input_id,
         )
-        message = Message(
-            session_record_id=agent_session.id,
-            role="user",
-            content=message_content,
-            delivery_status="queued",
-        )
-        db.add(message)
-        await db.flush()
-        await input_repo.add_messages(input_id=input_id, receipt_id=receipt.id, message_ids=[message.id])
         turn = AgentTurn(id=turn_id, thread_id=thread_id, uid=uid, app_id=None, status="running")
         db.add(turn)
         await db.flush()
@@ -102,9 +95,7 @@ async def create_agent_run(
                 agent_slug="main",
                 uid=uid,
                 turn_id=turn_id,
-                input_id=input_id,
                 session_record_id=agent_session.id,
-                input_message_id=message.id,
                 input_payload=dict(input_payload),
                 status=status,
                 run_type="chat",
@@ -115,12 +106,12 @@ async def create_agent_run(
         )
         await db.flush()
         turn.current_run_id = run_id
-        await input_repo.consume(
-            input_id=input_id,
+        [message] = await input_repo.consume(
+            inputs=[input_item],
             turn_id=turn_id,
             run_id=run_id,
-            cutoff_seq=receipt.receive_seq,
         )
+        (await db.get(AgentRun, run_id)).input_message_id = message.id
         await db.commit()
         return run_id, thread_id, message.id
 
@@ -134,9 +125,6 @@ async def cleanup_agent_run_threads(session_factory, thread_ids: list[str]) -> N
         await db.execute(delete(CooperationEvent).where(CooperationEvent.tree_root_thread_id.in_(thread_ids)))
         await db.execute(delete(CooperationRuntime).where(CooperationRuntime.tree_root_thread_id.in_(thread_ids)))
         await db.execute(update(Session).where(Session.thread_id.in_(thread_ids)).values(created_by_run_id=None))
-        await db.execute(update(AgentRun).where(AgentRun.thread_id.in_(thread_ids)).values(input_id=None))
-        if input_ids:
-            await db.execute(delete(AgentInputMessage).where(AgentInputMessage.input_id.in_(input_ids)))
         await db.execute(delete(AgentInputReceipt).where(AgentInputReceipt.thread_id.in_(thread_ids)))
         if input_ids:
             await db.execute(delete(AgentInput).where(AgentInput.id.in_(input_ids)))

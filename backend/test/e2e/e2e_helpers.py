@@ -38,6 +38,22 @@ async def wait_model_provider_cache() -> None:
     await asyncio.sleep(_CACHE_TTL_SECONDS + 0.1)
 
 
+async def wait_for_consumed_input(client: httpx.AsyncClient, headers: dict, receipt: dict) -> dict:
+    """校验接收回执不带执行归属，再从真实 Input 查询领取结果。"""
+    assert receipt["input_id"] and receipt["turn_id"] is None and receipt["run_id"] is None, receipt
+    session_id = receipt["session_id"]
+    async with asyncio.timeout(60):
+        while True:
+            response = await client.get(f"/api/v1/agents/sessions/{session_id}/inputs/{receipt['input_id']}", headers=headers)
+            assert response.status_code == 200, response.text
+            snapshot = response.json()
+            assert snapshot["status"] != "cancelled", snapshot
+            if snapshot["status"] == "consumed":
+                assert snapshot["run_id"] and snapshot["turn_id"] and snapshot["items"], snapshot
+                return {**snapshot, "session_id": session_id}
+            await asyncio.sleep(0.1)
+
+
 async def delete_agent(client: httpx.AsyncClient, headers: dict[str, str], slug: str) -> None:
     """等待终态 Run 的异步清理完成后删除测试智能体。"""
     async with asyncio.timeout(30):

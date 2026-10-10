@@ -1,50 +1,86 @@
 <template>
   <section
-    v-if="normalizedArtifacts.length"
+    v-for="group in artifactGroups"
+    :key="group.type"
     class="artifacts-list"
-    :class="{ 'is-box-group': normalizedArtifacts.length > 3 }"
-    aria-label="交付物"
+    :class="{
+      'is-box-group': group.type === 'file' && group.items.length > 3,
+      'is-image-group': group.type === 'image'
+    }"
+    :aria-label="group.type === 'image' ? '图片交付物' : '文件交付物'"
   >
-    <div v-if="normalizedArtifacts.length > 3" class="artifacts-heading">
-      <span>交付物 <span class="artifact-count">{{ normalizedArtifacts.length }}</span></span>
+    <div v-if="group.type === 'file' && group.items.length > 3" class="artifacts-heading">
+      <span
+        >交付物 <span class="artifact-count">{{ group.items.length }}</span></span
+      >
       <button
         type="button"
         class="lucide-icon-btn artifacts-toggle"
         :aria-expanded="expanded"
         @click="expanded = !expanded"
       >
-        {{ expanded ? '收起' : `展开其余 ${normalizedArtifacts.length - 3} 个` }}
+        {{ expanded ? '收起' : `展开其余 ${group.items.length - 3} 个` }}
         <ChevronDown :size="14" :class="{ 'is-expanded': expanded }" aria-hidden="true" />
       </button>
     </div>
     <TransitionGroup name="artifact-reveal" tag="div" class="artifact-items">
-      <div v-for="file in visibleArtifacts" :key="file.path" class="artifact-entry">
-        <div class="artifact-card">
+      <div v-for="file in group.visibleItems" :key="file.path" class="artifact-entry">
+        <div class="artifact-card" :class="{ 'is-image': file.type === 'image' }">
           <button
+            v-if="file.type === 'image'"
             type="button"
-            class="item-main"
-            :title="`打开 ${file.name}`"
+            class="image-preview"
+            :aria-label="`打开 ${file.name}`"
+            :aria-busy="imagePreviews[file.path]?.status === 'loading'"
             @click="openPreview(file)"
           >
-            <FileTypeIcon :name="file.path" :size="20" class="item-icon" />
-            <div class="item-meta">
-              <div class="item-name">{{ file.name }}</div>
-              <div class="item-desc">{{ getFileMetaLabel(file.path) }}</div>
-            </div>
+            <img
+              v-if="imagePreviews[file.path]?.status === 'ready'"
+              :src="imagePreviews[file.path].url"
+              :alt="file.name"
+              @error="imagePreviews[file.path].status = 'error'"
+            />
+            <span v-else class="image-preview-status">
+              {{
+                imagePreviews[file.path]?.status === 'error'
+                  ? '图片预览失败，点击打开详情'
+                  : '正在加载图片…'
+              }}
+            </span>
           </button>
-          <div class="item-actions">
-            <button class="item-action-btn" title="下载" @click.stop="downloadFile(file)">
-              <Download :size="15" />
-            </button>
+          <div class="artifact-file-row">
             <button
-              class="item-action-btn"
-              :title="isSaving(file.path) ? '保存中' : '保存到个人空间'"
-              :disabled="isSaving(file.path)"
-              @click.stop="saveToWorkspace(file)"
+              type="button"
+              class="item-main"
+              :title="`打开 ${file.name}`"
+              @click="openPreview(file)"
             >
-              <LoaderCircle v-if="isSaving(file.path)" :size="15" class="item-action-spin" />
-              <Save v-else :size="15" />
+              <FileTypeIcon :name="file.path" :size="20" class="item-icon" />
+              <div class="item-meta">
+                <div class="item-name">{{ file.name }}</div>
+                <div class="item-desc">{{ getFileMetaLabel(file.path) }}</div>
+              </div>
             </button>
+            <div class="item-actions">
+              <button
+                class="item-action-btn"
+                title="下载"
+                aria-label="下载"
+                @click.stop="downloadFile(file)"
+              >
+                <Download :size="15" />
+              </button>
+              <button
+                class="item-action-btn"
+                :title="isSaving(file.path) ? '保存中' : '保存到个人空间'"
+                aria-label="保存到个人空间"
+                :disabled="isSaving(file.path)"
+                @click.stop="saveToWorkspace(file)"
+              >
+                <LoaderCircle v-if="isSaving(file.path)" :size="15" class="item-action-spin" />
+                <Save v-else :size="15" />
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -73,13 +109,14 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
 import { ChevronDown, Download, LoaderCircle, Save } from '@lucide/vue'
 import { threadApi } from '@/apis/agent_api'
 import FileTypeIcon from '@/shared/ui/FileTypeIcon.vue'
 import WorkspacePathPicker from '@/modules/workspace/ui/WorkspacePathPicker.vue'
 import { parseDownloadFilename } from '@/shared/lib/file_utils'
+import { normalizeArtifacts } from '@/modules/session/model/artifacts'
 
 const props = defineProps({
   artifacts: {
@@ -94,21 +131,58 @@ const props = defineProps({
 const emit = defineEmits(['saved', 'open-preview'])
 
 const normalizedArtifacts = computed(() =>
-  (props.artifacts || [])
-    .filter((path) => typeof path === 'string' && path.trim())
-    .slice()
+  normalizeArtifacts(props.artifacts)
     .reverse()
-    .map((path) => {
-      const normalizedPath = path.trim()
-      return {
-        path: normalizedPath,
-        name: normalizedPath.split('/').pop() || normalizedPath
-      }
-    })
+    .map((artifact) => ({ ...artifact, name: artifact.path.split('/').pop() || artifact.path }))
 )
 const expanded = ref(false)
-const visibleArtifacts = computed(() =>
-  expanded.value ? normalizedArtifacts.value : normalizedArtifacts.value.slice(0, 3)
+const artifactGroups = computed(() =>
+  ['image', 'file']
+    .map((type) => {
+      const items = normalizedArtifacts.value.filter((artifact) => artifact.type === type)
+      return {
+        type,
+        items,
+        visibleItems: type === 'file' && !expanded.value ? items.slice(0, 3) : items
+      }
+    })
+    .filter((group) => group.items.length)
+)
+const imagePreviews = ref({})
+
+watch(
+  () =>
+    JSON.stringify([
+      props.threadId,
+      normalizedArtifacts.value.filter((file) => file.type === 'image').map((file) => file.path)
+    ]),
+  async (value, _previous, onCleanup) => {
+    const [threadId, paths] = JSON.parse(value)
+    let disposed = false
+    const urls = []
+    onCleanup(() => {
+      disposed = true
+      urls.forEach((url) => window.URL.revokeObjectURL(url))
+    })
+    imagePreviews.value = Object.fromEntries(paths.map((path) => [path, { status: 'loading' }]))
+    await Promise.all(
+      paths.map(async (path) => {
+        try {
+          if (!threadId) throw new Error('缺少会话')
+          const response = await threadApi.previewThreadArtifact(threadId, path)
+          const blob = await response.blob()
+          if (disposed) return
+          if (!blob.type.startsWith('image/')) throw new Error('文件无法作为图片预览')
+          const url = window.URL.createObjectURL(blob)
+          urls.push(url)
+          imagePreviews.value[path] = { status: 'ready', url }
+        } catch {
+          if (!disposed) imagePreviews.value[path] = { status: 'error' }
+        }
+      })
+    )
+  },
+  { immediate: true }
 )
 const savingState = ref({})
 const saveDialogOpen = ref(false)
@@ -256,7 +330,9 @@ const confirmSave = async () => {
 
 .artifact-reveal-enter-active,
 .artifact-reveal-leave-active {
-  transition: grid-template-rows 0.24s ease, opacity 0.2s ease;
+  transition:
+    grid-template-rows 0.24s ease,
+    opacity 0.2s ease;
 }
 
 .artifact-reveal-enter-from,
@@ -315,10 +391,7 @@ const confirmSave = async () => {
 
 .artifact-card {
   width: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
+  overflow: hidden;
   border: 1px solid var(--gray-150);
   border-radius: 12px;
   background: linear-gradient(180deg, var(--gray-25) 0%, var(--gray-0) 100%);
@@ -330,6 +403,69 @@ const confirmSave = async () => {
     border-color: var(--gray-300);
     background: var(--gray-0);
   }
+}
+
+.artifact-file-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.is-image-group .artifact-items {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: flex-end;
+
+  .artifact-entry {
+    width: 300px;
+    max-width: 100%;
+    min-width: 0;
+  }
+}
+
+.artifact-card.is-image {
+  border: 0;
+
+  .artifact-file-row {
+    border: 1px solid var(--gray-150);
+    border-radius: 0 0 12px 12px;
+  }
+}
+
+.image-preview {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: var(--gray-25);
+  cursor: pointer;
+
+  img {
+    display: block;
+    width: 100%;
+    height: auto;
+    min-height: 100px;
+    max-height: 200px;
+    object-fit: cover;
+  }
+}
+
+.image-preview-status {
+  display: flex;
+  min-height: 120px;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.image-preview:focus-visible,
+.item-main:focus-visible,
+.item-action-btn:focus-visible {
+  outline: 2px solid var(--main-color);
+  outline-offset: -2px;
 }
 
 .item-main {
@@ -424,7 +560,7 @@ const confirmSave = async () => {
     margin-top: 6px;
   }
 
-  .artifact-card {
+  .artifact-file-row {
     align-items: stretch;
   }
 

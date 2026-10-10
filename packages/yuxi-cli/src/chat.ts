@@ -22,7 +22,7 @@ export class ChatSession {
     let accepted: Json;
     try { accepted = await this.client.send(this.threadId, message, key); }
     catch (error) { throw new ChatSessionError(`接收结果待确认；Session ${this.threadId}，Idempotency-Key ${key}：${error instanceof Error ? error.message : error}`); }
-    let turnId = String(accepted.turn_id ?? "");
+    let turnId = "";
     while (!turnId) {
       if (!accepted.input_id) throw new ChatSessionError("服务端回执缺少 input_id");
       const input = await this.client.input(this.threadId, String(accepted.input_id));

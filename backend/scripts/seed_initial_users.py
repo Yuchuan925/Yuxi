@@ -57,12 +57,15 @@ async def ensure_uninitialized(session) -> None:
 
 
 async def seed_initial_users() -> None:
+    """注册完整模型并向尚未初始化的当前 Schema 写入种子用户。"""
+    from yuxi.bootstrap.models import load_models
     from yuxi.modules.identity.security import AuthUtils
     from yuxi.infrastructure.postgres.manager import pg_manager
     from yuxi.modules.identity.models import Department, User
     from yuxi.shared.datetime import utc_now
 
     try:
+        load_models()
         pg_manager.initialize()
         # Schema 由 Compose 中的 schema-init 独占创建，这里只校验版本后写入种子数据。
         from yuxi.infrastructure.postgres.schema import require_current_schema

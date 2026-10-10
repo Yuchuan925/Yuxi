@@ -115,7 +115,8 @@ async def test_items_page_bounds_database_rows_and_splits_one_message(test_clien
     try:
         record = await conn.fetchrow("SELECT id,uid,app_id FROM sessions WHERE thread_id=$1", session_id)
         await conn.executemany(
-            "INSERT INTO messages (session_record_id,role,content,extra_metadata,created_at,delivery_status) VALUES ($1,'assistant','PRIVATE_AUDIT','{}'::json,now(),'complete')",
+            "INSERT INTO messages (session_record_id,role,content,extra_metadata,created_at,delivery_status) "
+            "VALUES ($1,'assistant','PRIVATE_AUDIT','{}'::json,now(),'complete')",
             [(record["id"],)] * 250,
         )
         public = {
@@ -132,7 +133,8 @@ async def test_items_page_bounds_database_rows_and_splits_one_message(test_clien
             for index in [2, 0, 1]
         }
         await conn.execute(
-            "INSERT INTO messages (session_record_id,role,content,extra_metadata,created_at,delivery_status) VALUES ($1,'assistant','PRIVATE_AUDIT',$2::json,now(),'complete')",
+            "INSERT INTO messages (session_record_id,role,content,extra_metadata,created_at,delivery_status) "
+            "VALUES ($1,'assistant','PRIVATE_AUDIT',$2::json,now(),'complete')",
             record["id"],
             json.dumps({"public_items": public}),
         )
@@ -247,8 +249,44 @@ async def test_receipt_recovery_is_scoped_and_preserves_queued_input(test_client
                 "SELECT count(*) FROM messages m JOIN sessions s ON s.id=m.session_record_id WHERE s.thread_id=$1",
                 session_id,
             )
-            == 1
+            == 0
         )
+        input_id = accepted.json()["input_id"]
+        await conn.execute(
+            "UPDATE agent_inputs SET input_payload=jsonb_set(input_payload::jsonb, '{context_snapshot}', $2::jsonb) WHERE id=$1",
+            input_id,
+            json.dumps({"system_prompt": "PRIVATE_INPUT_SYSTEM", "summary_prompt": "PRIVATE_INPUT_SUMMARY"}),
+        )
+        original = await conn.fetchrow("SELECT messages, received_seq, created_at FROM agent_inputs WHERE id=$1", input_id)
+        promote = {"events": [{"type": "yuxi.session.input.promote", "input_id": input_id}]}
+        promote_headers = {**headers[0], "Idempotency-Key": f"promote-{original_key}"}
+        denied = await test_client.post(f"{url}/events", headers={**headers[1], "Idempotency-Key": str(uuid.uuid4())}, json=promote)
+        assert denied.status_code == 404
+        promoted = await test_client.post(f"{url}/events", headers=promote_headers, json=promote)
+        assert promoted.status_code == 202, promoted.text
+        assert (await test_client.post(f"{url}/events", headers=promote_headers, json=promote)).json() == promoted.json()
+        same_target = await test_client.post(f"{url}/events", headers={**headers[0], "Idempotency-Key": str(uuid.uuid4())}, json=promote)
+        assert same_target.status_code == 202
+        queue = (await test_client.get(f"{url}/queue", headers=headers[0])).json()
+        assert [(item["input_id"], item["kind"]) for item in queue["inputs"]] == [(input_id, "steer")]
+        assert await conn.fetchval("SELECT queue_paused FROM sessions WHERE thread_id=$1", session_id)
+        assert await conn.fetchrow("SELECT messages, received_seq, created_at FROM agent_inputs WHERE id=$1", input_id) == original
+        assert (await test_client.get(f"{url}/items", headers=headers[0])).json()["data"] == []
+        snapshot = (await test_client.get(f"{url}/inputs/{input_id}", headers=headers[0])).json()
+        assert snapshot["items"] == [] and snapshot["messages"][0]["content"][0]["text"] == "queued original"
+        for public_payload in (snapshot, queue):
+            assert "context_snapshot" not in json.dumps(public_payload)
+            assert "PRIVATE_INPUT_SYSTEM" not in json.dumps(public_payload)
+            assert "PRIVATE_INPUT_SUMMARY" not in json.dumps(public_payload)
+        cancelled = await test_client.post(
+            f"{url}/events",
+            headers={**headers[0], "Idempotency-Key": str(uuid.uuid4())},
+            json={"events": [{"type": "yuxi.session.input.cancel_input", "input_id": input_id}]},
+        )
+        assert cancelled.status_code == 202, cancelled.text
+        conflict = await test_client.post(f"{url}/events", headers={**headers[0], "Idempotency-Key": str(uuid.uuid4())}, json=promote)
+        assert conflict.status_code == 409
+        assert (await test_client.get(f"{url}/items", headers=headers[0])).json()["data"] == []
     finally:
         await conn.close()
         await delete_created_threads(*sessions)
