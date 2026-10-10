@@ -18,9 +18,11 @@ Yuxi 通过 `KnowledgeBaseManager` 读取知识库配置、解析权限并选择
 ```mermaid
 flowchart LR
     UI["Web / API"] --> Router["路由：认证和输入校验"]
-    Router --> Task["PostgreSQL BackgroundJob"]
+    Router -->|解析和索引| Task["PostgreSQL BackgroundJob"]
+    Router -->|配置和读取| Manager
     Task --> Worker["ARQ worker"]
-    Worker --> Manager["KnowledgeBaseManager"]
+    Worker --> Handler["knowledge services：领域作业流程"]
+    Handler --> Manager["KnowledgeBaseManager"]
     Manager --> MilvusKB["Milvus executor"]
     Manager --> Connector["Dify / Notion 只读 executor"]
     MilvusKB --> PG[("PostgreSQL")]
@@ -35,7 +37,7 @@ flowchart LR
     Tools --> Manager
 ```
 
-路由只接收请求并提交任务；Manager 负责配置和 executor 选择；具体 executor 负责解析、索引和检索。知识库配置的最终值在 PostgreSQL，Redis 只缓存最小运行配置，未命中或异常时回源数据库。
+管理路由对配置、列表和详情直接调用 Manager，对解析和索引登记后台作业；worker 根据 registry 调用知识库 service，再由 Manager 选择 executor。Manager 负责配置和 executor 选择；具体 executor 负责解析、索引和检索。知识库配置的最终值在 PostgreSQL，Redis 只缓存最小运行配置，未命中或异常时回源数据库。
 
 ## 文档状态机
 
@@ -126,6 +128,16 @@ Agent 的 `knowledges` 只能缩小用户已有权限。协作会话继承派发
 - Redis 缓存异常：Manager 回源 PostgreSQL；不支持的知识库类型或 executor 初始化失败会明确阻止操作。
 
 ## 源码定位与验证
+
+按需要修改的用户流程选择入口：
+
+| 维护任务 | 起点与职责 | 继续追踪 |
+| --- | --- | --- |
+| 管理配置、文件列表和检索调度 | [Manager](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/knowledge/manager.py) 读取配置、查询可见性并选择 executor | repositories 拥有持久查询；base 与 implementations 拥有文件处理和具体存储操作 |
+| 异步导入、解析、索引和图谱构建 | [知识库作业 service](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/knowledge/services/background_jobs.py) 组织领域动作、进度和失败结论 | background_jobs registry/worker 拥有调度与 lease；文档处理由 Manager 分派，图谱构建直接调用 MilvusGraphService |
+| Agent 或 Public API 的知识能力 | [访问 service](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/knowledge/services/access.py) 计算当前权限与所选范围的交集；[工具 service](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/knowledge/services/tools.py) 组织领域工具操作 | extensions 工具与 Public 路由适配调用，执行时复查可见性与文档归属 |
+
+Agent Context 中的资源选项查询用于配置界面；执行权限仍由访问 service 与实际读取边界核验。增加用例时沿上述 Owner 修改，状态与持久化查询继续留在其负责的领域实现。
 
 - [知识库路由](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/api/routers/knowledge/management.py)：权限、上传、任务和状态筛选
 - [KnowledgeBaseManager](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/knowledge/manager.py)：配置回源、可见性和 executor 调度
