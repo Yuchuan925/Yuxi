@@ -8,7 +8,11 @@ from uuid import uuid4
 
 from yuxi.infrastructure.filesystem import await_io
 from yuxi.infrastructure.observability.logging import logger
-from yuxi.modules.knowledge.chunking.ragflow_like.presets import ensure_chunk_defaults_in_additional_params
+from yuxi.modules.knowledge.chunking.ragflow_like.presets import (
+    deep_merge,
+    ensure_chunk_defaults_in_additional_params,
+    validate_chunk_params,
+)
 from yuxi.modules.knowledge.read_models import KnowledgeBaseConfig
 from yuxi.modules.knowledge.schemas import FindOutputSchema, FindWindowSchema, SearchOutputSchema, SearchResultSchema
 from yuxi.modules.knowledge.utils import resolve_processing_params, sanitize_processing_params
@@ -406,7 +410,7 @@ class KnowledgeBase(ABC):
         *,
         additional_params: dict[str, Any],
     ) -> None:
-        """Update file processing params"""
+        """校验显式补丁和合并后的文件配置，允许覆盖旧坏值。"""
         # Skip if no params to update
         if not params:
             return
@@ -415,10 +419,16 @@ class KnowledgeBase(ABC):
         current_params = file_meta.get("processing_params", {}) or {}
         logger.debug(f"[update_file_params] file_id={file_id}, current_params={current_params}, new_params={params}")
 
+        validate_chunk_params(params)
+        patch = dict(params)
+        # 空值沿用当前文件配置；只有显式有效值才覆盖旧坏值。
+        if not patch.get("chunk_preset_id"):
+            patch.pop("chunk_preset_id", None)
+        if patch.get("chunk_parser_config") is None:
+            patch.pop("chunk_parser_config", None)
         current_params = resolve_processing_params(
             kb_additional_params=additional_params,
-            file_processing_params=current_params,
-            request_params=params,
+            file_processing_params=deep_merge(current_params, patch),
         )
 
         file_meta["processing_params"] = current_params

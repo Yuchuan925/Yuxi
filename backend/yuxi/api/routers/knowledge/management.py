@@ -29,7 +29,7 @@ from yuxi.modules.background_jobs.service import job_tracker
 from yuxi.modules.identity.models import User
 from yuxi.modules.identity.permissions import ResourcePermission, resolve_knowledge_base_permission
 from yuxi.modules.knowledge.base import KBNameConflictError, KBNotFoundError
-from yuxi.modules.knowledge.chunking.ragflow_like.presets import get_chunk_preset_options
+from yuxi.modules.knowledge.chunking.ragflow_like.presets import get_chunk_preset_options, validate_chunk_params
 from yuxi.modules.knowledge.graphs.milvus_graph_service import GRAPH_TASK_TYPE, MilvusGraphService
 from yuxi.modules.knowledge.read_models import KnowledgeBaseDetail
 from yuxi.modules.knowledge.runtime import knowledge_base
@@ -148,6 +148,10 @@ def _ensure_document_params(params: dict | None) -> dict:
         return {}
     if not isinstance(params, dict):
         raise HTTPException(status_code=400, detail="params must be an object")
+    try:
+        validate_chunk_params(params)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return params
 
 
@@ -743,6 +747,7 @@ async def _enqueue_document_action_job(
     action: str,
 ) -> dict:
     """提交管理端指定文件的解析或入库任务。"""
+    params = _ensure_document_params(params)
     label = "解析" if action == "parse" else "入库"
     try:
         job, _ = await submit_job(
@@ -771,6 +776,7 @@ async def _enqueue_pending_document_action_job(
     action: str,
 ) -> dict:
     """提交管理端按状态全量解析或入库任务。"""
+    params = _ensure_document_params(params)
     if action == "parse":
         label = "解析"
         pending_count = db_info.pending_parse_count

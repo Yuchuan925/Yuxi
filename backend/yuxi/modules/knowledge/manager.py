@@ -23,7 +23,7 @@ from yuxi.modules.knowledge.cache import (
     kb_config_cache_lock,
     serialize_kb_config,
 )
-from yuxi.modules.knowledge.chunking.ragflow_like.presets import deep_merge
+from yuxi.modules.knowledge.chunking.ragflow_like.presets import ChunkConfigError, deep_merge
 from yuxi.modules.knowledge.factory import KnowledgeBaseFactory
 from yuxi.modules.knowledge.read_models import KnowledgeBaseConfig, KnowledgeBaseDetail, KnowledgeBaseSummary
 from yuxi.modules.knowledge.schemas import FindOutputSchema, OpenOutputSchema
@@ -274,7 +274,14 @@ class KnowledgeBaseManager:
         """将知识库记录转换为 Summary 与 Detail 共用的规范字段。"""
         kb_type = row.kb_type or "milvus"
         kb_class = KnowledgeBaseFactory.get_kb_class(kb_type) if KnowledgeBaseFactory.is_type_supported(kb_type) else None
-        additional_params = kb_class.normalize_additional_params(row.additional_params) if kb_class else dict(row.additional_params or {})
+        try:
+            additional_params = (
+                kb_class.normalize_additional_params(row.additional_params) if kb_class else dict(row.additional_params or {})
+            )
+        except ChunkConfigError as error:
+            # 管理读取保留原值供授权和修复；执行配置仍由 get_kb_config 严格校验。
+            additional_params = dict(row.additional_params or {})
+            logger.warning(f"Invalid knowledge chunk config: kb_id={row.kb_id}: {error}")
         persisted_stats = additional_params.pop("stats", None)
         normalized_stats = self._normalize_database_stats(stats if stats is not None else persisted_stats)
 

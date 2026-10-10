@@ -3,8 +3,6 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
-from yuxi.infrastructure.observability.logging import logger
-
 DEFAULT_CHUNK_PRESET_ID = "general"
 
 CHUNK_PRESETS: dict[str, dict[str, str]] = {
@@ -40,6 +38,10 @@ CHUNK_ENGINE_VERSION = "ragflow_like_v1"
 GENERAL_INTERNAL_PARSER_ID = "naive"
 
 
+class ChunkConfigError(ValueError):
+    """分块配置非法，管理读取可保留原值供修复。"""
+
+
 def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     result = deepcopy(base)
     for key, value in (override or {}).items():
@@ -51,18 +53,28 @@ def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]
 
 
 def normalize_chunk_preset_id(value: str | None) -> str:
-    if not value:
+    """保留缺省与内部别名，拒绝显式非法策略。"""
+    if value is None or value == "":
         return DEFAULT_CHUNK_PRESET_ID
-
-    normalized = str(value).strip().lower()
+    if not isinstance(value, str):
+        raise ChunkConfigError("chunk_preset_id 必须是字符串")
+    normalized = value.strip().lower()
     if normalized == GENERAL_INTERNAL_PARSER_ID:
         return DEFAULT_CHUNK_PRESET_ID
 
     if normalized in CHUNK_PRESET_IDS:
         return normalized
 
-    logger.warning(f"Unknown chunk preset id '{value}', fallback to general")
-    return DEFAULT_CHUNK_PRESET_ID
+    raise ChunkConfigError(f"未知 chunk_preset_id: {value}")
+
+
+def validate_chunk_params(params: dict[str, Any]) -> None:
+    """校验配置来源，不提前填默认值以保留覆盖与继承语义。"""
+    if "chunk_preset_id" in params:
+        normalize_chunk_preset_id(params["chunk_preset_id"])
+    config = params.get("chunk_parser_config")
+    if config is not None and not isinstance(config, dict):
+        raise ChunkConfigError("chunk_parser_config 必须是对象")
 
 
 def map_to_internal_parser_id(preset_id: str) -> str:
@@ -79,10 +91,10 @@ def get_default_chunk_parser_config(preset_id: str) -> dict[str, Any]:
 
 def ensure_chunk_defaults_in_additional_params(additional_params: dict[str, Any] | None) -> dict[str, Any]:
     params = dict(additional_params or {})
+    validate_chunk_params(params)
     params["chunk_preset_id"] = normalize_chunk_preset_id(params.get("chunk_preset_id"))
 
-    if "chunk_parser_config" in params and not isinstance(params.get("chunk_parser_config"), dict):
-        logger.warning("Invalid chunk_parser_config in additional_params, fallback to empty dict")
+    if "chunk_parser_config" in params and params["chunk_parser_config"] is None:
         params["chunk_parser_config"] = {}
 
     return params
@@ -96,6 +108,8 @@ def resolve_chunk_processing_params(
     kb_additional = ensure_chunk_defaults_in_additional_params(kb_additional_params)
     file_params = dict(file_processing_params or {})
     request = dict(request_params or {})
+    validate_chunk_params(file_params)
+    validate_chunk_params(request)
 
     preset_id = normalize_chunk_preset_id(
         request.get("chunk_preset_id") or file_params.get("chunk_preset_id") or kb_additional.get("chunk_preset_id")
