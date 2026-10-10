@@ -31,6 +31,12 @@ API/worker 不信任浏览器内存中的完整配置。请求可以提供受限
 
 断线后调用方从 Public Session、Input、Turn、Run 与 Items 查询读取明确的接收、消费和结果归属。排队 Input 尚无 Turn/Run；最终输出只属于 Turn 的 `result_run_id` 所指顶层 Run。HTTP `202`、SSE 中断和 Run `yielded` 都不是整轮成功证明。
 
+## 会话标题
+
+未显式命名的新会话在首次聊天执行时，先保存首条用户文本的前 30 字作为临时标题，再由 worker 并行调用系统 `fast_model` 概括主题。输入最多 2000 字符，整个附属任务最多等待 8 秒。失败或进程退出保留临时标题，不重试，不影响聊天结果；纯图片输入保留默认标题。没有自动命名资格的已有会话与协作子会话不补生成标题。
+
+显式指定标题或手动改名会取消自动命名资格，迟到的模型结果不能覆盖用户修改。标题保存在 Session，前端通过已有详情读取和侧栏同步显示。实现见[标题服务](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/services/titles.py)。
+
 ## 回答来源标注
 
 completed Turn 的最终回答存在有效知识库或网页检索内容时，Web 回答下方提供“标注来源”。入口由 Web 内部路由提供，仅允许产品用户登录 JWT；API Key 包括 full Key 均被拒绝，Public 协议与 OpenAPI 不声明该能力。用户点击后，API 使用最终 Run 冻结的聊天模型发起独立调用，根据本轮检索快照匹配支持回答的证据。调用读取同一 Turn 各 Run 成功完成的 `query_kb`、`open_kb_document`、`find_kb_document` 和 `web_search` 结果，排除其他 Turn 与失败工具结果；它不会继续执行智能体或改写回答。知识库与网页任一种来源存在即可标注。

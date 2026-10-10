@@ -34,6 +34,51 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 SCOPE = ActorScope(uid="input-user", app_id=None)
 
 
+@pytest.mark.parametrize("outcome", ["generated", "timeout", "manual"])
+async def test_auto_title_persists_once_and_preserves_manual_rename(sessions, monkeypatch, outcome):
+    """回读真实数据库验证生成、失败回退及同名手动修改优先。"""
+    from unittest.mock import AsyncMock
+
+    from yuxi.modules.agents.services import titles
+
+    text = "请帮我分析 PostgreSQL 的慢查询并给出索引优化建议"
+    fallback = text[:30]
+    async with sessions() as db:
+        await SessionRepository(db).add_session(
+            uid=SCOPE.uid,
+            agent_id="main",
+            project_id="input-project",
+            thread_id="title-thread",
+            config_snapshot={"model": "test:chat", "tool_approval_mode": "default"},
+        )
+        await db.commit()
+
+    async def invoke(_messages):
+        """模型边界返回固定结果，等待期间通过真实改名用例制造竞争。"""
+        async with sessions() as db:
+            persisted = await SessionRepository(db).get_session_by_thread_id("title-thread")
+            assert persisted.title == fallback
+            if outcome == "manual":
+                await threads.update_thread(db=db, scope=SCOPE, thread_id="title-thread", title=fallback)
+        if outcome == "timeout":
+            raise TimeoutError
+        return SimpleNamespace(text="PostgreSQL 慢查询优化")
+
+    monkeypatch.setattr(titles, "system_options", SimpleNamespace(get=AsyncMock(return_value={"fast_model": "test:fast"})))
+    monkeypatch.setattr(titles, "load_chat_model", lambda *args, **kwargs: SimpleNamespace(ainvoke=invoke))
+    await titles.generate_session_title(thread_id="title-thread", uid=SCOPE.uid, app_id=None, content=text)
+
+    async def unexpected(_messages):
+        """第二次调用不得再生成标题。"""
+        pytest.fail("同一会话重复生成标题")
+
+    monkeypatch.setattr(titles, "load_chat_model", lambda *args, **kwargs: SimpleNamespace(ainvoke=unexpected))
+    await titles.generate_session_title(thread_id="title-thread", uid=SCOPE.uid, app_id=None, content="第二条消息")
+    async with sessions() as db:
+        persisted = await SessionRepository(db).get_session_by_thread_id("title-thread")
+        assert persisted.title == ("PostgreSQL 慢查询优化" if outcome == "generated" else fallback)
+
+
 @pytest.fixture(scope="session", autouse=True)
 def ensure_live_api_schema():
     """只使用测试拥有的隔离 Schema。"""

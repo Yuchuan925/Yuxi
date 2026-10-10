@@ -312,9 +312,7 @@ export const threadApi = {
       '/api/v1/agents/sessions',
       {
         agent_id: agentId,
-        title: Array.from(title || '新的对话')
-          .slice(0, 255)
-          .join(''),
+        title: title ? Array.from(title).slice(0, 255).join('') : null,
         tool_approval_mode: metadata?.tool_approval_mode,
         ...(projectId ? { project_id: projectId } : {})
       },

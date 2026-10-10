@@ -29,7 +29,7 @@ test('延迟创建响应遇到上下文切换时不被接受', async () => {
 })
 
 
-test('创建响应丢失后改变标题和审批模式，原键仍重放完整原意图', async () => {
+test('普通会话不指定标题，创建响应丢失后仍重放原审批模式', async () => {
   const source = readFileSync(new URL('../../src/modules/session/ui/SessionWorkspace.vue', import.meta.url), 'utf8')
   const block = source.slice(source.indexOf('const createActiveThread ='), source.indexOf('const ensureActiveThread ='))
   const calls = []
@@ -49,10 +49,11 @@ test('创建响应丢失后改变标题和审批模式，原键仍重放完整�
     promoteDraftSelection() {}, setCurrentThreadId: (id) => { currentChatId.value = id }
   }
   const create = new Function(...Object.keys(dependencies), `${block}; return createActiveThread`)(...Object.values(dependencies))
-  await assert.rejects(create('original title'), /response lost/)
+  await assert.rejects(create(), /response lost/)
   approval.value = 'always_trust'
-  assert.equal(await create('edited title'), 'same-session')
+  assert.equal(await create(), 'same-session')
   assert.deepEqual(calls[1], calls[0])
+  assert.equal(calls[1][1], null)
   assert.equal(calls[1][2].tool_approval_mode, 'default')
   assert.equal(request.value, null)
 })

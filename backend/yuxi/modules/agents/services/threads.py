@@ -145,6 +145,9 @@ async def update_thread(
         if not normalized or len(normalized) > 255:
             raise HTTPException(status_code=422, detail="标题长度必须为 1 至 255")
         agent_session.title = normalized
+        metadata = dict(agent_session.extra_metadata or {})
+        metadata.pop("auto_title", None)
+        agent_session.extra_metadata = metadata
     if is_pinned is not None:
         agent_session.is_pinned = is_pinned
     if tool_approval_mode is not None or model_spec is not None:

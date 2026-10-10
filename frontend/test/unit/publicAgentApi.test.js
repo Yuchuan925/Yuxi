@@ -120,6 +120,9 @@ test('产品创建、消息、等待恢复和队列控制仅使用 Public Thread
     await agentApi.getCooperationSummary('thread-1')
     assert.equal(calls.at(-1).url, '/api/v1/agents/sessions/thread-1/cooperation')
 
+    await threadApi.createThread('agent-1', null, {}, { requestId: 'auto-title' })
+    assert.equal(JSON.parse(calls.at(-1).options.body).title, null)
+
   } finally {
     await server.close()
     delete globalThis.fetch

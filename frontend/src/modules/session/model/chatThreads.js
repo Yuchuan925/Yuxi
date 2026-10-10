@@ -145,7 +145,7 @@ export const useChatThreadsStore = defineStore('chatThreads', () => {
     return pinned
   }
 
-  const createThread = async (agentId, title = '新的对话', metadata = {}, options = {}) =>
+  const createThread = async (agentId, title = null, metadata = {}, options = {}) =>
     withThreadListUpdate(async () => {
       if (!agentId) return null
 

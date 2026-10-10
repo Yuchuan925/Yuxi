@@ -49,6 +49,7 @@ from yuxi.modules.agents.services.preparation import (
 from yuxi.modules.agents.services.runs import settle_checkpoint
 from yuxi.modules.agents.services.scheduler import dispatch_next_input
 from yuxi.modules.agents.services.state import get_agent_state_view
+from yuxi.modules.agents.services.titles import start_session_title
 from yuxi.modules.agents.services.tracing import finish_turn_observation_if_terminal
 from yuxi.modules.agents.services.transport import (
     clear_cancel_signal,
@@ -693,6 +694,8 @@ async def process_agent_run(ctx, run_id: str):
                 return
 
         await run_ctx.start()
+        if run_type == "chat":
+            start_session_title(thread_id=thread_id, uid=uid, app_id=run.app_id, content=input_messages[0].content)
         # 准备配置期间也续租；manifest 提交成功前不得开始构图执行。
         try:
             prepared_execution = await prepare_and_record_run_execution(

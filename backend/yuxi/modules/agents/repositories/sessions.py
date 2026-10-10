@@ -127,6 +127,9 @@ class SessionRepository:
         metadata.pop("attachments", None)
 
         normalized_title = self._normalize_title(title)
+        metadata.pop("auto_title", None)
+        if not normalized_title:
+            metadata["auto_title"] = "pending"
 
         agent_session = Session(
             thread_id=thread_id,

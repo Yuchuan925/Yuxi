@@ -2307,7 +2307,7 @@ const invalidateAgentStateRequest = (threadId) => {
   threadState.agentStateRequestVersion = (threadState.agentStateRequestVersion || 0) + 1
 }
 
-const createActiveThread = async (title = '新的对话') => {
+const createActiveThread = async () => {
   if (currentChatId.value) return currentChatId.value
   const selectedAgent = currentAgentId.value
   const selectedProject = selectedProjectId.value
@@ -2320,7 +2320,7 @@ const createActiveThread = async (title = '新的对话') => {
   let request = threadCreationRequest.value
   if (!request || request.agentId !== selectedAgent || request.projectId !== selectedProject) {
     request = {
-      ...creationContext, title: title || '新的对话', id: createClientRequestId(),
+      ...creationContext, id: createClientRequestId(),
       metadata: { tool_approval_mode: currentToolApprovalMode.value }
     }
     threadCreationRequest.value = request
@@ -2337,7 +2337,7 @@ const createActiveThread = async (title = '新的对话') => {
       }),
       requestId: request.id,
       create: (stableRequestId) =>
-        chatThreadsStore.createThread(selectedAgent, request.title, request.metadata, {
+        chatThreadsStore.createThread(selectedAgent, null, request.metadata, {
           requestId: stableRequestId, projectId: projectId || undefined
         })
     })
@@ -2616,7 +2616,7 @@ const handleSendMessage = async ({ images = [], mode = 'follow_up', retry = fals
   let threadId = currentChatId.value
   if (!threadId) {
     try {
-      threadId = await ensureActiveThread(text)
+      threadId = await ensureActiveThread()
     } catch {
       message.error('创建对话失败，请重试')
       return
@@ -2648,18 +2648,6 @@ const handleSendMessage = async ({ images = [], mode = 'follow_up', retry = fals
   const pendingAttachmentFileIds = pendingAttachments
     .map((attachment) => attachment.id)
     .filter(Boolean)
-
-  if (
-    (threadMessages.value[threadId] || []).length === 0 &&
-    !threadState.activeRunId &&
-    !threadState.queuedInputs.length &&
-    Object.keys(threadState.ongoingRunGroup.optimisticMessages).length === 0
-  ) {
-    const autoTitle = text.replace(/\s+/g, ' ').trim().slice(0, 2000)
-    if (autoTitle) {
-      void chatThreadsStore.updateThread(threadId, autoTitle.slice(0, 30)).catch(() => {})
-    }
-  }
 
   const clientKey = original?.data.idempotency_key || createClientRequestId()
   const inputMessage = buildOptimisticHumanMessage({
