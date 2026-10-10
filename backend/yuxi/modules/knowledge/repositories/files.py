@@ -23,6 +23,24 @@ KB_FILE_STATS_CACHE_TTL = 10
 
 
 class KnowledgeFileRepository:
+    @staticmethod
+    def normalize_path_prefix(path_prefix: str | None) -> str:
+        """规范化文档目录前缀，拒绝绝对路径和父目录引用。"""
+        if not path_prefix:
+            return ""
+        normalized = path_prefix.strip().replace("\\", "/")
+        while normalized.startswith("./"):
+            normalized = normalized[2:]
+        if normalized.startswith("/"):
+            raise ValueError("path_prefix must be relative")
+
+        parts = [part for part in normalized.split("/") if part and part != "."]
+        if any(part == ".." for part in parts):
+            raise ValueError("path_prefix must not contain parent directory references")
+        if not parts:
+            return ""
+        return "/".join(parts) + "/"
+
     @asynccontextmanager
     async def lock_file_tree(self, kb_id: str) -> AsyncIterator[None]:
         """按知识库串行化目录树结构修改。"""
@@ -370,23 +388,6 @@ class KnowledgeFileRepository:
         return KnowledgeFile.parent_id.is_(None)
 
     @staticmethod
-    def _normalize_path_prefix(path_prefix: str | None) -> str:
-        if not path_prefix:
-            return ""
-        normalized = path_prefix.strip().replace("\\", "/")
-        while normalized.startswith("./"):
-            normalized = normalized[2:]
-        if normalized.startswith("/"):
-            raise ValueError("path_prefix must be relative")
-
-        parts = [part for part in normalized.split("/") if part and part != "."]
-        if any(part == ".." for part in parts):
-            raise ValueError("path_prefix must not contain parent directory references")
-        if not parts:
-            return ""
-        return "/".join(parts) + "/"
-
-    @staticmethod
     def _like_prefix(value: str) -> str:
         escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         return f"{escaped}%"
@@ -526,7 +527,7 @@ class KnowledgeFileRepository:
         page = max(int(page or 1), 1)
         page_size = min(max(int(page_size or 100), 1), 500)
         offset = (page - 1) * page_size
-        normalized_path_prefix = self._normalize_path_prefix(path_prefix)
+        normalized_path_prefix = self.normalize_path_prefix(path_prefix)
         has_status_filter = self._status_condition(status) is not None
         effective_recursive = recursive and has_status_filter
         if not effective_recursive and not has_status_filter:
