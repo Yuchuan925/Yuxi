@@ -166,6 +166,7 @@
           :disabled="creatingProject"
           :suggested-folder-name="projectName"
           include-unbound-project-dirs
+          @loading-change="pickerLoading = $event"
           @folder-created="handleFolderCreated"
         />
       </div>
@@ -223,6 +224,7 @@ const creatingProject = ref(false)
 const projectName = ref('')
 const projectCreationRequestId = ref('')
 const linkedPath = ref('')
+const pickerLoading = ref(false)
 const historyQuery = ref('')
 const historyCandidates = ref([])
 const loadingHistory = ref(false)
@@ -239,7 +241,9 @@ const requestId = () =>
 const getErrorMessage = (error, fallback) =>
   error?.response?.data?.detail || error?.message || fallback
 
-const canCreateProject = computed(() => Boolean(projectName.value.trim() && linkedPath.value))
+const canCreateProject = computed(
+  () => Boolean(projectName.value.trim() && linkedPath.value && !pickerLoading.value)
+)
 const isAutoOrEmpty = computed(() => !props.modelValue || props.modelValue === AUTO_PROJECT_ID)
 const currentProject = computed(() =>
   projects.value.find((project) => project.id === props.modelValue)

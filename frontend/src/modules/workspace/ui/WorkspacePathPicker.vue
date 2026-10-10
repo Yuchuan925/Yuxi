@@ -1,7 +1,7 @@
 <template>
   <div class="workspace-path-picker" :class="{ disabled }">
     <div class="picker-toolbar">
-      <nav class="picker-breadcrumbs" aria-label="Workspace 目录路径">
+      <nav class="picker-breadcrumbs" aria-label="Workspace 目录路径" aria-live="polite">
         <button
           v-for="item in breadcrumbs"
           :key="item.path"
@@ -57,11 +57,6 @@
         <X :size="15" />
       </button>
     </form>
-
-    <div v-if="selectionMode === 'directory'" class="picker-selection" aria-live="polite">
-      <Check v-if="selectedDirectory" :size="14" />
-      <span :title="selectedDirectory">{{ selectedDirectory || '请选择项目目录' }}</span>
-    </div>
 
     <div class="picker-list" :class="{ loading }">
       <a-spin v-if="loading" />
@@ -204,6 +199,9 @@ const loadEntries = async (path = currentPath.value) => {
     if (version !== requestVersion) return
     currentPath.value = targetPath
     entries.value = Array.isArray(response?.entries) ? response.entries : []
+    if (props.selectionMode === 'directory') {
+      emit('update:modelValue', blockedDirectorySet.value.has(targetPath) ? '' : targetPath)
+    }
   } catch (cause) {
     if (version !== requestVersion) return
     entries.value = []
@@ -218,9 +216,6 @@ const loadEntries = async (path = currentPath.value) => {
 
 const openDirectory = (path) => {
   const targetPath = normalizePath(path)
-  if (props.selectionMode === 'directory') {
-    emit('update:modelValue', blockedDirectorySet.value.has(targetPath) ? '' : targetPath)
-  }
   cancelCreatingFolder()
   void loadEntries(targetPath)
 }
@@ -301,7 +296,6 @@ watch(
 .picker-toolbar,
 .picker-actions,
 .picker-create-row,
-.picker-selection,
 .picker-row {
   display: flex;
   align-items: center;
@@ -411,20 +405,6 @@ watch(
   padding: 0 7px;
   color: var(--main-700);
   font-size: 12px;
-}
-
-.picker-selection {
-  min-width: 0;
-  gap: 6px;
-  color: var(--color-text-secondary);
-  font-size: 12px;
-}
-
-.picker-selection span {
-  overflow: hidden;
-  color: var(--color-text);
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .picker-list {
